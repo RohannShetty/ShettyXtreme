@@ -1,2 +1,0 @@
-"""Test heredoc."""
-print("hello")
