@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 authors = [{name = "Rohan Shetty", email = "shettyrohan2@gmail.com"}]
 
 dependencies = [
+    "duckdb>=1.5.4",
     "dhanhq>=0.1.0",
     "numpy>=1.24",
     "pandas>=2.0",
@@ -19,6 +20,7 @@ dependencies = [
     "websockets>=11",
     "rich>=13",
     "structlog>=23",
+    "textual>=0.41",
 ]
 
 [project.optional-dependencies]
@@ -31,7 +33,7 @@ dev = [
     "pre-commit>=3",
 ]
 openalgo = ["openalgo>=1.0.0"]
-ui = ["pyqt6>=6.5", "pyqtgraph>=0.13"]
+ui = ["pyqt6>=6.5", "pyqtgraph>=0.13", "textual>=0.41"]
 backtest = ["vectorbt>=0.3"]
 research = ["jupyter", "matplotlib>=3.7", "seaborn>=0.12"]
 
