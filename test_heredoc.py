@@ -1,0 +1,2 @@
+"""Test heredoc."""
+print("hello")

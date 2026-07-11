@@ -1,0 +1,5 @@
+line1
+line2
+line3 with 'single quotes' inside
+line4 with "double quotes" inside
+line5

@@ -1,0 +1,9 @@
+
+def test():
+    """This is a double-quote docstring."""
+    pass
+
+
+def test2():
+    """Another one."""
+    pass

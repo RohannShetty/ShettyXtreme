@@ -10,10 +10,10 @@ except (ImportError, ModuleNotFoundError):
     DUCKDB_AVAILABLE = False
 
 
-@pytest.mark.skipif(not DUCKDB_AVAILABLE, reason="duckdb C extension not available on Python 3.14")
 from datetime import datetime, timezone
 
 
+@pytest.mark.skipif(not DUCKDB_AVAILABLE, reason="duckdb C extension not available on Python 3.14")
 class TestTimeSeriesStoreBars:
     def test_write_and_get_bars(self, ts_store):
         ts_store.write_bar(

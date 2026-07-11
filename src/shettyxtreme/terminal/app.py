@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical, Grid
+from textual.containers import Container, Grid
 from textual.widgets import Static, Header, Footer
 from textual.binding import Binding
 from textual.reactive import reactive
@@ -30,8 +30,13 @@ from shettyxtreme.terminal.panels import (
     MarketInternalsPanel,
     StatusBar,
     LogPanel,
+    OrderPanel,
+    PositionPanel,
+    ScannerPanel,
+    OptionsChainPanel,
+    OptionsStrategyPanel,
 )
-
+from shettyxtreme.execution.paper_trading import PaperTradingEngine
 
 class PlaceholderPanel(Static):
     """Simple placeholder panel for Phase-1 unimplemented sections."""
@@ -125,6 +130,10 @@ class ShettyXtremeApp(App):
         self._event_bus: EventBus = event_bus or EventBus()
         self._terminal_config: TerminalConfig = terminal_config or TerminalConfig()
         self._config_manager: ConfigManager = config_manager or ConfigManager()
+        self._paper_trading: PaperTradingEngine = PaperTradingEngine(
+            event_bus=self._event_bus,
+            initial_capital=1_000_000.0,
+        )
         self._event_bus_task: Any = None
 
     def compose(self) -> ComposeResult:
@@ -142,10 +151,18 @@ class ShettyXtremeApp(App):
             symbols=default_symbols,
             id="watchlist-panel",
         )
-        self._positions = PlaceholderPanel("Positions / Orders", id="positions-panel")
+        self._positions = PositionPanel(
+            paper_trading_engine=self._paper_trading,
+            event_bus=self._event_bus,
+            id="positions-panel",
+        )
+        self._order_panel = OrderPanel(
+            paper_trading_engine=self._paper_trading,
+            id="order-panel",
+        )
         self._regime = PlaceholderPanel("Regime / Hints", id="regime-panel")
-        self._scanners = PlaceholderPanel("Scanners", id="scanners-panel")
-        self._options = PlaceholderPanel("Options Chain", id="options-panel")
+        self._scanners = ScannerPanel(id="scanners-panel")
+        self._options = self._order_panel
         self._log = LogPanel(
             max_lines=self._terminal_config.log_max_lines,
             id="log-panel",
@@ -190,7 +207,7 @@ class ShettyXtremeApp(App):
         self._event_bus.subscribe(Topic.RISK_ALERT, self._on_log_event)
         self._event_bus.subscribe(Topic.ORDER_PLACED, self._on_log_event)
         self._event_bus.subscribe(Topic.ORDER_REJECTED, self._on_log_event)
-        self._event_bus.subscribe(Topic.SIGNAL_GENERATED, self._on_log_event)
+        self._event_bus.subscribe(Topic.SIGNAL_GENERATED, self._on_signal_generated)
 
         # Start the bus consumer in a background task
         self._event_bus_task = self.set_interval(
@@ -223,6 +240,15 @@ class ShettyXtremeApp(App):
         Args:
             event: The event to log.
         """
+        self._log.handle_event(event)
+
+    async def _on_signal_generated(self, event: Event) -> None:
+        """Dispatch SIGNAL_GENERATED events to ScannerPanel and LogPanel.
+
+        Args:
+            event: The SIGNAL_GENERATED event with a Signal dataclass.
+        """
+        self._scanners.handle_signal(event)
         self._log.handle_event(event)
 
     def _poll_event_bus(self) -> None:

@@ -1,0 +1,5 @@
+
+"""SimpleSignalGenerator — combines scanner outputs into tradable signals.
+
+Takes results from PriceBreakoutScanner and GapScanner, applies
+configurable weights, computes a combined strength score (0
