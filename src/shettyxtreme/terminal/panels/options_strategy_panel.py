@@ -154,7 +154,7 @@ class OptionsStrategyPanel(Static):
 
         if self._analysis is None:
             elements.append(Text("Set spot price and strike to analyse", style="grey62"))
-            self.update(Group(*elements))
+            self._renderable = Group(*elements)
             return
 
         a = self._analysis
@@ -185,7 +185,7 @@ class OptionsStrategyPanel(Static):
         payoff_diagram = self._render_payoff_diagram(a)
         elements.append(payoff_diagram)
 
-        self.update(Group(*elements))
+        self._renderable = Group(*elements))
 
     def _render_payoff_diagram(self, analysis: StrategyAnalysis) -> Text:
         """Render a simple text-based payoff diagram.

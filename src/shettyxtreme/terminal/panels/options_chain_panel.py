@@ -223,7 +223,7 @@ class OptionsChainPanel(Static):
                 Text(f"{pe_oi:,}{oi_alert_pe}", style=pe_style),
             )
 
-        self.update(table)
+        self._renderable = table
 
     def refresh(self, **kwargs: Any) -> None:
         """Rebuild and re-render the panel."""
