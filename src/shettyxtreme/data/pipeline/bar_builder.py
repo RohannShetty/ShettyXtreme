@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 from shettyxtreme.core.data_models import Bar, Tick
 from shettyxtreme.core.event_bus import Event, EventBus, Topic
-from shettyxtreme.core.storage import TimeSeriesStore
+from shettyxtreme.core.storage.time_series_store import TimeSeriesStore
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +74,9 @@ class BarBuilderState:
 
 def floor_timestamp(dt: datetime, minutes: int) -> datetime:
     """Floor a datetime to the nearest timeframe boundary."""
-    total_minutes = dt.hour * 60 + dt.minute
-    remainder = total_minutes % minutes
+    floored_minute = (dt.minute // minutes) * minutes
     return dt.replace(
-        minute=total_minutes - remainder,
+        minute=floored_minute,
         second=0, microsecond=0,
     )
 

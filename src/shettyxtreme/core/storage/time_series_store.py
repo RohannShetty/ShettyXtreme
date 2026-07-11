@@ -2,10 +2,17 @@
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
-import duckdb
+try:
+    import duckdb
+    _DUCKDB_AVAILABLE = True
+except (ImportError, ModuleNotFoundError):
+    _DUCKDB_AVAILABLE = False
+    duckdb = None  # type: ignore
 
 class TimeSeriesStore:
     def __init__(self, db_path: str = "data/shetty_ts.db"):
+        if not _DUCKDB_AVAILABLE:
+            raise ImportError("duckdb C extension not available. Install duckdb with working C extension (requires Python<3.14 or duckdb>=1.6)")
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = duckdb.connect(db_path)
         self._init_schema()

@@ -29,7 +29,9 @@ class Position:
 
 @dataclass
 class Trade:
-    trade_id: str; symbol: str; side: str; entry_price: float
-    exit_price: Optional[float] = None; quantity: int
-    entry_time: datetime; exit_time: Optional[datetime] = None
-    pnl: Optional[float] = None; strategy: Optional[str] = None
+    trade_id: str; symbol: str; side: str
+    entry_price: float; quantity: int; entry_time: datetime
+    exit_price: Optional[float] = None
+    exit_time: Optional[datetime] = None
+    pnl: Optional[float] = None
+    strategy: Optional[str] = None

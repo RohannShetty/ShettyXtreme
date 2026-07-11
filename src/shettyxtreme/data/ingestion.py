@@ -9,7 +9,7 @@ import logging
 from typing import Any, Optional
 
 from shettyxtreme.core.event_bus import EventBus
-from shettyxtreme.core.storage import TimeSeriesStore
+from shettyxtreme.core.storage.time_series_store import TimeSeriesStore
 from shettyxtreme.data.pipeline.bar_builder import BarBuilder
 from shettyxtreme.data.pipeline.stream_manager import StreamManager
 
