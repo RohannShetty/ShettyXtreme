@@ -49,3 +49,7 @@ dmypy.json
 
 # VS Code
 .history/
+# Generated scaffolding scripts from sub-agents (safe to delete)
+gen_*.py
+write_*.py
+_*.py
