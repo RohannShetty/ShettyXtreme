@@ -102,30 +102,29 @@
 
 ### 1.4 FinceptTerminal — Multi-Asset Terminal Reference (Inspiration Only)
 
-**Best used as:** Product vision and breadth reference. No code consumed.
+**Reverse engineering status:** DONE - cloned and analyzed on 2026-07-12.
 
-**Ideas worth inheriting:**
-- Multi-asset terminal design thinking
-- Research workflow breadth
-- CLI + data views paradigm
-- Modular data source approach
-- "Terminal" aesthetic and information density
+**What Fincept Terminal actually is:**
+A 342,000-line C++20/Qt6 native desktop monolith - a Bloomberg-style multi-window financial workstation with embedded Python analytics, 16 broker integrations, 100+ data connectors, 37 AI agent personas, and DataHub pub/sub data plane.
 
-**What NOT to copy directly:**
-- Absolutely no code is ported
-- No architecture patterns are replicated
-- No dependency on Fincept packages
+**Tech stack:** C++20, Qt6 Widgets, CMake, Python 3.11, SQLite, AES-256-GCM. License: AGPL-3.0.
 
-**Coupling risk:**
-- ZERO — we have no code dependency
-- Only risk is design contamination (copying bad patterns)
+**What we should learn (ideas only, NOT code):**
+- DataHub pub/sub concept validates our event bus direction
+- Dependency direction rules (Presentation->App->Data->Adapters->Infra) match our boundaries
+- Modular monolith philosophy validates our architecture choice
+- 54-screen lazy loading pattern is worth noting for Phase 2+
 
-**External dependency vs internal subsystem:**
-- NOT a dependency in any sense
-- Fork exists as reference only
-- Periodic browsing for ideas (quarterly, low effort)
+**What is NOT useful:**
+- NO code can be used (AGPL, different language, different stack)
+- 37 AI agent personas (Buffett, Graham) are gimmicky - not real trading intelligence
+- 100+ data connectors are global/China-focused, not India-specific
+- 16 C++ broker adapters are irrelevant - we use OpenAlgo (33 Python adapters)
+- Maritime/geopolitical tracking has zero relevance for Nifty options
+- Node editor visual workflows are Phase 3+ aspirational at best
 
-**Harvesting updates:**
-- No harvesting — inspiration only
-- Read upstream changes occasionally for new feature ideas
-- No compatibility testing, no version pinning, no integration tests
+**Fork status:** Same commit as upstream (1511793d). No divergence. No custom changes.
+
+**Upstream health:** Moving to one update per month. Team focused on private paid edition. Open source deprioritized.
+
+**Harvesting:** Read quarterly for ideas. No compatibility testing, version pinning, or integration tests.
