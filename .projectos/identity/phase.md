@@ -3,7 +3,7 @@ active_rules:
 - All architectural decisions must be recorded in docs/decisions/ as ADRs.
 - All integration contracts with external repos must have anti-corruption layer tests.
 - Core domain code must not import from external dependencies directly.
-current_phase: phase-0-architecture
+current_phase: phase-1-foundations
 entry_criteria_met: true
 exit_criteria:
 - Reference repos studied and documented (OpenAlgo, Dhan, ShettyBot, Fincept)
@@ -13,14 +13,14 @@ exit_criteria:
 - Obsidian project workspace created
 - TickTick kanban initialized
 exit_criteria_status:
-  repos_studied: false
-  architecture_blueprint: false
+  repos_studied: true
+  architecture_blueprint: true
   github_repo_created: true
-  projectos_initialized: false
-  obsidian_workspace: false
-  ticktick_kanban: false
-next_phase: phase-1-foundations
-next_phase_authorized: false
+  projectos_initialized: true
+  obsidian_workspace: true
+  ticktick_kanban: true
+next_phase: phase-2-mvp
+next_phase_authorized: true
 next_phase_description: "Core platform foundations — event bus, storage, config, integration layer, basic data pipeline"
 phase_history: []
 phase_since: "2026-07-12T00:00:00Z"
