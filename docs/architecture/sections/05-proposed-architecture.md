@@ -93,3 +93,40 @@
 ## UI Strategy
 Phase 1-2: Local terminal UI (Rich + Textual)
 Phase 3-4: Web API layer for cloud/SaaS mode
+
+## Pattern Notes from Fincept Reverse Engineering
+
+### Paper Trading Engine (MVP)
+Build a simulated trading environment with dataclass models (Portfolio, Order, Position, Trade) that mirrors the live execution API. This lets us:
+- Test strategies without broker connectivity
+- Run simulation mode alongside observer mode
+- Validate execution logic before going live
+
+### Exchange Daemon Pattern (Phase 2)
+For broker API calls that have high startup overhead, use a persistent subprocess worker:
+- Long-running Python process keeps broker connections warm
+- Communicates via JSON-RPC over stdin/stdout
+- Eliminates 600-1200ms per-call startup overhead
+- Used by Fincept for CCXT-based exchange access
+
+### Algo Trading Engine (Phase 3)
+Study the architecture patterns from Fincept's C++ AlgoTradingService:
+- Strategy scheduling (time-based, event-based)
+- Risk gate pipeline (pre-trade, in-trade, post-trade)
+- Execution hooks (before/after order events)
+- Multi-strategy coordination and resource allocation
+- Build our Python equivalent in shettyxtreme/execution/algo/
+
+### Backtesting Aggregation (Phase 2)
+Follow Fincept's pattern of wrapping multiple backtesting frameworks behind a unified interface:
+- vectorbt for vectorized/portfolio backtests
+- backtesting.py for event-driven backtests
+- Custom fast backtest for options strategies
+- Common data format, common metrics reporting
+
+### Unified Analytics CLI Convention (Phase 2)
+Each analytics module has a CLI entry point:
+
+Result JSON to stdout. This pattern makes analytics composable, scriptable, and easy to test.
+
+The CLI pattern is: python module.py compute JSON_ARGS  or  python module.py compute @file.json

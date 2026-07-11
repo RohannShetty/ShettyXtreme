@@ -100,31 +100,44 @@
 - ShettyBot V2 development IS this project — it's being evolved, not separately maintained
 - V1 remains as reference but receives no further active development
 
-### 1.4 FinceptTerminal — Multi-Asset Terminal Reference (Inspiration Only)
+### 1.4 FinceptTerminal — Multi-Asset Terminal Reference (Patterns + Concepts)
 
-**Reverse engineering status:** DONE - cloned and analyzed on 2026-07-12.
+**Reverse engineering status:** DONE - cloned, analyzed, and understood (2026-07-12).
 
 **What Fincept Terminal actually is:**
-A 342,000-line C++20/Qt6 native desktop monolith - a Bloomberg-style multi-window financial workstation with embedded Python analytics, 16 broker integrations, 100+ data connectors, 37 AI agent personas, and DataHub pub/sub data plane.
+A 342,000-line C++20/Qt6 native desktop monolith - a Bloomberg-style multi-window financial workstation. However, the REAL value is its 1,412 Python analytics scripts that aggregate the entire Python quant ecosystem into a unified terminal, plus a C++ algo trading engine and a SaaS QuantLab (api.fincept.in).
 
-**Tech stack:** C++20, Qt6 Widgets, CMake, Python 3.11, SQLite, AES-256-GCM. License: AGPL-3.0.
+**Key structural relationships to understand:**
+1. Their QuantLib screen calls a REMOTE API (api.fincept.in) - the local binary is a thin client
+2. Their Indian broker real-time streaming imports OPENALGO streaming adapters - they depend on OpenAlgo same as us
+3. Their crypto trading uses CCXT exchange daemon - direct CCXT integration
+4. Their Python analytics layer is mostly wrappers around industry-standard libraries
 
-**What we should learn (ideas only, NOT code):**
-- DataHub pub/sub concept validates our event bus direction
-- Dependency direction rules (Presentation->App->Data->Adapters->Infra) match our boundaries
-- Modular monolith philosophy validates our architecture choice
-- 54-screen lazy loading pattern is worth noting for Phase 2+
+**What we SHOULD learn from Fincept (patterns, not code):**
 
-**What is NOT useful:**
-- NO code can be used (AGPL, different language, different stack)
-- 37 AI agent personas (Buffett, Graham) are gimmicky - not real trading intelligence
-- 100+ data connectors are global/China-focused, not India-specific
-- 16 C++ broker adapters are irrelevant - we use OpenAlgo (33 Python adapters)
-- Maritime/geopolitical tracking has zero relevance for Nifty options
-- Node editor visual workflows are Phase 3+ aspirational at best
+Domain | Pattern | How We Use It
+Options analytics | Their IV surface/smile/strategy charts use Black-76 with JSON I/O convention | Build our own in shettyxtreme/options/ with same analytical depth
+Portfolio optimization | Mean-variance, Black-Litterman, risk parity wrappers | Inform shettyxtreme/risk/ design
+Data connector architecture | Databento + 25 AkShare modules + CCXT unified pattern | Inform shettyxtreme/data/ pipeline design
+Backtesting aggregation | They unified 6 frameworks (backtesting.py, bt, vectorbt, zipline, fasttrade, custom) behind a single interface | Inform shettyxtreme/research/backtest/ architecture
+Tool/wrapper pattern | Every analytics domain has a CLI entry point with JSON stdin/stdout convention | Adopt for our research/analytics modules
+AlgoTradingService (C++) | A real C++ algorithmic trading engine with strategy scheduling, risk checks, execution hooks | Study architecture patterns, build Python equivalent in shettyxtreme/execution/
+Paper trading bridge | Python dataclass models for portfolio/order/position, connects to host paper trading engine | Build into shettyxtreme/execution/paper/ for simulation mode
+Exchange daemon | Persistent CCXT worker with JSON-RPC stdin/stdout protocol (eliminates 600-1200ms startup overhead) | Pattern to consider for our OpenAlgo adapter performance
+Broker WS bridge | Spawns OpenAlgo streaming adapters as subprocess, captures ZMQ, re-emits normalized JSON | Pattern for our data pipeline subprocess management
 
-**Fork status:** Same commit as upstream (1511793d). No divergence. No custom changes.
+**What is NOT useful for ShettyXtreme:**
+- NO code can be used (AGPL-3.0 + different tech stack)
+- QuantLib C++ screen is a thin client to a SaaS API - no local computation to extract
+- 37 AI agent personas (Buffett, Graham, etc.) - our conviction engine is more rigorous
+- AkShare Chinese data modules - not India-relevant
+- Maritime/geopolitical tracking - zero value for Nifty options
+- C++ UI framework - we use Python/Textual
 
-**Upstream health:** Moving to one update per month. Team focused on private paid edition. Open source deprioritized.
+**Fork status:** Same commit as upstream (1511793d). No divergence.
 
-**Harvesting:** Read quarterly for ideas. No compatibility testing, version pinning, or integration tests.
+**Upstream health:** Moving to one update/month. Team focused on private paid edition.
+
+**License constraint:** AGPL-3.0. No code can enter ShettyXtreme. Patterns and concepts only.
+
+**Harvesting cadence:** Read quarterly for new patterns. No version pinning or integration tests..

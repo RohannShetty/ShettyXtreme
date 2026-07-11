@@ -43,3 +43,13 @@
 - Community plugin marketplace
 - Cloud/SaaS deployment mode
 - Multi-user/collaboration features
+
+### Execution Layer Updates (informed by Fincept analysis)
+
+| Feature | Phase | Description |
+|---------|-------|-------------|
+| Paper trading engine | MVP | Full simulated portfolio with orders, positions, P&L (dataclass models) |
+| Exchange daemon worker | Phase 2 | Persistent subprocess for fast broker API calls (eliminates startup overhead) |
+| Algo trading engine | Phase 3 | Strategy scheduling, risk checks, execution hooks, multi-strategy coord |
+| Unified backtesting facade | Phase 2 | Single interface over vectorbt, backtesting.py, custom engines |
+| CLI analytics convention | Phase 2 | JSON stdin/stdout convention for analytics modules (from Fincept pattern) |
