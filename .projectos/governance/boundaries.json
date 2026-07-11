@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "governance_id": "gov_shettyxtreme_001",
+  "established": "2026-07-12T00:00:00Z",
+  "boundaries": [
+    {
+      "id": "BOUNDARY-001",
+      "name": "Core / Integration Separation",
+      "rule": "Core domain packages (core/, risk/, intelligence/, options/) must not import from integration/, data/, execution/, or any external package directly. Dependencies flow INWARD through interfaces defined in core/.",
+      "severity": "fatal"
+    },
+    {
+      "id": "BOUNDARY-002",
+      "name": "OpenAlgo Isolation",
+      "rule": "No code outside integration/ may import from the OpenAlgo package. All interactions with OpenAlgo pass through the OpenAlgoAdapter defined in integration/.",
+      "severity": "fatal"
+    },
+    {
+      "id": "BOUNDARY-003",
+      "name": "DhanHQ Isolation",
+      "rule": "No code outside integration/ may import from dhanhq. All Dhan-specific operations pass through the DhanAdapter in integration/.",
+      "severity": "fatal"
+    },
+    {
+      "id": "BOUNDARY-004",
+      "name": "Plugin Isolation",
+      "rule": "Plugins are loaded dynamically and communicate via defined interfaces in plugins/. A plugin must never import from another plugin directly.",
+      "severity": "warning"
+    },
+    {
+      "id": "BOUNDARY-005",
+      "name": "Config Isolation",
+      "rule": "Secrets and credentials must never be hardcoded. All config is loaded from environment variables or config files under configs/. No config files are committed to the repo without .local suffix.",
+      "severity": "fatal"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{"id": "K001", "fact": "ShettyXtreme repo created at github.com/RohannShetty/ShettyXtreme", "source": "direct", "verified": true, "freshness": "2026-07-12T00:00:00Z"}
+{"id": "K002", "fact": "OpenAlgo repo at github.com/marketcalls/openalgo is the execution backbone dependency", "source": "direct", "verified": true, "freshness": "2026-07-12T00:00:00Z"}
+{"id": "K003", "fact": "DhanHQ-py at github.com/dhan-oss/DhanHQ-py is the Dhan broker SDK", "source": "direct", "verified": true, "freshness": "2026-07-12T00:00:00Z"}
+{"id": "K004", "fact": "ShettyBot V1 at github.com/RohannShetty/ShettyBot_V1_Core provides intelligence layer", "source": "direct", "verified": true, "freshness": "2026-07-12T00:00:00Z"}
+{"id": "K005", "fact": "FinceptTerminal at github.com/Fincept-Corporation/FinceptTerminal is multi-asset terminal reference", "source": "direct", "verified": true, "freshness": "2026-07-12T00:00:00Z"}
