@@ -1,1 +1,1 @@
-# src.shettyxtreme.terminal
+# Terminal UI - panels and widgets

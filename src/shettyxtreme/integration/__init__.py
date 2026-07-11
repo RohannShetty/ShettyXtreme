@@ -1,1 +1,1 @@
-# src.shettyxtreme.integration
+# Anti-corruption layer for external systems

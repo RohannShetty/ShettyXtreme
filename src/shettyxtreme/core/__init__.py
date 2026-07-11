@@ -1,1 +1,1 @@
-# src.shettyxtreme.core
+# Core platform - stable foundation

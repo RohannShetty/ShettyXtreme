@@ -1,0 +1,9 @@
+broker: dhan
+config_dir: configs
+data_dir: data
+data_provider: openalgo
+dry_run: true
+log_dir: logs
+log_level: INFO
+mode: observer
+openalgo_base_url: http://localhost:5000
