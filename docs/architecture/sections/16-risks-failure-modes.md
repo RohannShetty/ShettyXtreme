@@ -1,0 +1,2 @@
+# Section 16: Risks and Failure Modes
+Overbuilding(HIGH): phase-gated delivery. Duplicate infra(HIGH): FR-003. Tight coupling(HIGH): FR-004/FR-006. Boundary drift(MED): FR-005, CI checks. Latency(HIGH): measure early. Broker brittleness(HIGH): graceful degradation. UI complexity(MED): progressive disclosure. Signal overfitting(MED): OOS validation. Operational fragility(HIGH): event isolation. Maintainability(MED): ADRs, refactoring. Scope creep(HIGH): strict MVP. Data quality(MED): validation pipeline.
