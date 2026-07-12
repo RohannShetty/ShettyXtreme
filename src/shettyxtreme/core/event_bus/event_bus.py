@@ -20,6 +20,8 @@ class Topic(Enum):
     RISK_ALERT = "risk.alert"
     CONFIG_CHANGED = "config.changed"
     SYSTEM_STATUS = "system.status"
+    REGIME_CHANGED = "regime.changed"
+    CONVICTION_CHANGED = "conviction.changed"
 
 @dataclass
 class Event:

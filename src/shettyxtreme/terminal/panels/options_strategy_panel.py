@@ -185,7 +185,7 @@ class OptionsStrategyPanel(Static):
         payoff_diagram = self._render_payoff_diagram(a)
         elements.append(payoff_diagram)
 
-        self._renderable = Group(*elements))
+        self._renderable = Group(*elements)
 
     def _render_payoff_diagram(self, analysis: StrategyAnalysis) -> Text:
         """Render a simple text-based payoff diagram.
