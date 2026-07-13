@@ -54,3 +54,7 @@ gen_*.py
 write_*.py
 _*.py
 .skills/
+
+# Knowledge graph tooling (generated indices)
+.codegraph/
+graphify-out/

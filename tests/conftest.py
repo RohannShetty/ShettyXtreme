@@ -50,7 +50,7 @@ def kv_store(tmp_data_dir: str):
 
 @pytest.fixture
 def ts_store(tmp_data_dir: str):
-    from shettyxtreme.core.storage import TimeSeriesStore
+    from shettyxtreme.core.storage.time_series_store import TimeSeriesStore
     db_path = os.path.join(tmp_data_dir, "test_ts.db")
     store = TimeSeriesStore(db_path)
     yield store
