@@ -1,0 +1,18 @@
+# One stop-loss definition used everywhere (execution + risk + walkforward)
+stop_loss:
+  type: premium_relative
+  vol_aware: true
+  atr_multiplier: 1.5
+  max_stop_distance: 0.15
+
+take_profit:
+  tp1_percent: 0.30
+  tp2_percent: 0.60
+  tp3_percent: 1.00
+
+trailing_stop:
+  enabled: true
+  atr_multiplier: 1.5
+  min_profit_to_activate: 0.15
+
+eod_exit_time: "15:15"
