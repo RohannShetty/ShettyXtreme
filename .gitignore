@@ -53,3 +53,4 @@ dmypy.json
 gen_*.py
 write_*.py
 _*.py
+.skills/
