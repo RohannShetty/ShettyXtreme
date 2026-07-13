@@ -1,4 +1,4 @@
-"""Status bar — shows connection status (OpenAlgo, Dhan), mode indicator,
+"""Status bar - shows connection status (Dhan Trading, Dhan Data), mode indicator,
 current time IST, and market open/closed status.
 
 Positioned at the very bottom of the terminal layout.
@@ -36,8 +36,8 @@ class StatusBar(Static):
 
     mode: str = reactive("observer")
     market_status_open: bool = reactive(False)
-    dhan_connected: bool = reactive(False)
-    openalgo_connected: bool = reactive(False)
+    dhan_trading_connected: bool = reactive(False)
+    dhan_data_connected: bool = reactive(False)
 
     def __init__(
         self,
@@ -89,10 +89,10 @@ class StatusBar(Static):
         """
         data = event.data
         if isinstance(data, dict):
-            if "dhan_connected" in data:
-                self.dhan_connected = bool(data["dhan_connected"])
-            if "openalgo_connected" in data:
-                self.openalgo_connected = bool(data["openalgo_connected"])
+            if "dhan_trading_connected" in data:
+                self.dhan_trading_connected = bool(data["dhan_trading_connected"])
+            if "dhan_data_connected" in data:
+                self.dhan_data_connected = bool(data["dhan_data_connected"])
             if "mode" in data:
                 self.mode = str(data["mode"])
             session = data.get("session_state", "")
@@ -128,25 +128,25 @@ class StatusBar(Static):
         """Build the status bar line as a Rich Text object.
 
         Layout:
-          [OpenAlgo status] [DhanHQ status] | [Mode] | [IST time] | [Market status]
+          [Dhan Trading status] [Dhan Data status] | [Mode] | [IST time] | [Market status]
         """
         parts: list[tuple[str, str]] = []
 
-        # OpenAlgo
-        if self.openalgo_connected:
-            parts.append((" OpenAlgo ● ", "green"))
+        # Dhan Trading
+        if self.dhan_trading_connected:
+            parts.append((" Dhan-Trading \u25cf ", "green"))
         else:
-            parts.append((" OpenAlgo ○ ", "red"))
+            parts.append((" Dhan-Trading \u25cb ", "red"))
 
         parts.append((" ", ""))
 
-        # Dhan
-        if self.dhan_connected:
-            parts.append((" DhanHQ ● ", "green"))
+        # Dhan Data
+        if self.dhan_data_connected:
+            parts.append((" Dhan-Data \u25cf ", "green"))
         else:
-            parts.append((" DhanHQ ○ ", "red"))
+            parts.append((" Dhan-Data \u25cb ", "red"))
 
-        parts.append((" │ ", "grey62"))
+        parts.append((" \u2502 ", "grey62"))
 
         # Mode
         mode_colour = {"observer": "cyan", "live": "green", "paper": "yellow"}.get(
@@ -154,14 +154,14 @@ class StatusBar(Static):
         )
         parts.append((f" Mode:{self.mode} ", mode_colour))
 
-        parts.append((" │ ", "grey62"))
+        parts.append((" \u2502 ", "grey62"))
 
         # IST time
         now = _ist_now()
         time_str = now.strftime("%H:%M:%S IST")
         parts.append((f" {time_str} ", "bold"))
 
-        parts.append((" │ ", "grey62"))
+        parts.append((" \u2502 ", "grey62"))
 
         # Market status
         if self.market_status_open:

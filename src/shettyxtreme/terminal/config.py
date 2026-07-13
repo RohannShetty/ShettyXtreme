@@ -45,7 +45,6 @@ class TerminalConfig:
     )
 
     # Broker connection status labels
-    openalgo_label: str = "OpenAlgo"
     dhan_label: str = "DhanHQ"
 
     # Market status

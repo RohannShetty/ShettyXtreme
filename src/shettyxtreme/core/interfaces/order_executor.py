@@ -1,4 +1,4 @@
-"""Protocol for order execution - implemented by OpenAlgoAdapter and DhanAdapter."""
+"""Protocol for order execution - implemented by DhanTradingAdapter."""
 from typing import Protocol, runtime_checkable
 from dataclasses import dataclass
 from datetime import datetime
