@@ -1,6 +1,7 @@
 """Tests for CredentialValidator (read-only credential validation)."""
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -12,8 +13,6 @@ from shettyxtreme.auth.validator import CredentialValidator, ValidationResult
 
 def test_validate_trading_valid() -> None:
     """Mock httpx.post returning success, verify valid=True."""
-    import asyncio
-
     async def _run() -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -38,8 +37,6 @@ def test_validate_trading_valid() -> None:
 
 def test_validate_trading_invalid() -> None:
     """Mock httpx.post returning error, verify valid=False."""
-    import asyncio
-
     async def _run() -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 401
@@ -67,8 +64,6 @@ def test_validate_trading_invalid() -> None:
 
 def test_validate_data_valid() -> None:
     """Mock httpx.post returning success for data API, verify valid=True."""
-    import asyncio
-
     async def _run() -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -93,8 +88,6 @@ def test_validate_data_valid() -> None:
 
 def test_validate_data_invalid() -> None:
     """Mock httpx.post returning error for data API, verify valid=False."""
-    import asyncio
-
     async def _run() -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 401
@@ -122,8 +115,6 @@ def test_validate_data_invalid() -> None:
 
 def test_validate_access_token_trading_valid() -> None:
     """Mock httpx.get returning 200 for trading token, verify valid=True."""
-    import asyncio
-
     async def _run() -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -146,8 +137,6 @@ def test_validate_access_token_trading_valid() -> None:
 
 def test_validate_access_token_trading_expired() -> None:
     """Mock httpx.get returning 401 for trading token, verify valid=False."""
-    import asyncio
-
     async def _run() -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 401
@@ -173,8 +162,6 @@ def test_validate_access_token_trading_expired() -> None:
 
 def test_validate_access_token_data_valid() -> None:
     """Mock httpx.get returning 200 for data token, verify valid=True."""
-    import asyncio
-
     async def _run() -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -197,8 +184,6 @@ def test_validate_access_token_data_valid() -> None:
 
 def test_validate_access_token_data_expired() -> None:
     """Mock httpx.get returning 401 for data token, verify valid=False."""
-    import asyncio
-
     async def _run() -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 401
@@ -224,8 +209,6 @@ def test_validate_access_token_data_expired() -> None:
 
 def test_validate_handles_network_error() -> None:
     """Mock httpx raising exception, verify valid=False with error message."""
-    import asyncio
-
     async def _run() -> None:
         with patch("shettyxtreme.auth.validator.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
