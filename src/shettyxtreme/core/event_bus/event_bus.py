@@ -22,6 +22,9 @@ class Topic(Enum):
     SYSTEM_STATUS = "system.status"
     REGIME_CHANGED = "regime.changed"
     CONVICTION_CHANGED = "conviction.changed"
+    FEATURES_COMPUTED = "features.computed"
+    SIGNAL_V2 = "signal.v2"
+    RISK_DECISION = "risk.decision"
 
 @dataclass
 class Event:

@@ -1,0 +1,11 @@
+# Voter weights for the Signal Engine's voter plugin system.
+# Each voter has a weight used in conviction computation.
+# Weights are normalized during computation, not raw.
+options_flow_voter: 1.0
+orb_voter: 1.0
+micro_voter: 1.0
+breadth_voter: 0.8
+
+# Signal engine thresholds
+conviction_threshold: 0.35
+disagreement_threshold: 0.45
