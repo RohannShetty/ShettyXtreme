@@ -8,6 +8,633 @@
 
 ---
 
+## SECTION 0 — RESEARCH METHOD
+
+**How we evaluated the repos:**
+- Deep-dived 7 reference repos via 3 parallel research sub-agents (OpenAlgo architecture, ShettyBot V1 intelligence, DhanHQ-py/OpenBB/Fincept/AST)
+- Read ShettyBot V1's full architecture blueprint (66K chars), intelligence audit (54K chars), Markov investigation, and transition charter
+- Cloned and studied both UI/UX skill repos (taste-skill, ui-ux-pro-max-skill)
+
+**How we separated product ideas from implementation details:**
+- For each repo, identified *what* it does well vs *how* it implements it
+- Ideas/patterns/concepts = candidate for absorption; implementation specifics = evaluated case by case
+- ShettyBot V1's monolithic code = extract concepts, not code
+
+**How we distinguished reusable architecture from repo-specific noise:**
+- Asked: "Does this pattern transfer to a standalone Python platform for Indian options?" If no = noise
+- Fincept's C++20/Qt6 code = noise; their analytics breadth signal = signal
+- OpenAlgo's Flask/React stack = noise; their broker adapter pattern = signal
+
+**How we checked for blind spots:**
+- Used Awesome Systematic Trading as a category checklist
+- Compared our planned features against the catalog's categories
+- Identified gaps: cost modeling, streaming TA, execution profiling, pre-trade risk gate
+
+**How we avoided bias toward the current direction:**
+- Started from first principles: "What does an Indian prosumer options trader actually need?"
+- Questioned every prior decision: OpenAlgo dependency (wrong), Textual TUI (wrong), Markov voter (misleading), risk-neutral EV (noise)
+- User directive to challenge everything was taken literally
+
+---
+
+## SECTION 1 — REVERSE-ENGINEERING LENS
+
+### OpenAlgo — Execution Infrastructure (Absorb, Don't Depend On)
+
+> **CORRECTED from earlier session**: Earlier plan said "compose with OpenAlgo as external dependency." User directed: NO runtime dependency. Absorb patterns as first-party code.
+
+| Aspect | Decision |
+|--------|----------|
+| **Best used as** | Pattern source for broker adapter design, order validation, WebSocket architecture |
+| **Inherit** | Broker adapter pattern (plugin.json discovery, standardized module structure), order validation constants, WebSocket proxy architecture concept, Options Tools (12 tools including Option Chain, IV Smile, Max Pain, GEX, Vol Surface) |
+| **Don't copy** | Flask/Flask-RESTX backend, React frontend, single-worker Gunicorn constraint, ZMQ subprocess architecture |
+| **Coupling risk** | If we import openalgo package → brittle. Solution: absorb adapter pattern + Dhan adapter code as first-party |
+| **External vs internal** | Absorb as internal first-party code in `integration/`. Not an external dependency. |
+| **Upstream harvest** | Monitor repo changes, review diffs, selectively absorb improvements via human review (not auto-merge) |
+| **Blind spots revealed** | OpenAlgo has NO signal generation, NO regime detection, NO portfolio/risk management, NO backtesting — ShettyXtreme must fill all of these |
+
+### ShettyBot V1 — Intelligence DNA (Extract Concepts, Fix Bugs)
+
+| Aspect | Decision |
+|--------|----------|
+| **Best used as** | Reference for trading intelligence concepts. Code is extracted, NOT imported. |
+| **Inherit** | Regime detection framework, conviction scoring concept, options-flow voter concept, shadow model concept, learning loop concept, cockpit thinking |
+| **Don't copy** | Monolithic module structure, god modules (2,702 + 3,381 lines), direct database access patterns, Telegram bot as primary interface, hardcoded strategies |
+| **Coupling risk** | If we import ShettyBot modules, we inherit architectural debt |
+| **External vs internal** | Internal source material — extract concepts, reimplement cleanly |
+| **Blind spots revealed** | 10 critical bugs: risk-neutral GBM noise for strike selection, loss-limit freezing position management, unreachable TP3, OI voter time-of-day bias, dead voters diluting confidence, forced bearish tie-break, no NEUTRAL state, no cost model, 3 inconsistent stop-loss definitions, ML voter with AUC 0.518 (random) |
+
+### DhanHQ-py — Dhan Broker SDK (Pip Dependency)
+
+| Aspect | Decision |
+|--------|----------|
+| **Best used as** | Direct pip dependency for Dhan API calls |
+| **Inherit** | API client design, data models for Indian market, WebSocket subscription protocol |
+| **Don't copy** | Don't rebuild HTTP client layer, don't rewrite data parsing |
+| **Coupling risk** | Dhan API changes (endpoint deprecation, auth changes), SDK version changes, DhanHQ-py has NO auto-refresh and NO retry logic |
+| **External vs internal** | External pip dependency — wrapped by our Dhan Trading Adapter + Dhan Data Adapter |
+| **Upstream harvest** | Lock file with exact version, staging upgrades first, integration tests validate |
+| **Blind spots revealed** | Dual credentials required (Trading ≠ Data API, error 806 if mixed), token expiry ~3AM IST, sync HTTP only, separate WS for live data (binary protocol), Super Orders/Forever Orders not in OpenAlgo |
+
+### Fincept Terminal — Terminal Breadth Reference (Ideas Only)
+
+| Aspect | Decision |
+|--------|----------|
+| **Best used as** | Breadth reference for what a serious terminal product covers |
+| **Inherit** | Multi-asset thinking, research workflow concepts, analytics breadth (1,412 Python analytics scripts), options analytics concepts, backtesting framework aggregation pattern |
+| **Don't copy** | C++20/Qt6 code (different stack entirely), AGPL-3.0 license prohibits code reuse, SaaS QuantLab API dependency |
+| **Coupling risk** | Zero — no code enters ShettyXtreme |
+| **External vs internal** | External — patterns and concepts only |
+| **Blind spots revealed** | Our scope is narrower (India-first, options-first, single-broker) but deeper in intelligence |
+
+### OpenBB — Research Platform Patterns (Selective Inspiration)
+
+| Aspect | Decision |
+|--------|----------|
+| **Best used as** | Architecture pattern reference for research platform design |
+| **Inherit** | Plugin/extension system for data providers, research workspace concept, tool discovery pattern for AI agents, single-source API definition pattern (one definition → FastAPI endpoint + Python SDK + MCP tool) |
+| **Don't copy** | Actual data provider implementations (US/global), web framework choices, enterprise workspace, crypto/forex modules |
+| **Coupling risk** | Zero — no code enters ShettyXtreme |
+| **External vs internal** | External — patterns only |
+| **Blind spots revealed** | We need a research workspace (not just live monitoring), and future MCP compatibility for AI-assisted research |
+
+### Awesome Systematic Trading — Blind-Spot Checklist
+
+| Aspect | Decision |
+|--------|----------|
+| **Best used as** | Category coverage checklist to ensure we're not missing important capabilities |
+| **Inherit** | Awareness of: cost modeling, streaming TA, execution profiling, pre-trade risk gates |
+| **Don't copy** | Any code — this is a curated link list, not a codebase |
+| **Blind spots revealed** | Missing: cost modeling (no slippage/spread/brokerage), streaming TA (recomputing from scratch each cycle), execution profiling, pre-trade risk gate (bypassed on loss-limit breach) |
+
+---
+
+## SECTION 2 — RE-AUDIT OF THE CURRENT DIRECTION
+
+### What Is Probably Right
+
+- **Product vision**: Unified intelligence + execution + research terminal for Indian market
+- **Dhan-first**: Correct broker choice for API quality and cost
+- **Regime-awareness**: Markets do have regimes and trading should adapt
+- **Operator-in-the-loop**: Semi-auto is safer than full auto for a prosumer product
+- **Conviction-based signals**: Better than single-indicator signals
+- **Shadow model concept**: Validate before activating
+
+### What Is Probably Wrong (Architecture)
+
+- **OpenAlgo as runtime dependency** → ShettyXtreme becomes a client of OpenAlgo. If OpenAlgo breaks, changes, or is unmaintained, ShettyXtreme breaks. **CORRECTED: standalone software.**
+- **Textual TUI** → Limited interactivity, no real-time charts, no web access, hard to extend. **CORRECTED: web-based terminal.**
+- **Composing with ShettyBot V1 code** → Inherits god modules and architectural debt. **CORRECTED: reimplement concepts.**
+
+### What Is Probably Wrong (Intelligence)
+
+- **Risk-neutral GBM for strike selection** → Noise optimization, not edge. GBM produces random strike rankings. **Fix: signal-drift EV.**
+- **Loss limit freezes ALL trading** → Position management stops too. TSL and TP targets don't run on existing positions. **Fix: entries only.**
+- **TP3 unreachable** → `update_tsl` runs before `check_targets`. **Fix: check_targets before update_tsl.**
+- **No NEUTRAL state** → Forces UP or DOWN when voters disagree. **Fix: explicit NEUTRAL.**
+- **OI voter time-of-day bias** → Raw OI compared across session. OI builds from open to close. **Fix: time-of-day percentile normalization.**
+- **Dead voters dilute confidence** → ML voter (AUC 0.518 = random) and HMM voter contribute to D/P/G. **Fix: remove dead voters.**
+- **No cost model** → Marginal strategies pass as profitable. **Fix: cost model in all EV.**
+- **3 inconsistent stop-loss definitions** → **Fix: one canonical definition.**
+
+### What Is Missing (Product)
+
+- **Dhan Trading vs Data API split** → Two separate auth flows, two WS connections, different rate limits, different failover behavior.
+- **Knowledge ingestion layer** → No way to feed reports, books, or strategy notes into the system.
+- **Cost model** → No slippage/spread/brokerage in any EV computation.
+- **Streaming TA** → Features recomputed from scratch each cycle (O(n) not O(1)).
+- **Execution profiling** → No latency measurement from tick to signal to order.
+
+### Architecture Smells
+
+- **Terminal vs bot vs platform confusion**: ShettyBot V1 was a bot (Telegram), V2 blueprint tried to be a platform, but the terminal aspect was underspecified.
+- **Analytics vs execution boundary confusion**: ShettyBot V1 mixed analytics (regime detection) with execution (order placement) in the same monolith.
+- **Knowledge system vs trading system confusion**: No clear boundary between "what the system knows" and "what the system does."
+- **Circular assumption**: Regime detection drives signal generation → signal generation validates regime detection. Without independent validation, this is circular.
+
+---
+
+## SECTION 3 — PRODUCT VISION
+
+### What Problem It Solves
+
+Indian prosumer traders use 4-7 disconnected tools (broker terminal, analytics platform, options analyzer, scanner, journal, risk monitor) to trade. This fragmentation costs money, time, and context. ShettyXtreme unifies the entire workflow into one standalone application.
+
+### Who It's For First
+
+The **prosumer Indian trader** who:
+- Trades NSE/BSE equities, indices, and options (especially weekly expiry options)
+- Uses Dhan as their broker
+- Wants more than a broker terminal but less than a Bloomberg terminal
+- Values intelligence and decision support over charting
+- Runs a local application on their machine
+
+### Why It's Better
+
+| vs Broker Terminal | vs Analytics Terminal | vs Strategy Bot |
+|--------------------|---------------------|----------------|
+| Includes research, scanning, analytics, and decision support | Integrated execution — no "analyze here, trade there" gap | Full platform, not just signals |
+| Not just order entry — covers full workflow | India-specific market structure is first-class | Research and analytics workspace |
+| Regime-aware intelligence | Options intelligence beyond Greeks | Manual + automated execution |
+| Conviction-based signals | Live decision support, not just historical | Operator-in-the-loop design |
+
+### How It Helps Make Money
+
+- **Gap identification**: Scanner detects anomalies, divergences, unusual activity
+- **Regime shifts**: Early detection of trend changes, volatility expansion
+- **Options structure**: Identify skewed IV, mispriced spreads, PCR contrarian signals
+- **Risk awareness**: Avoid blow-ups by knowing exposure before it hurts
+- **Cost-aware EV**: No marginal strategies passing as profitable (slippage/spread/brokerage in all EV)
+- **Learning loop**: Every signal tracked, every outcome fed back to improve voter weights
+
+### How It Thinks About Market Anticipation
+
+**Not prediction.** The platform outputs conditions, not predictions. "Conditions X, Y, Z present, which historically precede outcome W with estimated probability P." Uncertainty is visible (conviction score, disagreement indicator, participation level).
+
+### What "Unified Platform" Means in Practice
+
+One standalone application where:
+- One data model serves research, live monitoring, and backtesting
+- One execution abstraction works for manual and automated orders
+- One risk engine applies across all strategies and positions
+- One terminal interface provides research, execution, and monitoring
+- One plugin system allows extension without modifying core
+- One intelligence engine generates conviction-based signals with full explainability
+
+---
+
+## SECTION 4 — INDIA-FIRST SCOPE
+
+### NSE/BSE Market Reality
+
+| Aspect | Indian Reality |
+|--------|---------------|
+| **Instruments** | Equities (EQ), Futures (FUT), Options (OPT), Indices (NIFTY, BANKNIFTY, FINNIFTY, MIDCAPNIFTY) |
+| **Expiry** | Weekly on Thursdays, monthly on last Thursday. Expiry day volatility and rollover dynamics are central to options workflow |
+| **Sessions** | Pre-open 9:00-9:15 IST, Regular 9:15-15:30 IST, Post-close 15:30-16:00 |
+| **Settlement** | T+1 equities, T+1 F&O (daily MTM) |
+| **Order types** | LIMIT, MARKET, SL, SL-M, AMO, CO (Cover), BO (Bracket), IOC |
+| **Dhan-specific** | Super Orders (multi-leg coordinated), Forever Orders, Conditional Orders — NOT in OpenAlgo |
+
+### Where Indian-Market Specialization is First-Class
+
+1. **Instrument master** — NSE/BSE scrip codes, series, expiry calendar with holiday awareness
+2. **Options chain** — Weekly/monthly expiry, strike ladder, Greeks
+3. **Market status** — Session state machine (pre-open, live, post-close, holiday)
+4. **Calendar** — Trading holidays, expiry schedule, result season
+5. **Margin models** — SPAN, VAR, ELM based on Indian clearing corp rules
+6. **PCR/OI** — Time-of-day normalized, expiry-aware
+
+### Where Multi-Asset Should Be Generic
+
+1. Event bus — instrument-agnostic message passing
+2. Storage model — time-series data stores for any instrument
+3. Plugin system — new asset classes added via plugins
+4. Signal engine — indicator computation on normalized data
+5. Risk models — position sizing and exposure limits (market-agnostic parameters)
+
+### Dhan-Specific Considerations
+
+**Strengths we exploit:**
+- No minimum balance requirements
+- Competitive brokerage (₹0 on delivery, low on intraday/F&O)
+- Good API documentation and SDK support
+- WebSocket support for live data
+- Support for all major order types including AMO
+- Position conversion between intraday and delivery
+- Super Orders, Forever Orders, Conditional Orders (Dhan-unique)
+
+**Constraints we must handle:**
+- Dual credentials: Trading credentials ≠ Data API credentials (error 806 if mixed)
+- Token refresh requirements (access tokens expire ~3AM IST, DhanHQ-py has no auto-refresh)
+- Rate limits on API calls (per endpoint, per second)
+- Historical data availability (limited duration for intraday)
+- Positions response does NOT include LTP — separate `multiquote` call required
+- WebSocket: DhanFeed for live data — binary protocol, separate from REST
+
+---
+
+## SECTION 5 — SYSTEM BOUNDARIES
+
+> **CORRECTED from earlier session**: Integration layer no longer wraps OpenAlgo as external service. It contains first-party Dhan adapters absorbed from OpenAlgo patterns.
+
+### A) Core Platform (`core/`) — STABLE
+
+**Purpose:** Stable foundation that everything depends on. Changes slowly.
+
+**What belongs:**
+- Domain models (Instrument, Order, Position, Signal — frozen dataclasses)
+- Event bus (asyncio pub/sub) + event types
+- Contracts/interfaces (OrderExecutor, MarketDataStream, AccountInfo protocols)
+- Config system (YAML + env loading + pydantic validation)
+- Storage abstraction (DuckDB time-series + SQLite KV + migrations)
+- Session state (market calendar, session lifecycle, runtime mode)
+- Health check interfaces
+
+**What does NOT belong:**
+- Any broker-specific code
+- Any DhanHQ imports
+- Any httpx imports
+- Signal logic, strategy logic, UI code, research code
+
+**Import rule:** Zero external imports (only stdlib + own subpackages)
+**Stability:** HIGH — core interfaces change only through ADRs
+
+### B) Integration Layer (`integration/`) — SWAPPABLE
+
+**Purpose:** Anti-corruption layer between core and external systems.
+
+**What belongs:**
+- Dhan Trading Adapter (first-party, using DhanHQ-py) — order placement, positions, holdings, EDIS, margin, auth with auto-refresh
+- Dhan Data Adapter (first-party, using DhanHQ-py, separate credentials) — live market feed WS, historical OHLC, OI/PCR
+- Order validation (absorbed from OpenAlgo constants + logic)
+- Symbol/instrument master (first-party, seeded from Dhan API)
+- Code absorbed from OpenAlgo (marked with origin markers in `_absorbed/`)
+
+**What does NOT belong:**
+- Core business logic, signal intelligence, UI rendering, storage implementations
+
+**Import rule:** imports core/interfaces + external APIs (DhanHQ-py, httpx)
+**Stability:** MEDIUM-HIGH
+
+### C) Intelligence Layer (`intelligence/`) — RAPID EVOLUTION
+
+**Purpose:** The unique value — trading intelligence.
+
+**What belongs:**
+- `features/` — Streaming feature computation (O(1) per tick: bars, MA, ATR, ADX, VWAP, PCR, OI, IV)
+- `regime/` — Regime classifier (no Markov on 1m noise, coarser bars)
+- `signals/` — Voter plugin system, conviction computation, D/P/G, NEUTRAL state
+- `voters/` — Individual voter plugins (each in own file)
+- `options/` — IV analysis, OI analysis, PCR context, expiry/strike selection
+- `risk/` — Position sizing, loss limits (entries only), margin guardrails, composable filter chain
+- `scanners/` — Gap detection, opportunity clusters
+
+**What does NOT belong:**
+- Order execution, data storage, UI, broker-specific logic
+
+**Import rule:** imports core only
+**Stability:** RAPID — our unique value
+
+### D) Execution Layer (`execution/`) — Phase 2+
+
+**What belongs:**
+- Order lifecycle, position management (TP1/TP2/TP3 with FIXED ordering, TSL, EOD close)
+- Semi-auto approval, one canonical stop-loss definition (premium-relative, vol-aware)
+
+**Import rule:** imports core + integration/contracts
+
+### E) Learning Layer (`learning/`) — Phase 2+
+
+**What belongs:**
+- Outcome tracking (immutable signal_decisions + execution_attempts + outcome_labels)
+- Per-voter quality tracking (CONSUMED — feeds back to weight adjustments)
+- MFE/MAE computation, walkforward with honest evaluation, calibration
+
+**Import rule:** imports core only
+
+### F) Terminal Layer (`terminal/`) — FAST EVOLUTION
+
+**What belongs:**
+- FastAPI backend (REST + WS endpoints)
+- Web frontend using taste-skill (industrial-brutalist-ui) + ui-ux-pro-max-skill
+- Panels: Watchlist, Intelligence Cockpit, Execution Cockpit, Scanner/Alerts/Logs
+
+**Import rule:** imports core + intelligence (read models) + execution (commands)
+
+### G) Knowledge Layer (`knowledge/`) — Phase 3+
+
+**What belongs:**
+- Document store, tagger, heuristic extractor, knowledge linker
+
+**Import rule:** imports core only; CANNOT import intelligence or execution (physical separation)
+
+### H) Observability Layer (`observability/`)
+
+**What belongs:**
+- Structured logging, latency metrics, health checks, session audit log
+
+**Import rule:** imports core only
+
+### External Dependencies
+
+| Dependency | How Used | Strategy |
+|------------|----------|----------|
+| DhanHQ-py | pip package | Lock file, exact version pin |
+| DuckDB | pip package | Semver range for analytics/time-series |
+| httpx | pip package | For async HTTP if needed beyond DhanHQ-py |
+| pydantic | pip package | >=2.0 for config validation |
+
+### Future Expansion Layer
+
+- Additional brokers via new adapters (implement core protocols)
+- Additional data providers via new adapters
+- AI-assisted workflows via plugins
+- SaaS/cloud mode
+- Community plugin SDK
+- Knowledge ingestion pipeline (Phase 3+)
+
+---
+
+## SECTION 6 — PROPOSED ARCHITECTURE
+
+> **CORRECTED from earlier session**: No OpenAlgo as external service. No Textual TUI. First-party Dhan adapters. Web-based terminal.
+
+### Layer Diagram
+
+```
+  TERMINAL LAYER (FastAPI + Web Frontend — taste-skill + ui-ux-pro-max-skill)
+       │
+  EXECUTION LAYER (Order Lifecycle | Position Mgmt | Semi-auto)
+       │
+  INTELLIGENCE LAYER (Regime | Signal Engine | Voters | Options Intel | Risk | Scanners)
+       │
+  CORE PLATFORM (Domain Models | Event Bus | Contracts | Config | Storage | Session)
+       │
+  INTEGRATION LAYER (Dhan Trading Adapter | Dhan Data Adapter | Instrument Master)
+       │
+  EXTERNAL DEPS (DhanHQ-py pip | Dhan APIs)
+```
+
+### Core Data Flow
+
+```
+Dhan Data WS → Dhan Data Adapter → Event Bus (MarketDataReceived)
+    ↓
+Feature Engine (streaming O(1)/tick) → Event Bus (FeaturesComputed)
+    ↓
+Regime Classifier → Event Bus (RegimeUpdated)
+    ↓
+Signal Engine (voters → conviction → D/P/G) → Event Bus (SignalGenerated)
+    ↓
+Options Intelligence (IV rank, PCR, strike EV) → Strategy Hint
+    ↓
+Risk Engine (entries only, cost-aware) → Event Bus (RiskAssessed)
+    ↓
+[If OBSERVER mode: display in terminal UI]
+[If LIVE mode: Execution Engine → Dhan Trading API → Event Bus (OrderPlaced)]
+    ↓
+Learning Loop → Outcome Tracking → Voter Quality → Weight Adjustment
+```
+
+### Storage Model
+
+- **DuckDB** (time-series): bars, ticks, indicators, option chain snapshots, OI history
+- **SQLite** (KV): instrument master, configs, session state, signal log, trade log
+- **File-based**: kill switch (independent of platform), journal entries (markdown)
+
+### Runtime Modes
+
+| Mode | Data | Execution | Use |
+|------|------|-----------|-----|
+| Backtest | Historical | Simulated | Evaluation |
+| Simulation | Live/Delayed | Simulated | Tuning |
+| Observer | Live | Read-only | Monitoring (Phase 2 MVP) |
+| Live | Live | Real (semi-auto) | Production (Phase 3) |
+| Paper | Live | Paper | Rehearsal |
+
+### Plugin System
+
+- Strategies, scanners, voters as plugins
+- Protocol-based interface
+- Python packages from configured dirs
+- Registry for discovery (not hardcoded imports)
+
+---
+
+## SECTION 7 — UPDATE-RESILIENT DESIGN
+
+> **CORRECTED from earlier session**: Not composition with OpenAlgo. Absorb patterns, track upstream, selectively incorporate.
+
+### Anti-Corruption Layer (ACL) Pattern
+
+| Boundary | ACL Pattern | How |
+|----------|-------------|-----|
+| DhanHQ-py | Dhan Trading Adapter + Dhan Data Adapter | Only code that imports dhanhq; core sees `OrderExecutor`/`MarketDataStream` protocols |
+| Absorbed OpenAlgo code | `_absorbed/` directory with origin markers | Marked with source comments; reviewed when OpenAlgo publishes changes |
+| Fincept | Zero (no code enters) | Patterns only |
+| OpenBB | Zero (no code enters) | Patterns only |
+
+### Absorb vs Composition vs Fork
+
+| Strategy | When | Our Use |
+|----------|------|---------|
+| **Composition** (pip dep) | External library with stable API | DhanHQ-py |
+| **Absorption** (copy + adapt) | External service with useful patterns | OpenAlgo broker adapter, order validation, Options Tools concepts |
+| **Fork** | Never (unless upstream unmaintained 12+ months) | Not used |
+
+### Upstream Sync Workflow (OpenAlgo)
+
+1. Monitor OpenAlgo repo for changes (monthly review)
+2. When changes detected, review the diff
+3. Decision: absorb (copy + adapt), skip, or modify
+4. If absorb: copy to `_absorbed/`, add origin marker, adapt to our interfaces
+5. Run full test suite to validate
+6. No auto-merge — human review always
+
+### Upstream Sync Workflow (DhanHQ-py)
+
+1. Version pin in pyproject.toml
+2. Changelog-driven review before bumps
+3. Integration tests validate adapter works with new version
+4. Staged rollout: dev → staging → prod
+
+### CI-Enforced Architecture Compliance
+
+```bash
+# core has zero external imports
+! grep -r "import dhanhq\|import httpx\|import duckdb\|import openalgo" src/shettyxtreme/core/
+# intelligence doesn't import integration
+! grep -r "from.*integration\|import.*integration" src/shettyxtreme/intelligence/
+# no file > 500 lines
+! find src -name "*.py" -exec wc -l {} + | awk '$1 > 500'
+# no openalgo dependency anywhere
+! grep -r "import openalgo\|from openalgo" src/
+```
+
+---
+
+## SECTION 8 — FEATURE MAP
+
+| Feature | Phase | Classification |
+|---------|-------|---------------|
+| Watchlists with live prices | MVP (Phase 1) | Essential |
+| Market internals (indices, A/D, P/C) | MVP | Essential |
+| Option chain with Greeks | MVP | Essential |
+| Gap scanner | MVP | Essential |
+| Position viewer (read-only) | MVP | Essential |
+| Connection status + health | MVP | Essential |
+| Kill switch (file-based) | MVP | Essential |
+| Regime classifier | Phase 2 | Essential |
+| Signal engine (conviction, D/P/G, NEUTRAL) | Phase 2 | Essential |
+| Options intelligence (IV rank, PCR, strike EV) | Phase 2 | Essential |
+| Risk engine (entries-only loss limit) | Phase 2 | Essential |
+| Cost model (slippage/spread/brokerage) | Phase 2 | Essential |
+| Web terminal UI (taste-skill + ui-ux-pro-max) | Phase 2 | Essential |
+| Signal + trade journal | Phase 2 | Essential |
+| Scanner (opportunity clusters) | Phase 2 | Essential |
+| Shadow models | Phase 2 | Essential |
+| Execution engine (semi-auto) | Phase 3 | Essential |
+| Position management (TP3 fixed) | Phase 3 | Essential |
+| Learning loop (voter quality consumed) | Phase 3 | Essential |
+| Walkforward (honest evaluation) | Phase 3 | Essential |
+| Market anticipation (probabilistic) | Phase 3 | Valuable |
+| Multi-leg strategy constructor | Phase 3 | Seductive distraction (defer until single-leg proven) |
+| Backtest engine | Phase 3 | Valuable |
+| Knowledge ingestion | Phase 4 | Future |
+| Auto-execution | Phase 4 | Future (high risk) |
+| Multi-broker | Phase 4 | Future |
+| SaaS/multi-user | Phase 4+ | Optional |
+| ML/RL models | Phase 5+ (never until data + pipeline proven) | Seductive distraction |
+| Pattern recognition | Optional | Needs more evidence |
+| Community plugin marketplace | Optional | Needs more evidence |
+| Telegram as primary interface | Never | Deprioritized |
+
+---
+
+## SECTION 9 — SHETTYBOT EVOLUTION
+
+### What Retains
+
+| ShettyBot V1 Concept | New Home | Status |
+|---------------------|----------|--------|
+| Regime detection methodology | `intelligence/regime/` | Reimplemented (no Markov on 1m noise) |
+| Conviction scoring concept | `intelligence/signals/` | Reimplemented (D/P/G, participation-normalized) |
+| Options-flow voter concept | `intelligence/voters/options_flow.py` | Reimplemented (time-of-day normalized OI) |
+| Shadow model concept | `intelligence/signals/` | Reimplemented (shadow voters logged, don't gate) |
+| Learning loop concept | `learning/` | Reimplemented (voter quality CONSUMED, not just logged) |
+| Cockpit thinking | `terminal/` | Reimplemented (web-based, not Textual) |
+| Risk awareness | `intelligence/risk/` | Reimplemented (entries-only loss limit) |
+
+### What Gets Refactored
+
+- Monolithic `live_dispatcher.py` (2,702 lines) → split into: Event Bus + Signal Engine + Execution Engine + Position Manager
+- Monolithic `dashboard.py` (3,381 lines) → replaced by: FastAPI backend + web frontend
+- Hardcoded strategies → YAML-configured voter plugins with registry
+
+### What Gets Deprecated
+
+- V1 direct OpenAlgo integration → superseded by first-party Dhan adapters
+- V1 database schemas → replaced by new storage model (DuckDB + SQLite)
+- V1 Telegram bot → optional plugin, not primary interface
+- V1 Textual/Rich TUI → replaced by web-based terminal
+- Markov voter (momentum follower, misleads as regime predictor) → removed or renamed `MomentumVoter`
+- ML voter (AUC 0.518 = random) → removed entirely
+- HMM voter (poorly calibrated) → removed
+
+### What Gets Preserved as Concepts
+
+- Regime classification methodology (trend/range/volatile detection)
+- Signal scoring algorithms (direction score, participation, disagreement)
+- Risk calculation approaches (position sizing, loss limits)
+- Strategy-to-regime mapping
+- Cockpit information architecture
+
+These are extracted as specs, then reimplemented cleanly with 10 critical bugs fixed.
+
+### 10 Critical Bugs Fixed in ShettyXtreme
+
+| # | Bug | Fix |
+|---|-----|-----|
+| 1 | Strike selection = risk-neutral GBM noise | Signal-drift EV with actual exit policy |
+| 2 | Loss limit freezes all trading | Loss limit blocks ENTRIES ONLY |
+| 3 | TP3 unreachable | check_targets before update_tsl |
+| 4 | No NEUTRAL signal (bearish tie-break) | Explicit NEUTRAL state |
+| 5 | OI time-of-day clock bias | Normalize OI by time-of-day percentile |
+| 6 | 3 inconsistent stop-loss definitions | One canonical (premium-relative, vol-aware) |
+| 7 | Dead voters dilute confidence | Conviction (participation-normalized) — dead voters removed |
+| 8 | Weights hardcoded in add_vote() | Weights in config YAML |
+| 9 | No cost model | Slippage/spread/brokerage in ALL EV |
+| 10 | No voter correlation awareness | Block caps per voter correlation group |
+
+---
+
+## SECTION 10 — OPENALGO UTILIZATION (ABSORB, DON'T DEPEND)
+
+> **COMPLETELY REWRITTEN from earlier session.** Old plan: "compose with OpenAlgo as external service." New plan: "absorb patterns as first-party code, NO runtime dependency."
+
+### What to Absorb from OpenAlgo
+
+| OpenAlgo Component | Absorb Into | How |
+|-------------------|-------------|-----|
+| Broker adapter pattern (plugin.json discovery, standardized module structure) | `integration/` | Copy pattern, implement for Dhan as first-party |
+| Dhan adapter (auth_api, order_api, data mapping, streaming) | `integration/dhan/` | Copy code, adapt to our interfaces, mark origin |
+| Order validation (exchanges, actions, price types, product types) | `integration/` | Copy constants and validation logic |
+| WebSocket architecture concept (broker WS → internal bus → consumer) | `integration/dhan/` | Implement as first-party asyncio pattern, not ZMQ subprocess |
+| Options Tools (Option Chain, IV Smile, Max Pain, GEX, Vol Surface) | `intelligence/options/` | Study and reimplement in our options intelligence |
+
+### What to Delegate to Absorbed Code
+
+- Order validation for NSE/BSE exchanges, actions, price types (already done well in OpenAlgo)
+- Dhan order mapping (DhanHQ order format → standard order model)
+- Broker adapter interface pattern (proven in OpenAlgo's multi-broker design)
+
+### What to NEVER Build from Scratch
+
+- Order validation constants for Indian exchanges (NSE/BSE) — already exists in OpenAlgo
+- Broker adapter interface pattern — proven in OpenAlgo
+- Dhan order mapping (DhanHQ order format → standard order model) — adapt from OpenAlgo's Dhan adapter
+
+### What Should Remain Independent from OpenAlgo
+
+- **All core domain models** — our own frozen dataclasses
+- **All intelligence** — signal engine, regime, options intelligence
+- **All execution logic** — order lifecycle, position management
+- **All learning** — outcome tracking, walkforward, calibration
+- **All UI** — web-based terminal
+- **All storage** — our own DuckDB + SQLite schema
+- **All config** — our own YAML + env system
+
+### How to Structure the Code So OpenAlgo Is Used Heavily Without Becoming a Tangle
+
+1. Absorbed code lives in `integration/_absorbed/` with clear origin markers
+2. Core domain and intelligence have ZERO imports from absorbed code
+3. Absorbed code is adapted to implement our `core/interfaces/` protocols
+4. When OpenAlgo publishes changes, we review the diff and decide: absorb, skip, or adapt
+5. No `import openalgo` anywhere in our codebase — ever
+6. DhanHQ-py remains a pip dependency (library, acceptable) — it's NOT an external service
+
+---
 ## SECTION 11 — DHAN INTEGRATION STRATEGY
 
 ### Dhan API Split: Trading vs Data
