@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShettyXtreme Terminal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ── Reset & Base ───────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  background: #0A0A0A;
+  color: #E0E0E0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.num { font-family: 'JetBrains Mono', monospace; }
+.up   { color: #4AF626; }
+.down { color: #E61919; }
+.muted { color: #6C6C6C; }
+
+/* ── Layout ──────────────────────────────────────────────────── */
+.app { display: grid; height: 100vh; grid-template-rows: 44px 1fr 28px; }
+.topbar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 0 16px; background: #121212;
+  border-bottom: 1px solid #1E1E1E;
+}
+.topbar h1 { font-size: 15px; font-weight: 600; color: #4AF626; letter-spacing: 0.5px; }
+.topbar .mode { font-size: 11px; padding: 2px 8px; border-radius: 3px; background: #1A1A1A; color: #6C6C6C; }
+.topbar .mode.live { color: #4AF626; border: 1px solid #4AF62633; }
+.topbar .clock { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #888; }
+.topbar .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.topbar .status-dot.green { background: #4AF626; }
+.topbar .status-dot.yellow { background: #F6A623; }
+.topbar .status-dot.red { background: #E61919; }
+
+.main { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 1px; background: #1A1A1A; overflow: hidden; }
+.panel {
+  background: #121212; overflow-y: auto; padding: 12px;
+  position: relative;
+}
+.panel::-webkit-scrollbar { width: 4px; }
+.panel::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+.panel-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px;
+  color: #6C6C6C; margin-bottom: 8px; padding-bottom: 4px;
+  border-bottom: 1px solid #1E1E1E;
+}
+
+/* ── Bottom bar ──────────────────────────────────────────────── */
+.bottombar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 16px; background: #121212; border-top: 1px solid #1E1E1E;
+  font-size: 11px; color: #6C6C6C;
+}
+.bottombar .alert { color: #F6A623; }
+.bottombar .alert.critical { color: #E61919; }
+
+/* ── Watchlist table ─────────────────────────────────────────── */
+table { width: 100%; border-collapse: collapse; }
+th { font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; color: #6C6C6C; text-align: left; padding: 4px 8px 4px 0; font-weight: 500; }
+td { padding: 3px 8px 3px 0; font-size: 12px; border-bottom: 1px solid #181818; }
+td:last-child { padding-right: 0; }
+tr:last-child td { border-bottom: none; }
+
+/* ── Cards / stats ───────────────────────────────────────────── */
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat-card { background: #1A1A1A; border-radius: 4px; padding: 8px; }
+.stat-label { font-size: 10px; color: #6C6C6C; text-transform: uppercase; letter-spacing: 0.5px; }
+.stat-value { font-size: 16px; font-weight: 600; margin-top: 2px; font-family: 'JetBrains Mono', monospace; }
+
+/* ── Voter bar ───────────────────────────────────────────────── */
+.voter-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.voter-name { flex: 1; font-size: 12px; }
+.voter-bar { height: 6px; border-radius: 3px; width: 60px; }
+.voter-bar.bull { background: #4AF62644; }
+.voter-bar.bear { background: #E6191944; }
+.voter-bar-fill { height: 100%; border-radius: 3px; }
+.voter-bar-fill.bull { background: #4AF626; }
+.voter-bar-fill.bear { background: #E61919; }
+
+/* ── Logs ────────────────────────────────────────────────────── */
+.log-entry { font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 2px 0; border-bottom: 1px solid #181818; }
+.log-entry:last-child { border-bottom: none; }
+.log-time { color: #6C6C6C; }
+.log-INFO { color: #E0E0E0; }
+.log-WARN { color: #F6A623; }
+.log-ERROR { color: #E61919; }
+
+/* ── Responsive ──────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .main { grid-template-columns: 1fr; grid-template-rows: auto; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Top Bar -->
+  <div class="topbar">
+    <h1>⟐ SHETTYXTREME</h1>
+    <span class="mode" id="modeBadge">OBSERVER</span>
+    <span class="status-dot green" id="healthDot" title="System health"></span>
+    <span class="clock" id="clock">--:--:--</span>
+  </div>
+
+  <!-- Main Grid -->
+  <div class="main">
+    <!-- Panel: Regime / Signal -->
+    <div class="panel">
+      <div class="panel-title">Intelligence</div>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-label">Regime</div>
+          <div class="stat-value" id="regimeValue" style="font-size:14px;">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Confidence</div>
+          <div class="stat-value" id="confidenceValue">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Signal</div>
+          <div class="stat-value" id="signalValue">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Conviction</div>
+          <div class="stat-value" id="convictionValue">—</div>
+        </div>
+      </div>
+      <div style="margin-top:8px;">
+        <div class="panel-title" style="margin-top:8px;">Voters</div>
+        <div id="votersContainer"><span class="muted">No voters active</span></div>
+      </div>
+    </div>
+
+    <!-- Panel: Watchlist -->
+    <div class="panel">
+      <div class="panel-title">Watchlist</div>
+      <table>
+        <thead><tr><th>Symbol</th><th>LTP</th><th>Chg%</th><th>Vol</th></tr></thead>
+        <tbody id="watchlistBody">
+          <tr><td colspan="4" class="muted">No instruments</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Panel: Positions / Risk -->
+    <div class="panel">
+      <div class="panel-title">Risk &amp; Positions</div>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-label">Daily P&amp;L</div>
+          <div class="stat-value" id="pnlValue">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Margin Used</div>
+          <div class="stat-value" id="marginValue">—</div>
+        </div>
+      </div>
+      <div id="positionsContainer" style="margin-top:8px;">
+        <span class="muted">No positions</span>
+      </div>
+    </div>
+
+    <!-- Panel: Scanner / Alerts / Logs -->
+    <div class="panel">
+      <div class="panel-title">Alerts &amp; Logs</div>
+      <div id="alertsContainer"></div>
+      <div id="logsContainer" style="margin-top:8px;">
+        <div class="log-entry"><span class="log-time muted">[--:--:--]</span> <span class="muted">Waiting for data...</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Bar -->
+  <div class="bottombar">
+    <span id="sessionStatus">Session: —</span>
+    <span class="alert" id="alertBar"></span>
+    <span style="margin-left:auto;" id="wsStatus">WS: disconnected</span>
+  </div>
+</div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────
+const API_BASE = '';
+const WS_URL = `ws://${location.host}/ws`;
+
+// ── State ─────────────────────────────────────────────────────
+let ws = null;
+let reconnectTimer = null;
+
+// ── Helpers ───────────────────────────────────────────────────
+function $(id) { return document.getElementById(id); }
+function fmt(v) { return typeof v === 'number' ? v.toFixed(2) : v ?? '—'; }
+function cls(val, up, down) { return val > 0 ? up : val < 0 ? down : ''; }
+
+// ── Clock ──────────────────────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  $('clock').textContent = now.toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' });
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── Fetch & Render ────────────────────────────────────────────
+async function fetchJSON(url) {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(r.statusText);
+    return await r.json();
+  } catch(e) { console.warn('Fetch failed:', url, e); return null; }
+}
+
+async function renderRegime() {
+  const d = await fetchJSON(`${API_BASE}/api/intelligence/regime`);
+  if (!d) return;
+  $('regimeValue').textContent = d.regime.replace(/_/g,' ').toUpperCase();
+  $('regimeValue').className = 'stat-value ' + (d.transition ? 'down' : 'up');
+  $('confidenceValue').textContent = fmt(d.confidence);
+}
+
+async function renderSignal() {
+  const d = await fetchJSON(`${API_BASE}/api/intelligence/signal`);
+  if (!d) return;
+  const dir = d.direction;
+  $('signalValue').textContent = dir;
+  $('signalValue').className = 'stat-value ' + (dir === 'UP' ? 'up' : dir === 'DOWN' ? 'down' : '');
+  $('convictionValue').textContent = fmt(d.conviction);
+  // Voters
+  const vc = $('votersContainer');
+  if (!d.voters || d.voters.length === 0) {
+    vc.innerHTML = '<span class="muted">No voters active</span>';
+    return;
+  }
+  vc.innerHTML = d.voters.map(v => {
+    const isBull = v.direction > 0;
+    const pct = Math.abs(v.direction) * 100;
+    const barClass = isBull ? 'bull' : 'bear';
+    return `<div class="voter-row">
+      <span class="voter-name ${isBull ? 'up' : 'down'}">${v.name}</span>
+      <span class="num" style="width:36px;text-align:right;font-size:11px;">${v.confidence.toFixed(2)}</span>
+      <div class="voter-bar ${barClass}"><div class="voter-bar-fill ${barClass}" style="width:${pct}%"></div></div>
+    </div>`;
+  }).join('');
+}
+
+async function renderWatchlist() {
+  const d = await fetchJSON(`${API_BASE}/api/watchlist`);
+  if (!d || d.length === 0) {
+    $('watchlistBody').innerHTML = '<tr><td colspan="4" class="muted">No instruments</td></tr>';
+    return;
+  }
+  $('watchlistBody').innerHTML = d.map(item => {
+    const chg = item.change_pct || 0;
+    return `<tr>
+      <td class="num">${item.symbol}</td>
+      <td class="num ${cls(chg, 'up', 'down')}">${fmt(item.ltp)}</td>
+      <td class="num ${cls(chg, 'up', 'down')}">${chg >= 0 ? '+' : ''}${fmt(chg)}%</td>
+      <td class="num muted">${(item.volume || 0).toLocaleString()}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function renderRisk() {
+  const d = await fetchJSON(`${API_BASE}/api/execution/risk`);
+  if (!d) return;
+  $('pnlValue').textContent = '₹' + fmt(d.daily_pnl);
+  $('pnlValue').className = 'stat-value ' + cls(d.daily_pnl, 'up', 'down');
+  $('marginValue').textContent = '₹' + fmt(d.margin_used) + ' / ₹' + fmt(d.margin_available);
+}
+
+async function renderPositions() {
+  const d = await fetchJSON(`${API_BASE}/api/execution/positions`);
+  const c = $('positionsContainer');
+  if (!d || d.length === 0) {
+    c.innerHTML = '<span class="muted">No positions</span>';
+    return;
+  }
+  c.innerHTML = '<table><thead><tr><th>Sym</th><th>Qty</th><th>M2M</th><th>PnL</th></tr></thead><tbody>' +
+    d.map(p => `<tr>
+      <td class="num">${p.symbol}</td>
+      <td class="num ${cls(p.net_quantity, 'up', 'down')}">${p.net_quantity}</td>
+      <td class="num ${cls(p.m2m, 'up', 'down')}">${fmt(p.m2m)}</td>
+      <td class="num ${cls(p.pnl, 'up', 'down')}">${fmt(p.pnl)}</td>
+    </tr>`).join('') + '</tbody></table>';
+}
+
+async function renderAlerts() {
+  const d = await fetchJSON(`${API_BASE}/api/scanner/alerts`);
+  if (!d || d.length === 0) {
+    $('alertsContainer').innerHTML = '<span class="muted">No alerts</span>';
+    $('alertBar').textContent = '';
+    return;
+  }
+  const latest = d[0];
+  $('alertBar').textContent = `${latest.alert_type}: ${latest.message}`;
+  $('alertBar').className = 'alert ' + (latest.severity === 'HIGH' ? 'critical' : '');
+  $('alertsContainer').innerHTML = d.slice(0,5).map(a =>
+    `<div class="log-entry"><span class="log-${a.severity === 'HIGH' ? 'ERROR' : 'WARN'}">[${a.alert_type}]</span> ${a.message}</div>`
+  ).join('');
+}
+
+async function renderLogs() {
+  const d = await fetchJSON(`${API_BASE}/api/scanner/logs?limit=20`);
+  if (!d || d.length === 0) return;
+  $('logsContainer').innerHTML = d.map(entry =>
+    `<div class="log-entry">
+      <span class="log-time">[${entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : ''}]</span>
+      <span class="log-${entry.level}">${entry.message}</span>
+    </div>`
+  ).join('');
+}
+
+async function renderSession() {
+  const d = await fetchJSON(`${API_BASE}/api/health/session`);
+  if (!d) return;
+  $('sessionStatus').textContent = `Session: ${d.status.replace(/_/g, ' ')}`;
+}
+
+async function renderHealth() {
+  const d = await fetchJSON(`${API_BASE}/api/health`);
+  if (!d) return;
+  const dot = $('healthDot');
+  if (d.overall === 'healthy') { dot.className = 'status-dot green'; }
+  else if (d.overall === 'degraded') { dot.className = 'status-dot yellow'; }
+  else { dot.className = 'status-dot red'; }
+}
+
+async function renderMode() {
+  const d = await fetchJSON(`${API_BASE}/api/execution/mode`);
+  if (!d) return;
+  const badge = $('modeBadge');
+  badge.textContent = d.mode;
+  badge.className = 'mode' + (d.mode === 'LIVE' ? ' live' : '');
+}
+
+async function refreshAll() {
+  await Promise.all([
+    renderRegime(), renderSignal(), renderWatchlist(),
+    renderRisk(), renderPositions(), renderAlerts(),
+    renderLogs(), renderSession(), renderHealth(), renderMode(),
+  ]);
+}
+
+// ── WebSocket ──────────────────────────────────────────────────
+function connectWS() {
+  if (ws && ws.readyState === WebSocket.OPEN) return;
+  try {
+    ws = new WebSocket(WS_URL);
+  } catch(e) { scheduleReconnect(); return; }
+
+  ws.onopen = () => {
+    $('wsStatus').textContent = 'WS: connected';
+    $('wsStatus').style.color = '#4AF626';
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  };
+
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.topic === 'pong') return;
+      if (msg.topic === 'tick' || msg.topic === 'signal' || msg.topic === 'regime') {
+        refreshAll();
+      }
+    } catch(_) {}
+  };
+
+  ws.onclose = () => {
+    $('wsStatus').textContent = 'WS: disconnected';
+    $('wsStatus').style.color = '#E61919';
+    ws = null;
+    scheduleReconnect();
+  };
+
+  ws.onerror = () => { ws?.close(); };
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectWS();
+  }, 5000);
+}
+
+// ── Init ───────────────────────────────────────────────────────
+refreshAll();
+setInterval(refreshAll, 3000);
+connectWS();
+</script>
+</body>
+</html>
