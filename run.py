@@ -17,14 +17,14 @@ def main() -> None:
     store = CredentialStore.load()
 
     if store is None or not store.is_complete():
-        print("First time setup: open http://127.0.0.1:8000/setup in your browser")
-        startup_url = "http://127.0.0.1:8000/setup"
+        print("First time setup: open http://127.0.0.1:8000/static/setup.html in your browser")
+        startup_url = "http://127.0.0.1:8000/static/setup.html"
     else:
         if not store.is_trading_valid():
             print("WARNING: Trading token expired — re-authenticate at /settings")
         if not store.is_data_valid():
             print("WARNING: Data token expired — re-authenticate at /settings")
-        startup_url = "http://127.0.0.1:8000/"
+        startup_url = "http://127.0.0.1:8000/static/index.html"
 
     webbrowser.open(startup_url)
 

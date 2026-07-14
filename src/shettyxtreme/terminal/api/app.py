@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -90,16 +91,17 @@ app.include_router(postback_router)
 app.include_router(settings_router)
 
 
-# ── Root: serve terminal HTML ──────────────────────────────────────────────
+# ── Root: redirect to terminal HTML ─────────────────────────────────────────
 @app.get("/")
-async def root() -> dict[str, str]:
-    """Root endpoint — returns API info (frontend served at /static/index.html)."""
-    return {
-        "name": "ShettyXtreme Terminal API",
-        "version": "0.3.0",
-        "docs": "/docs",
-        "frontend": "/static/index.html",
-    }
+async def root() -> RedirectResponse:
+    """Root endpoint — redirect to terminal HTML."""
+    return RedirectResponse(url="/static/index.html")
+
+
+@app.get("/setup")
+async def setup_redirect() -> RedirectResponse:
+    """Setup endpoint — redirect to setup wizard."""
+    return RedirectResponse(url="/static/setup.html")
 
 
 # ── WebSocket endpoint ─────────────────────────────────────────────────────
