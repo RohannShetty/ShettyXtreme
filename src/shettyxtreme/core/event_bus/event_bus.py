@@ -25,6 +25,9 @@ class Topic(Enum):
     FEATURES_COMPUTED = "features.computed"
     SIGNAL_V2 = "signal.v2"
     RISK_DECISION = "risk.decision"
+    CREDENTIAL_HEALTH_CHANGED = "credential.health.changed"
+    CREDENTIAL_WARNING = "credential.warning"
+    ORDER_UPDATED = "order.updated"
 
 @dataclass
 class Event:

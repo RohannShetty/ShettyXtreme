@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShettyXtreme — Setup</title>
+<style>
+/* ── Reset & Base ───────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: #0A0A0A;
+  color: #E0E0E0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.num { font-family: 'JetBrains Mono', monospace; }
+
+/* ── Card ────────────────────────────────────────────────────── */
+.setup-card {
+  background: #121212;
+  border: 1px solid #1E1E1E;
+  border-radius: 8px;
+  width: 520px;
+  max-width: 95vw;
+  padding: 32px 36px 28px;
+}
+.setup-card h1 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #4AF626;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+.setup-card .subtitle {
+  font-size: 12px;
+  color: #6C6C6C;
+  margin-bottom: 20px;
+}
+
+/* ── Progress ────────────────────────────────────────────────── */
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 24px;
+}
+.progress-step {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: #1E1E1E;
+  position: relative;
+}
+.progress-step.done { background: #4AF626; }
+.progress-step.active { background: #4AF62633; }
+.progress-step.active::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  width: 50%;
+  border-radius: 2px;
+  background: #4AF626;
+  animation: progressPulse 1.5s ease-in-out infinite;
+}
+@keyframes progressPulse {
+  0%, 100% { width: 40%; }
+  50% { width: 60%; }
+}
+.progress-label {
+  font-size: 11px;
+  color: #6C6C6C;
+  white-space: nowrap;
+  min-width: 28px;
+  text-align: right;
+}
+.progress-label.active { color: #4AF626; }
+
+/* ── Steps ───────────────────────────────────────────────────── */
+.step { display: none; }
+.step.active { display: block; }
+.step-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.step-desc {
+  font-size: 12px;
+  color: #6C6C6C;
+  margin-bottom: 16px;
+}
+
+/* ── Form Elements ───────────────────────────────────────────── */
+.field {
+  margin-bottom: 14px;
+}
+.field label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #6C6C6C;
+  margin-bottom: 4px;
+}
+.field input {
+  width: 100%;
+  padding: 8px 12px;
+  background: #1A1A1A;
+  border: 1px solid #1E1E1E;
+  border-radius: 4px;
+  color: #E0E0E0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.field input::placeholder { color: #3A3A3A; }
+.field input:focus { border-color: #4AF626; }
+
+/* ── Buttons ─────────────────────────────────────────────────── */
+.btn-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+.btn {
+  padding: 8px 20px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: #4AF626;
+  color: #0A0A0A;
+  border-color: #4AF626;
+  font-weight: 600;
+}
+.btn-primary:hover:not(:disabled) { background: #3CE01A; }
+.btn-secondary {
+  background: transparent;
+  color: #E0E0E0;
+  border-color: #1E1E1E;
+}
+.btn-secondary:hover:not(:disabled) { border-color: #3A3A3A; }
+.btn-accent {
+  background: #4AF62622;
+  color: #4AF626;
+  border-color: #4AF62644;
+}
+.btn-accent:hover:not(:disabled) { background: #4AF62633; }
+.btn-copy {
+  background: #1A1A1A;
+  color: #6C6C6C;
+  border-color: #1E1E1E;
+  font-size: 12px;
+  padding: 6px 14px;
+}
+.btn-copy:hover:not(:disabled) { color: #E0E0E0; border-color: #3A3A3A; }
+.btn-launch {
+  background: #4AF626;
+  color: #0A0A0A;
+  border-color: #4AF626;
+  font-weight: 700;
+  font-size: 14px;
+  padding: 10px 28px;
+}
+.btn-launch:hover:not(:disabled) { background: #3CE01A; }
+.btn:active:not(:disabled) { transform: scale(0.98); }
+
+/* ── Status / Feedback ───────────────────────────────────────── */
+.msg {
+  margin-top: 10px;
+  font-size: 12px;
+  min-height: 18px;
+}
+.msg.success { color: #4AF626; }
+.msg.error { color: #E61919; }
+.msg.info { color: #F6A623; }
+
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #333;
+  border-top-color: #4AF626;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Postback URL Box ────────────────────────────────────────── */
+.url-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #1A1A1A;
+  border: 1px solid #1E1E1E;
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+}
+.url-box .url-text {
+  flex: 1;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: #E0E0E0;
+  word-break: break-all;
+}
+.url-box .btn-copy { flex-shrink: 0; }
+
+.instructions {
+  font-size: 12px;
+  color: #6C6C6C;
+  line-height: 1.7;
+  margin-bottom: 14px;
+}
+.instructions strong { color: #E0E0E0; }
+
+/* ── Connection Status ───────────────────────────────────────── */
+.conn-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #1A1A1A;
+  border-radius: 4px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #333;
+  flex-shrink: 0;
+}
+.conn-dot.connected { background: #4AF626; }
+.conn-dot.pending { background: #F6A623; animation: pulse 1.5s ease-in-out infinite; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ── Summary ─────────────────────────────────────────────────── */
+.summary-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  font-size: 12px;
+  margin: 16px 0;
+  padding: 12px;
+  background: #1A1A1A;
+  border-radius: 4px;
+}
+.summary-label { color: #6C6C6C; }
+.summary-value { color: #E0E0E0; font-family: 'JetBrains Mono', monospace; }
+</style>
+</head>
+<body>
+<div class="setup-card">
+  <h1>SHETTYXTREME</h1>
+  <div class="subtitle">Initial Setup Wizard</div>
+
+  <!-- Progress Bar -->
+  <div class="progress" id="progressBar"></div>
+
+  <!-- Step 1: Trading API Credentials -->
+  <div class="step active" id="step1">
+    <div class="step-title">Trading API Credentials</div>
+    <div class="step-desc">Enter your Dhan Trading API credentials to connect your trading account.</div>
+    <div class="field">
+      <label>API Key</label>
+      <input type="text" id="tradingApiKey" placeholder="client_id:::api_key" autocomplete="off">
+    </div>
+    <div class="field">
+      <label>API Secret</label>
+      <input type="password" id="tradingApiSecret" placeholder="Enter API secret" autocomplete="off">
+    </div>
+    <div class="msg" id="msg1"></div>
+    <div class="btn-row">
+      <button class="btn btn-accent" id="btnTestTrading">Test Connection</button>
+      <div style="flex:1;"></div>
+      <button class="btn btn-primary" id="btnNext1" disabled>Next</button>
+    </div>
+  </div>
+
+  <!-- Step 2: Data API Credentials -->
+  <div class="step" id="step2">
+    <div class="step-title">Data API Credentials</div>
+    <div class="step-desc">Enter your Dhan Data API credentials for market data access.</div>
+    <div class="field">
+      <label>API Key</label>
+      <input type="text" id="dataApiKey" placeholder="client_id:::api_key" autocomplete="off">
+    </div>
+    <div class="field">
+      <label>API Secret</label>
+      <input type="password" id="dataApiSecret" placeholder="Enter API secret" autocomplete="off">
+    </div>
+    <div class="msg" id="msg2"></div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="btnBack2">Back</button>
+      <button class="btn btn-accent" id="btnTestData">Test Connection</button>
+      <div style="flex:1;"></div>
+      <button class="btn btn-primary" id="btnNext2" disabled>Next</button>
+    </div>
+  </div>
+
+  <!-- Step 3: Postback URL Registration -->
+  <div class="step" id="step3">
+    <div class="step-title">Postback URL Registration</div>
+    <div class="step-desc">Register the postback URL in your Dhan Developer Portal to enable order callbacks.</div>
+    <div class="url-box">
+      <span class="url-text" id="postbackUrl">http://localhost:8000/api/postback/dhan</span>
+      <button class="btn btn-copy" id="btnCopyUrl">Copy</button>
+    </div>
+    <div class="msg" id="msg3"></div>
+    <div class="instructions">
+      <strong>Steps:</strong><br>
+      1. Go to <strong>Dhan Developer Portal</strong><br>
+      2. Navigate to <strong>Your API App → Postback URL</strong><br>
+      3. Paste the URL above and save
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="btnBack3">Back</button>
+      <div style="flex:1;"></div>
+      <button class="btn btn-primary" id="btnNext3">I've Registered</button>
+    </div>
+  </div>
+
+  <!-- Step 4: Connect to Dhan -->
+  <div class="step" id="step4">
+    <div class="step-title">Connect to Dhan</div>
+    <div class="step-desc">Authorize both trading and data accounts via Dhan OAuth consent flow.</div>
+    <div class="conn-status" id="tradingConnStatus">
+      <div class="conn-dot" id="tradingDot"></div>
+      <span id="tradingConnLabel">Trading Account — Not Connected</span>
+    </div>
+    <div class="conn-status" id="dataConnStatus">
+      <div class="conn-dot" id="dataDot"></div>
+      <span id="dataConnLabel">Data Account — Not Connected</span>
+    </div>
+    <div class="msg" id="msg4"></div>
+    <div class="btn-row" id="connBtnRow">
+      <button class="btn btn-secondary" id="btnBack4">Back</button>
+      <div style="flex:1;"></div>
+      <button class="btn btn-accent" id="btnConnectTrading">Connect Trading Account</button>
+    </div>
+  </div>
+
+  <!-- Step 5: Setup Complete -->
+  <div class="step" id="step5">
+    <div class="step-title" style="color:#4AF626;">Setup Complete</div>
+    <div class="step-desc">Your ShettyXtreme terminal is ready.</div>
+    <div class="summary-grid" id="summaryGrid"></div>
+    <div class="btn-row" style="justify-content:center;">
+      <button class="btn btn-launch" id="btnLaunch">Launch Terminal</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Config ──────────────────────────────────────────────────────
+const STEPS = 5;
+const STEP_TITLES = ['Trading API', 'Data API', 'Postback', 'Connect', 'Done'];
+const POSTBACK_URL = 'http://localhost:8000/api/postback/dhan';
+
+// ── State ───────────────────────────────────────────────────────
+let currentStep = 1;
+let tradingTested = false;
+let dataTested = false;
+
+// ── Helpers ─────────────────────────────────────────────────────
+function $(id) { return document.getElementById(id); }
+
+function setMsg(stepId, text, type) {
+  const el = $('msg' + stepId);
+  el.textContent = text;
+  el.className = 'msg' + (type ? ' ' + type : '');
+}
+
+function clearMsg(stepId) { setMsg(stepId, ''); }
+
+function setLoading(btn, loading) {
+  if (loading) {
+    btn.dataset.origText = btn.textContent;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Testing...';
+  } else {
+    btn.disabled = false;
+    btn.textContent = btn.dataset.origText || btn.textContent;
+  }
+}
+
+// ── Progress Bar ────────────────────────────────────────────────
+function renderProgress() {
+  const bar = $('progressBar');
+  let html = '';
+  for (let i = 1; i <= STEPS; i++) {
+    const cls = i < currentStep ? 'done' : i === currentStep ? 'active' : '';
+    html += `<div class="progress-step ${cls}"></div>`;
+  }
+  html += `<span class="progress-label">${currentStep}/${STEPS}</span>`;
+  bar.innerHTML = html;
+}
+
+// ── Step Navigation ─────────────────────────────────────────────
+function showStep(n) {
+  for (let i = 1; i <= STEPS; i++) {
+    $('step' + i).classList.toggle('active', i === n);
+  }
+  currentStep = n;
+  renderProgress();
+}
+
+// ── Auto-redirect if setup already complete ─────────────────────
+async function checkStatus() {
+  try {
+    const r = await fetch('/auth/status');
+    if (r.ok) {
+      const d = await r.json();
+      if (d.setup_complete) {
+        window.location.href = '/';
+        return;
+      }
+    }
+  } catch (_) {}
+  renderProgress();
+}
+
+// ── Step 1: Test Trading API ───────────────────────────────────
+$('btnTestTrading').addEventListener('click', async () => {
+  const apiKey = $('tradingApiKey').value.trim();
+  const apiSecret = $('tradingApiSecret').value.trim();
+  if (!apiKey || !apiSecret) {
+    setMsg(1, 'Both fields are required.', 'error');
+    return;
+  }
+  const btn = $('btnTestTrading');
+  setLoading(btn, true);
+  clearMsg(1);
+  try {
+    const r = await fetch('/auth/test/trading', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret })
+    });
+    const d = await r.json();
+    if (r.ok && d.status === 'success') {
+      setMsg(1, 'Trading API connection verified.', 'success');
+      tradingTested = true;
+      $('btnNext1').disabled = false;
+    } else {
+      setMsg(1, d.message || 'Connection failed. Check credentials.', 'error');
+      tradingTested = false;
+      $('btnNext1').disabled = true;
+    }
+  } catch (e) {
+    setMsg(1, 'Network error. Is the server running?', 'error');
+  } finally {
+    setLoading(btn, false);
+  }
+});
+
+// ── Step 2: Test Data API ─────────────────────────────────────
+$('btnTestData').addEventListener('click', async () => {
+  const apiKey = $('dataApiKey').value.trim();
+  const apiSecret = $('dataApiSecret').value.trim();
+  if (!apiKey || !apiSecret) {
+    setMsg(2, 'Both fields are required.', 'error');
+    return;
+  }
+  const btn = $('btnTestData');
+  setLoading(btn, true);
+  clearMsg(2);
+  try {
+    const r = await fetch('/auth/test/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret })
+    });
+    const d = await r.json();
+    if (r.ok && d.status === 'success') {
+      setMsg(2, 'Data API connection verified.', 'success');
+      dataTested = true;
+      $('btnNext2').disabled = false;
+    } else {
+      setMsg(2, d.message || 'Connection failed. Check credentials.', 'error');
+      dataTested = false;
+      $('btnNext2').disabled = true;
+    }
+  } catch (e) {
+    setMsg(2, 'Network error. Is the server running?', 'error');
+  } finally {
+    setLoading(btn, false);
+  }
+});
+
+// ── Step 3: Copy Postback URL ──────────────────────────────────
+$('btnCopyUrl').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(POSTBACK_URL);
+    $('btnCopyUrl').textContent = 'Copied!';
+    setMsg(3, 'URL copied to clipboard.', 'success');
+    setTimeout(() => { $('btnCopyUrl').textContent = 'Copy'; }, 2000);
+  } catch (_) {
+    setMsg(3, 'Copy failed. Select and copy manually.', 'error');
+  }
+});
+
+// ── Step 4: Connect Accounts ───────────────────────────────────
+$('btnConnectTrading').addEventListener('click', async () => {
+  clearMsg(4);
+  try {
+    const r = await fetch('/auth/start-consent/trading', { method: 'POST' });
+    const d = await r.json();
+    if (r.ok && d.login_url) {
+      window.open(d.login_url, '_blank');
+      $('tradingDot').className = 'conn-dot pending';
+      $('tradingConnLabel').textContent = 'Trading Account — Pending Authorization';
+      setMsg(4, 'Authorization page opened. After approving, click "Connect Data Account".', 'info');
+
+      // Show connect data button and hide trading button
+      $('btnConnectTrading').style.display = 'none';
+      const dataBtn = document.createElement('button');
+      dataBtn.className = 'btn btn-accent';
+      dataBtn.id = 'btnConnectData';
+      dataBtn.textContent = 'Connect Data Account';
+      dataBtn.addEventListener('click', connectData);
+      $('connBtnRow').appendChild(dataBtn);
+    } else {
+      setMsg(4, d.message || 'Failed to start consent flow.', 'error');
+    }
+  } catch (e) {
+    setMsg(4, 'Network error. Is the server running?', 'error');
+  }
+});
+
+async function connectData() {
+  clearMsg(4);
+  try {
+    const r = await fetch('/auth/start-consent/data', { method: 'POST' });
+    const d = await r.json();
+    if (r.ok && d.login_url) {
+      window.open(d.login_url, '_blank');
+      $('dataDot').className = 'conn-dot pending';
+      $('dataConnLabel').textContent = 'Data Account — Pending Authorization';
+      setMsg(4, 'Authorization page opened. After approving, check status and proceed.', 'info');
+
+      // Add status check button
+      const checkBtn = document.createElement('button');
+      checkBtn.className = 'btn btn-primary';
+      checkBtn.id = 'btnCheckStatus';
+      checkBtn.textContent = 'Check Status';
+      checkBtn.addEventListener('click', checkConnectionStatus);
+      $('connBtnRow').appendChild(checkBtn);
+    } else {
+      setMsg(4, d.message || 'Failed to start consent flow.', 'error');
+    }
+  } catch (e) {
+    setMsg(4, 'Network error. Is the server running?', 'error');
+  }
+}
+
+async function checkConnectionStatus() {
+  clearMsg(4);
+  try {
+    const r = await fetch('/auth/status');
+    const d = await r.json();
+    if (d.trading_connected) {
+      $('tradingDot').className = 'conn-dot connected';
+      $('tradingConnLabel').textContent = 'Trading Account — Connected';
+    }
+    if (d.data_connected) {
+      $('dataDot').className = 'conn-dot connected';
+      $('dataConnLabel').textContent = 'Data Account — Connected';
+    }
+    if (d.trading_connected && d.data_connected) {
+      setMsg(4, 'Both accounts connected! Proceeding...', 'success');
+      setTimeout(() => showStep(5), 1000);
+      renderSummary(d);
+    } else {
+      setMsg(4, 'Still waiting for authorization. Try again after approving in Dhan.', 'info');
+    }
+  } catch (e) {
+    setMsg(4, 'Could not check status. Try again.', 'error');
+  }
+}
+
+// ── Step 5: Summary ────────────────────────────────────────────
+function renderSummary(status) {
+  const grid = $('summaryGrid');
+  const rows = [];
+  if (status.client_name) rows.push(['Client Name', status.client_name]);
+  if (status.client_id) rows.push(['Client ID', status.client_id]);
+  if (status.trading_expiry) rows.push(['Trading Token Expires', status.trading_expiry]);
+  if (status.data_expiry) rows.push(['Data Token Expires', status.data_expiry]);
+  rows.push(['Trading API', status.trading_connected ? 'Connected' : 'Not Connected']);
+  rows.push(['Data API', status.data_connected ? 'Connected' : 'Not Connected']);
+  grid.innerHTML = rows.map(([label, val]) =>
+    `<span class="summary-label">${label}</span><span class="summary-value">${val}</span>`
+  ).join('');
+}
+
+// ── Navigation Buttons ──────────────────────────────────────────
+$('btnNext1').addEventListener('click', () => showStep(2));
+$('btnBack2').addEventListener('click', () => showStep(1));
+$('btnNext2').addEventListener('click', () => showStep(3));
+$('btnBack3').addEventListener('click', () => showStep(2));
+$('btnNext3').addEventListener('click', () => showStep(4));
+$('btnBack4').addEventListener('click', () => showStep(3));
+$('btnLaunch').addEventListener('click', () => { window.location.href = '/'; });
+
+// ── Init ────────────────────────────────────────────────────────
+checkStatus();
+</script>
+</body>
+</html>

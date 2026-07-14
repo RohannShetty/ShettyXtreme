@@ -1,6 +1,6 @@
 """FastAPI application for the ShettyXtreme terminal.
 
-Lifespan: starts event bus, mock data adapters, and feature engine.
+Lifespan: starts event bus, credential store, health monitor.
 Mounts static files and includes all routers.
 """
 from __future__ import annotations
@@ -14,25 +14,49 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from shettyxtreme.auth.credential_store import CredentialStore
+from shettyxtreme.auth.dhan_oauth import DhanOAuthHelper
+from shettyxtreme.auth.health_monitor import TokenHealthMonitor
+from shettyxtreme.auth.validator import CredentialValidator
+from shettyxtreme.core.event_bus.event_bus import EventBus
+from shettyxtreme.terminal.api.auth_router import init_auth, router as auth_router
 from shettyxtreme.terminal.api.execution_router import router as execution_router
 from shettyxtreme.terminal.api.health_router import router as health_router
 from shettyxtreme.terminal.api.intelligence_router import router as intelligence_router
+from shettyxtreme.terminal.api.postback_router import router as postback_router
 from shettyxtreme.terminal.api.scanner_router import router as scanner_router
+from shettyxtreme.terminal.api.settings_router import init_settings, router as settings_router
 from shettyxtreme.terminal.api.watchlist_router import router as watchlist_router
 from shettyxtreme.terminal.api.ws_manager import WebSocketManager
 
 logger = logging.getLogger(__name__)
 
 ws_manager = WebSocketManager()
+_event_bus: EventBus | None = None
+_health_monitor: TokenHealthMonitor | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown lifecycle."""
+    global _event_bus, _health_monitor
     logger.info("ShettyXtreme Terminal starting up...")
-    # In production: start event bus, data adapters, feature engine here
+
+    store = CredentialStore.load() or CredentialStore()
+    oauth = DhanOAuthHelper()
+    validator = CredentialValidator()
+    init_auth(store, oauth, validator)
+    init_settings(store, oauth, validator)
+
+    _event_bus = EventBus()
+    _health_monitor = TokenHealthMonitor(store, _event_bus)
+    await _health_monitor.start()
+
     yield
+
     logger.info("ShettyXtreme Terminal shutting down...")
+    if _health_monitor:
+        await _health_monitor.stop()
 
 
 app = FastAPI(
@@ -61,6 +85,9 @@ app.include_router(intelligence_router)
 app.include_router(execution_router)
 app.include_router(scanner_router)
 app.include_router(health_router)
+app.include_router(auth_router)
+app.include_router(postback_router)
+app.include_router(settings_router)
 
 
 # ── Root: serve terminal HTML ──────────────────────────────────────────────

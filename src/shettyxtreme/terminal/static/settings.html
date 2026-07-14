@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Settings — ShettyXtreme</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ── Reset & Base ───────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0A0A0A;
+  color: #E0E0E0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+.num { font-family: 'JetBrains Mono', monospace; }
+.up   { color: #4AF626; }
+.down { color: #E61919; }
+.muted { color: #6C6C6C; }
+
+/* ── Layout ──────────────────────────────────────────────────── */
+.topbar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 0 16px; height: 44px; background: #121212;
+  border-bottom: 1px solid #1E1E1E;
+}
+.topbar h1 { font-size: 15px; font-weight: 600; color: #4AF626; letter-spacing: 0.5px; }
+.topbar .back-link {
+  font-size: 12px; color: #6C6C6C; text-decoration: none; margin-left: auto;
+  transition: color 0.2s;
+}
+.topbar .back-link:hover { color: #E0E0E0; }
+
+.content { max-width: 800px; margin: 0 auto; padding: 24px 16px; }
+
+/* ── Sections ────────────────────────────────────────────────── */
+.section {
+  background: #121212; border: 1px solid #1E1E1E; border-radius: 6px;
+  margin-bottom: 20px; overflow: hidden;
+}
+.section-header {
+  padding: 12px 16px; border-bottom: 1px solid #1E1E1E;
+  font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px;
+  color: #6C6C6C; font-weight: 600;
+}
+.section-body { padding: 16px; }
+
+/* ── Credential rows ─────────────────────────────────────────── */
+.cred-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 0; border-bottom: 1px solid #1A1A1A;
+}
+.cred-row:last-child { border-bottom: none; }
+.cred-label { width: 110px; font-size: 11px; color: #6C6C6C; text-transform: uppercase; letter-spacing: 0.5px; flex-shrink: 0; }
+.cred-value { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+
+/* ── Token status badge ──────────────────────────────────────── */
+.token-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; padding: 3px 10px; border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.token-badge.valid { background: #4AF62615; color: #4AF626; border: 1px solid #4AF62633; }
+.token-badge.expiring { background: #F6A62315; color: #F6A623; border: 1px solid #F6A62333; }
+.token-badge.expired { background: #E6191915; color: #E61919; border: 1px solid #E6191933; }
+.token-badge.unknown { background: #1A1A1A; color: #6C6C6C; border: 1px solid #1E1E1E; }
+
+/* ── Buttons ─────────────────────────────────────────────────── */
+.btn {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 11px; font-weight: 500;
+  padding: 6px 14px; border-radius: 4px;
+  border: 1px solid #1E1E1E; background: #1A1A1A;
+  color: #E0E0E0; cursor: pointer;
+  transition: all 0.2s;
+}
+.btn:hover { background: #252525; border-color: #333; }
+.btn:active { transform: scale(0.98); }
+.btn-primary { background: #4AF62615; color: #4AF626; border-color: #4AF62633; }
+.btn-primary:hover { background: #4AF62625; }
+.btn-warn { background: #F6A62315; color: #F6A623; border-color: #F6A62333; }
+.btn-warn:hover { background: #F6A62325; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+
+/* ── Postback URL ────────────────────────────────────────────── */
+.postback-row {
+  display: flex; align-items: center; gap: 8px;
+}
+.postback-url {
+  flex: 1; font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  background: #0A0A0A; border: 1px solid #1E1E1E; border-radius: 4px;
+  padding: 6px 12px; color: #E0E0E0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.btn-copy {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 11px; font-weight: 500;
+  padding: 6px 12px; border-radius: 4px;
+  border: 1px solid #1E1E1E; background: #1A1A1A;
+  color: #6C6C6C; cursor: pointer; white-space: nowrap;
+  transition: all 0.2s;
+}
+.btn-copy:hover { color: #E0E0E0; background: #252525; }
+.btn-copy.copied { color: #4AF626; border-color: #4AF62633; }
+
+/* ── Status messages ─────────────────────────────────────────── */
+.status-msg {
+  font-size: 11px; padding: 6px 12px; border-radius: 4px;
+  margin-top: 10px; display: none;
+  font-family: 'JetBrains Mono', monospace;
+}
+.status-msg.success { display: block; background: #4AF62615; color: #4AF626; border: 1px solid #4AF62633; }
+.status-msg.error { display: block; background: #E6191915; color: #E61919; border: 1px solid #E6191933; }
+
+/* ── Countdown ───────────────────────────────────────────────── */
+.countdown { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #6C6C6C; }
+
+/* ── Responsive ──────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .cred-row { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .cred-label { width: auto; }
+  .postback-row { flex-direction: column; }
+  .postback-url { width: 100%; }
+  .actions { flex-direction: column; }
+  .btn { width: 100%; text-align: center; }
+}
+</style>
+</head>
+<body>
+
+<!-- Top Bar -->
+<div class="topbar">
+  <h1>⟐ SETTINGS</h1>
+  <a href="/" class="back-link">← Back to Terminal</a>
+</div>
+
+<!-- Content -->
+<div class="content">
+
+  <!-- Trading Credentials -->
+  <div class="section">
+    <div class="section-header">Trading Credentials</div>
+    <div class="section-body">
+      <div class="cred-row">
+        <span class="cred-label">API Key</span>
+        <span class="cred-value" id="tradingApiKey">••••••••</span>
+      </div>
+      <div class="cred-row">
+        <span class="cred-label">Client ID</span>
+        <span class="cred-value" id="tradingClientId">—</span>
+      </div>
+      <div class="cred-row">
+        <span class="cred-label">Token Status</span>
+        <span id="tradingTokenBadge" class="token-badge unknown">⚪ Unknown</span>
+      </div>
+      <div class="cred-row">
+        <span class="cred-label">Expiry</span>
+        <span class="countdown" id="tradingExpiry">—</span>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="tradingReauth" onclick="reauth('trading')">Re-authenticate</button>
+        <button class="btn" id="tradingTest" onclick="testConnection('trading')">Test Connection</button>
+      </div>
+      <div class="status-msg" id="tradingStatus"></div>
+    </div>
+  </div>
+
+  <!-- Data Credentials -->
+  <div class="section">
+    <div class="section-header">Data Credentials</div>
+    <div class="section-body">
+      <div class="cred-row">
+        <span class="cred-label">API Key</span>
+        <span class="cred-value" id="dataApiKey">••••••••</span>
+      </div>
+      <div class="cred-row">
+        <span class="cred-label">Client ID</span>
+        <span class="cred-value" id="dataClientId">—</span>
+      </div>
+      <div class="cred-row">
+        <span class="cred-label">Token Status</span>
+        <span id="dataTokenBadge" class="token-badge unknown">⚪ Unknown</span>
+      </div>
+      <div class="cred-row">
+        <span class="cred-label">Expiry</span>
+        <span class="countdown" id="dataExpiry">—</span>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="dataReauth" onclick="reauth('data')">Re-authenticate</button>
+        <button class="btn" id="dataTest" onclick="testConnection('data')">Test Connection</button>
+      </div>
+      <div class="status-msg" id="dataStatus"></div>
+    </div>
+  </div>
+
+  <!-- Postback URL -->
+  <div class="section">
+    <div class="section-header">Postback URL</div>
+    <div class="section-body">
+      <p style="font-size:11px;color:#6C6C6C;margin-bottom:10px;">Configure this URL in your Dhan broker dashboard for order postbacks.</p>
+      <div class="postback-row">
+        <span class="postback-url" id="postbackUrl">http://localhost:8000/api/postback/dhan</span>
+        <button class="btn-copy" id="copyBtn" onclick="copyPostback()">Copy</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API_BASE = '';
+
+function $(id) { return document.getElementById(id); }
+
+// ── Token badge helper ──────────────────────────────────────────
+function setTokenBadge(el, status, expiryTs) {
+  const badges = {
+    valid:    { cls: 'valid',    text: '🟢 Valid' },
+    expiring: { cls: 'expiring', text: '🟡 Expiring Soon' },
+    expired:  { cls: 'expired',  text: '🔴 Expired' },
+    unknown:  { cls: 'unknown',  text: '⚪ Unknown' },
+  };
+  const b = badges[status] || badges.unknown;
+  el.className = 'token-badge ' + b.cls;
+  el.textContent = b.text;
+}
+
+// ── Countdown formatter ─────────────────────────────────────────
+function formatCountdown(expiryTs) {
+  if (!expiryTs) return '—';
+  const now = Date.now();
+  const diff = expiryTs - now;
+  if (diff <= 0) return 'Expired';
+  const h = Math.floor(diff / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  const s = Math.floor((diff % 60000) / 1000);
+  if (h > 24) {
+    const d = Math.floor(h / 24);
+    return d + 'd ' + (h % 24) + 'h remaining';
+  }
+  return h + 'h ' + m + 'm ' + s + 's remaining';
+}
+
+// ── Status message helper ───────────────────────────────────────
+function showStatus(el, type, msg) {
+  el.className = 'status-msg ' + type;
+  el.textContent = msg;
+  setTimeout(() => { el.className = 'status-msg'; }, 5000);
+}
+
+// ── Fetch credentials ───────────────────────────────────────────
+async function loadCredentials() {
+  try {
+    const r = await fetch(API_BASE + '/settings/credentials');
+    if (!r.ok) throw new Error(r.statusText);
+    const d = await r.json();
+    renderCredential('trading', d.trading);
+    renderCredential('data', d.data);
+  } catch (e) {
+    console.warn('Failed to load credentials:', e);
+  }
+}
+
+function renderCredential(type, cred) {
+  if (!cred) return;
+  const prefix = type === 'trading' ? 'Trading' : 'Data';
+  $(type + 'ApiKey').textContent = cred.api_key_masked || '••••••••';
+  $(type + 'ClientId').textContent = cred.client_id || '—';
+  setTokenBadge($(type + 'TokenBadge'), cred.token_status || 'unknown');
+  $(type + 'Expiry').textContent = formatCountdown(cred.token_expiry_ts);
+  // Store expiry for countdown
+  $(type + 'Expiry').dataset.ts = cred.token_expiry_ts || '';
+}
+
+// ── Re-authenticate ─────────────────────────────────────────────
+async function reauth(type) {
+  const btn = $(type + 'Reauth');
+  btn.disabled = true;
+  btn.textContent = 'Redirecting...';
+  try {
+    const r = await fetch(API_BASE + '/settings/reauth/' + type, { method: 'POST' });
+    if (!r.ok) throw new Error(r.statusText);
+    const d = await r.json();
+    if (d.redirect_url) {
+      window.location.href = d.redirect_url;
+    } else {
+      showStatus($(type + 'Status'), 'success', 'Re-authentication initiated.');
+      btn.disabled = false;
+      btn.textContent = 'Re-authenticate';
+    }
+  } catch (e) {
+    showStatus($(type + 'Status'), 'error', 'Re-auth failed: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = 'Re-authenticate';
+  }
+}
+
+// ── Test connection ─────────────────────────────────────────────
+async function testConnection(type) {
+  const btn = $(type + 'Test');
+  btn.disabled = true;
+  btn.textContent = 'Testing...';
+  try {
+    const r = await fetch(API_BASE + '/settings/test/' + type, { method: 'POST' });
+    if (!r.ok) throw new Error(r.statusText);
+    const d = await r.json();
+    if (d.ok) {
+      showStatus($(type + 'Status'), 'success', d.message || 'Connection successful.');
+    } else {
+      showStatus($(type + 'Status'), 'error', d.message || 'Connection failed.');
+    }
+  } catch (e) {
+    showStatus($(type + 'Status'), 'error', 'Test failed: ' + e.message);
+  }
+  btn.disabled = false;
+  btn.textContent = 'Test Connection';
+}
+
+// ── Copy postback URL ───────────────────────────────────────────
+function copyPostback() {
+  const url = $('postbackUrl').textContent;
+  navigator.clipboard.writeText(url).then(() => {
+    const btn = $('copyBtn');
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  }).catch(() => {
+    showStatus($('postbackUrl'), 'error', 'Copy failed. Select and copy manually.');
+  });
+}
+
+// ── Countdown ticker ────────────────────────────────────────────
+function tickCountdowns() {
+  ['trading', 'data'].forEach(type => {
+    const el = $(type + 'Expiry');
+    const ts = parseInt(el.dataset.ts, 10);
+    if (ts) el.textContent = formatCountdown(ts);
+  });
+}
+
+// ── Init ────────────────────────────────────────────────────────
+loadCredentials();
+setInterval(loadCredentials, 60000);
+setInterval(tickCountdowns, 1000);
+</script>
+</body>
+</html>

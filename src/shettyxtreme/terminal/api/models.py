@@ -160,3 +160,8 @@ class SessionResponse(BaseModel):
     current_time_ist: str = ""
     next_event: str = ""
     next_event_time: str = ""
+
+
+# ── Postback ─────────────────────────────────────────────────────────────
+class PostbackResponse(BaseModel):
+    status: str
