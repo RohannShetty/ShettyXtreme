@@ -454,13 +454,19 @@ $('btnTestTrading').addEventListener('click', async () => {
   setLoading(btn, true);
   clearMsg(1);
   try {
+    // Save credentials first
+    await fetch('/auth/credentials/trading', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret })
+    });
     const r = await fetch('/auth/test/trading', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret })
     });
     const d = await r.json();
-    if (r.ok && d.status === 'success') {
+    if (r.ok && d.valid) {
       setMsg(1, 'Trading API connection verified.', 'success');
       tradingTested = true;
       $('btnNext1').disabled = false;
@@ -488,13 +494,19 @@ $('btnTestData').addEventListener('click', async () => {
   setLoading(btn, true);
   clearMsg(2);
   try {
+    // Save credentials first
+    await fetch('/auth/credentials/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret })
+    });
     const r = await fetch('/auth/test/data', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret })
     });
     const d = await r.json();
-    if (r.ok && d.status === 'success') {
+    if (r.ok && d.valid) {
       setMsg(2, 'Data API connection verified.', 'success');
       dataTested = true;
       $('btnNext2').disabled = false;

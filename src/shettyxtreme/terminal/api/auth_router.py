@@ -35,10 +35,15 @@ class CredentialStatusResponse(BaseModel):
     trading_has_token: bool = False
     trading_valid: bool = False
     trading_expiry: str | None = None
+    trading_connected: bool = False
     data_has_api_key: bool = False
     data_has_token: bool = False
     data_valid: bool = False
     data_expiry: str | None = None
+    data_connected: bool = False
+    setup_complete: bool = False
+    client_name: str | None = None
+    client_id: str | None = None
 
 
 class ConsentStartResponse(BaseModel):
@@ -78,15 +83,23 @@ async def get_status() -> CredentialStatusResponse:
     store = _get_store()
     trading_valid = store.is_trading_valid() if store.trading_access_token else False
     data_valid = store.is_data_valid() if store.data_access_token else False
+    trading_connected = trading_valid and bool(store.trading_access_token)
+    data_connected = data_valid and bool(store.data_access_token)
+    setup_complete = trading_connected and data_connected
     return CredentialStatusResponse(
         trading_has_api_key=bool(store.trading_api_key),
         trading_has_token=bool(store.trading_access_token),
         trading_valid=trading_valid,
         trading_expiry=store.trading_token_expiry,
+        trading_connected=trading_connected,
         data_has_api_key=bool(store.data_api_key),
         data_has_token=bool(store.data_access_token),
         data_valid=data_valid,
         data_expiry=store.data_token_expiry,
+        data_connected=data_connected,
+        setup_complete=setup_complete,
+        client_name=store.client_name,
+        client_id=store.trading_client_id or store.data_client_id,
     )
 
 
@@ -109,13 +122,13 @@ async def save_data_credentials(body: CredentialBody) -> SaveResult:
 
 
 @router.post("/start-consent/trading", response_model=ConsentStartResponse)
-async def start_consent_trading(body: ClientIdBody) -> ConsentStartResponse:
+async def start_consent_trading() -> ConsentStartResponse:
     store = _get_store()
     assert _oauth is not None
     consent_app_id = await _oauth.generate_consent(
         api_key=store.trading_api_key,
         api_secret=store.trading_api_secret,
-        client_id=body.client_id,
+        client_id=store.trading_client_id or "",
     )
     login_url = _oauth.get_login_url(consent_app_id or "")
     return ConsentStartResponse(
@@ -125,13 +138,13 @@ async def start_consent_trading(body: ClientIdBody) -> ConsentStartResponse:
 
 
 @router.post("/start-consent/data", response_model=ConsentStartResponse)
-async def start_consent_data(body: ClientIdBody) -> ConsentStartResponse:
+async def start_consent_data() -> ConsentStartResponse:
     store = _get_store()
     assert _oauth is not None
     consent_app_id = await _oauth.generate_consent(
         api_key=store.data_api_key,
         api_secret=store.data_api_secret,
-        client_id=body.client_id,
+        client_id=store.data_client_id or "",
     )
     login_url = _oauth.get_login_url(consent_app_id or "")
     return ConsentStartResponse(
@@ -160,24 +173,28 @@ async def dhan_callback(tokenId: str) -> RedirectResponse:
 
 
 @router.post("/test/trading", response_model=ValidationResultResponse)
-async def test_trading() -> ValidationResultResponse:
+async def test_trading(body: CredentialBody | None = None) -> ValidationResultResponse:
     store = _get_store()
     assert _validator is not None
+    api_key = body.api_key if body else store.trading_api_key
+    api_secret = body.api_secret if body else store.trading_api_secret
     result = await _validator.validate_trading(
-        api_key=store.trading_api_key,
-        api_secret=store.trading_api_secret,
+        api_key=api_key,
+        api_secret=api_secret,
         client_id=store.trading_client_id or "",
     )
     return ValidationResultResponse(valid=result.valid, message=result.message)
 
 
 @router.post("/test/data", response_model=ValidationResultResponse)
-async def test_data() -> ValidationResultResponse:
+async def test_data(body: CredentialBody | None = None) -> ValidationResultResponse:
     store = _get_store()
     assert _validator is not None
+    api_key = body.api_key if body else store.data_api_key
+    api_secret = body.api_secret if body else store.data_api_secret
     result = await _validator.validate_data(
-        api_key=store.data_api_key,
-        api_secret=store.data_api_secret,
+        api_key=api_key,
+        api_secret=api_secret,
         client_id=store.data_client_id or "",
     )
     return ValidationResultResponse(valid=result.valid, message=result.message)

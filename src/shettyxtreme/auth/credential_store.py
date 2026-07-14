@@ -29,6 +29,7 @@ class CredentialStore:
     trading_access_token: str | None = None
     trading_token_expiry: str | None = None
     trading_client_id: str | None = None
+    client_name: str | None = None
     data_api_key: str = ""
     data_api_secret: str = ""
     data_access_token: str | None = None
