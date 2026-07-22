@@ -194,12 +194,17 @@ async def dhan_callback(tokenId: str) -> RedirectResponse:
 async def test_trading(body: CredentialBody | None = None) -> ValidationResultResponse:
     store = _get_store()
     assert _validator is not None
-    api_key = body.api_key if body else store.trading_api_key
-    api_secret = body.api_secret if body else store.trading_api_secret
+    if body:
+        client_id, api_key = _split_combined_key(body.api_key)
+        api_secret = body.api_secret
+    else:
+        client_id = store.trading_client_id or ""
+        api_key = store.trading_api_key
+        api_secret = store.trading_api_secret
     result = await _validator.validate_trading(
         api_key=api_key,
         api_secret=api_secret,
-        client_id=store.trading_client_id or "",
+        client_id=client_id,
     )
     return ValidationResultResponse(valid=result.valid, message=result.message)
 
@@ -208,12 +213,17 @@ async def test_trading(body: CredentialBody | None = None) -> ValidationResultRe
 async def test_data(body: CredentialBody | None = None) -> ValidationResultResponse:
     store = _get_store()
     assert _validator is not None
-    api_key = body.api_key if body else store.data_api_key
-    api_secret = body.api_secret if body else store.data_api_secret
+    if body:
+        client_id, api_key = _split_combined_key(body.api_key)
+        api_secret = body.api_secret
+    else:
+        client_id = store.data_client_id or ""
+        api_key = store.data_api_key
+        api_secret = store.data_api_secret
     result = await _validator.validate_data(
         api_key=api_key,
         api_secret=api_secret,
-        client_id=store.data_client_id or "",
+        client_id=client_id,
     )
     return ValidationResultResponse(valid=result.valid, message=result.message)
 
