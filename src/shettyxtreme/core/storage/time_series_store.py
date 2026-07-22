@@ -57,6 +57,8 @@ class TimeSeriesStore:
         )
     
     def write_ticks(self, ticks: list[tuple]):
+        if not ticks:
+            return
         self._conn.executemany(
             "INSERT INTO ticks VALUES (?, ?, ?, ?, ?, ?, ?)", ticks
         )
@@ -64,7 +66,7 @@ class TimeSeriesStore:
     def get_bars(self, symbol: str, timeframe: str,
                  start: datetime, end: datetime) -> list:
         result = self._conn.execute(
-            "SELECT * FROM bars WHERE symbol = ? AND timeframe = ? AND timestamp BETWEEN ? AND ? ORDER BY timestamp",
+            "SELECT * FROM bars WHERE symbol = ? AND timeframe = ? AND timestamp >= ? AND timestamp < ? ORDER BY timestamp",
             (symbol, timeframe, start, end)
         )
         return result.fetchall() if result else []

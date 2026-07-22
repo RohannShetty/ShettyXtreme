@@ -81,7 +81,7 @@ def test_postback_handles_invalid_json() -> None:
         headers={"Content-Type": "application/json"},
     )
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    assert resp.json() == {"status": "error"}
 
 
 def test_postback_handles_empty_body() -> None:

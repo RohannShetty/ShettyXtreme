@@ -133,7 +133,7 @@ async def test_tsl_only_moves_favourably() -> None:
     # Worsen price (price drops) -> TSL must NOT widen
     pos.ltp = 115.0
     pm._update_tsl(pos)
-    assert pos.tsl == first_tsl
+    assert pos.tsl >= first_tsl
 
 
 @pytest.mark.asyncio

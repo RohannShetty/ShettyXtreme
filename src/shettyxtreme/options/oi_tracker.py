@@ -181,6 +181,8 @@ class OITracker:
         """
         total_call_oi = 0
         total_put_oi = 0
+        if symbol not in self._oi_data:
+            return 0.0
         expiries = [expiry] if expiry else list(self._oi_data[symbol].keys())
 
         for exp in expiries:

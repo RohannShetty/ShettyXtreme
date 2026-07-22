@@ -5,12 +5,15 @@ http://localhost:8000/api/postback/dhan
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Request
 
 from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
 from shettyxtreme.terminal.api.models import PostbackResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/postback", tags=["postback"])
 
@@ -27,7 +30,8 @@ async def handle_dhan_postback(request: Request) -> PostbackResponse:
     try:
         payload: dict[str, Any] = await request.json()
     except Exception:
-        payload = {}
+        logger.warning("Postback: invalid JSON body")
+        return PostbackResponse(status="error")
 
     try:
         order_id = payload.get("order_id")
@@ -47,6 +51,7 @@ async def handle_dhan_postback(request: Request) -> PostbackResponse:
                 Event(topic=Topic.ORDER_UPDATED, data=parsed, source="postback")
             )
     except Exception:
-        pass
+        logger.exception("Postback: failed to process payload")
+        return PostbackResponse(status="error")
 
     return PostbackResponse(status="ok")

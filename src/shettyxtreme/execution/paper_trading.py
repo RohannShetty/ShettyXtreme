@@ -95,12 +95,15 @@ class PaperTradingEngine:
         """Return P&L summary dict."""
         self._recalculate_pnl()
         realised = sum(t.pnl or 0.0 for t in self._fills)
-        unrealised = sum(
-            abs(pos.net_quantity) * (self._ltp_cache.get(pos.symbol, pos.buy_avg) - pos.buy_avg)
-            if pos.net_quantity > 0
-            else abs(pos.net_quantity) * (pos.sell_avg - self._ltp_cache.get(pos.symbol, pos.sell_avg))
-            for pos in self._positions.values()
-        )
+        unrealised = 0.0
+        for pos in self._positions.values():
+            ltp = self._ltp_cache.get(pos.symbol)
+            if ltp is None:
+                continue
+            if pos.net_quantity > 0:
+                unrealised += abs(pos.net_quantity) * (ltp - pos.buy_avg)
+            else:
+                unrealised += abs(pos.net_quantity) * (pos.sell_avg - ltp)
         total_exposure = sum(
             abs(pos.net_quantity) * self._ltp_cache.get(pos.symbol, pos.buy_avg or pos.sell_avg)
             for pos in self._positions.values()
@@ -200,16 +203,20 @@ class PaperTradingEngine:
                 if pos.net_quantity >= 0:
                     pos.buy_avg = ((pos.buy_avg * pos.net_quantity) + (order.price * order.quantity)) / total_qty if total_qty > 0 else order.price
                 else:
-                    pnl = (pos.sell_avg - order.price) * order.quantity
+                    pnl = (pos.sell_avg - order.price) * min(order.quantity, abs(pos.net_quantity))
                     pos.pnl += pnl
+                    if total_qty > 0:
+                        pos.buy_avg = order.price
                 pos.net_quantity = total_qty
             else:
                 total_qty = pos.net_quantity - order.quantity
                 if pos.net_quantity <= 0:
                     pos.sell_avg = ((pos.sell_avg * abs(pos.net_quantity)) + (order.price * order.quantity)) / abs(total_qty) if total_qty < 0 else order.price
                 else:
-                    pnl = (order.price - pos.buy_avg) * order.quantity
+                    pnl = (order.price - pos.buy_avg) * min(order.quantity, pos.net_quantity)
                     pos.pnl += pnl
+                    if total_qty < 0:
+                        pos.sell_avg = order.price
                 pos.net_quantity = total_qty
                 pos.quantity += order.quantity
 

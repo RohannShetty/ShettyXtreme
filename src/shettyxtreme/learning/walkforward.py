@@ -62,7 +62,7 @@ class WalkforwardEvaluator:
             tp1 = entry * (1 + self.tp1)
             tp2 = entry * (1 + self.tp2)
             tp3 = entry * (1 + self.tp3)
-            tsl = entry * (1 - self.tsl_stop_fraction)
+            tsl = entry - (entry * self.tsl_atr_multiplier * 0.01)
             if exit_price >= tp3:
                 return tp3
             if exit_price >= tp2:
@@ -72,7 +72,7 @@ class WalkforwardEvaluator:
             if exit_price <= tsl:
                 return tsl
             return exit_price
-        tsl = entry * (1 + self.tsl_stop_fraction)
+        tsl = entry + (entry * self.tsl_atr_multiplier * 0.01)
         if exit_price <= entry * (1 - self.tp3):
             return entry * (1 - self.tp3)
         if exit_price <= entry * (1 - self.tp2):

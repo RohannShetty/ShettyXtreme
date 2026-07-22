@@ -1,7 +1,7 @@
 """Intelligence router — regime, signal, voters, options, strategy hints."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Query
@@ -39,7 +39,7 @@ _current_signal: dict[str, Any] = {
     "P": 0.0,
     "G": 0.0,
     "voters": [],
-    "timestamp": datetime.utcnow(),
+    "timestamp": datetime.now(timezone.utc),
 }
 
 
@@ -104,7 +104,7 @@ async def get_options(
     return OptionsChainResponse(
         underlying=symbol,
         expiry=expiry or "next_weekly",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         contracts=[],
     )
 

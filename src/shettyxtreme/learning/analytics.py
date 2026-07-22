@@ -207,7 +207,18 @@ class AnalyticsEngine:
         for d in decisions:
             if d.outcome is None:
                 continue
-            if d.outcome == OutcomeLabel.WIN:
+            hint = d.strategy_hint or {}
+            entry = hint.get("entry_price", 0.0)
+            exit_ = hint.get("exit_price", 0.0)
+            qty = hint.get("quantity", 1)
+            if entry and exit_:
+                if d.signal.direction.value == "up":
+                    pnls.append((exit_ - entry) * qty)
+                elif d.signal.direction.value == "down":
+                    pnls.append((entry - exit_) * qty)
+                else:
+                    pnls.append(0.0)
+            elif d.outcome == OutcomeLabel.WIN:
                 pnls.append(1.0)
             elif d.outcome == OutcomeLabel.LOSS:
                 pnls.append(-1.0)

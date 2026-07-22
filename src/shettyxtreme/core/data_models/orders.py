@@ -1,6 +1,6 @@
 """Standard order and trade models."""
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional
 
 @dataclass
@@ -9,7 +9,7 @@ class Order:
     order_type: str; quantity: int; price: float; status: str
     filled_quantity: int = 0; average_price: float = 0.0
     trigger_price: Optional[float] = None; tag: Optional[str] = None
-    created_at: datetime = datetime.now()
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 @dataclass
 class OrderResult:

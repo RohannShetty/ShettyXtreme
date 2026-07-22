@@ -61,6 +61,18 @@ class CredentialBody(BaseModel):
     api_secret: str
 
 
+def _split_combined_key(api_key: str) -> tuple[str, str]:
+    """Split the combined `client_id:::api_key` format used by the setup UI.
+
+    Returns (client_id, api_key). If no `:::` separator is present the whole
+    value is treated as the api_key with an empty client_id.
+    """
+    if ":::" in api_key:
+        client_id, _, key = api_key.partition(":::")
+        return client_id.strip(), key.strip()
+    return "", api_key.strip()
+
+
 class ClientIdBody(BaseModel):
     client_id: str
 
@@ -106,8 +118,11 @@ async def get_status() -> CredentialStatusResponse:
 @router.post("/credentials/trading", response_model=SaveResult)
 async def save_trading_credentials(body: CredentialBody) -> SaveResult:
     store = _get_store()
-    store.trading_api_key = body.api_key
+    client_id, api_key = _split_combined_key(body.api_key)
+    store.trading_api_key = api_key
     store.trading_api_secret = body.api_secret
+    if client_id:
+        store.trading_client_id = client_id
     store.save()
     return SaveResult(success=True, message="Trading credentials saved")
 
@@ -115,8 +130,11 @@ async def save_trading_credentials(body: CredentialBody) -> SaveResult:
 @router.post("/credentials/data", response_model=SaveResult)
 async def save_data_credentials(body: CredentialBody) -> SaveResult:
     store = _get_store()
-    store.data_api_key = body.api_key
+    client_id, api_key = _split_combined_key(body.api_key)
+    store.data_api_key = api_key
     store.data_api_secret = body.api_secret
+    if client_id:
+        store.data_client_id = client_id
     store.save()
     return SaveResult(success=True, message="Data credentials saved")
 

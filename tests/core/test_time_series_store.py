@@ -88,11 +88,8 @@ class TestTimeSeriesStoreTicks:
             ("RELIANCE", "NSE", 2506.0, 150, datetime(2024, 1, 15, 10, 30, 1), 2505.5, 2506.5),
         ]
         ts_store.write_ticks(ticks)
-        import duckdb
-        conn = duckdb.connect(ts_store._conn.dbname)
-        result = conn.execute("SELECT COUNT(*) FROM ticks").fetchone()
+        result = ts_store._conn.execute("SELECT COUNT(*) FROM ticks").fetchone()
         assert result[0] == 2
-        conn.close()
 
     def test_write_ticks_empty_list(self, ts_store):
         ts_store.write_ticks([])

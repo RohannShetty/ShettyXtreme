@@ -151,7 +151,7 @@ class ShadowManager:
         if vote_direction > 0:
             return outcome == OutcomeLabel.WIN
         if vote_direction < 0:
-            return outcome == OutcomeLabel.LOSS
+            return outcome == OutcomeLabel.WIN
         return False
 
     def close(self) -> None:

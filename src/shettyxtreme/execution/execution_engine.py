@@ -17,7 +17,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from shettyxtreme.core.interfaces.order_executor import (
@@ -62,6 +62,7 @@ class ExecutionEngine:
         validator: OrderValidator | None = None,
         approval_timeout_seconds: int = 300,
         db_path: str | None = None,
+        portfolio_provider: Callable[[], Portfolio] | None = None,
     ) -> None:
         self._executor = executor
         self._risk_engine = risk_engine
@@ -69,6 +70,7 @@ class ExecutionEngine:
         self._approval_timeout = approval_timeout_seconds
         self._db_path = db_path
         self._approvals: dict[str, PendingApproval] = {}
+        self._portfolio_provider = portfolio_provider
         if db_path is not None:
             self._init_db()
 
@@ -100,6 +102,16 @@ class ExecutionEngine:
     # ------------------------------------------------------------------
     # Submit / approve / reject
     # ------------------------------------------------------------------
+    async def _get_portfolio(self) -> Portfolio:
+        if self._portfolio_provider is not None:
+            return self._portfolio_provider()
+        return Portfolio(
+            positions=[],
+            daily_pnl=0.0,
+            total_margin_used=0.0,
+            available_margin=0.0,
+        )
+
     def submit_signal(self, signal: Signal, strategy_hint: dict[str, Any]) -> str:
         """Create a PENDING approval and return its id."""
         now = datetime.now(timezone.utc)
@@ -127,12 +139,7 @@ class ExecutionEngine:
 
         order = self._build_order(approval.signal, approval.strategy_hint)
 
-        portfolio = Portfolio(
-            positions=[],
-            daily_pnl=0.0,
-            total_margin_used=0.0,
-            available_margin=1e9,
-        )
+        portfolio = await self._get_portfolio()
         decision: RiskDecision = self._risk_engine.check_entry(approval.signal, portfolio)
         if not decision.allowed:
             approval.status = ApprovalStatus.REJECTED.value

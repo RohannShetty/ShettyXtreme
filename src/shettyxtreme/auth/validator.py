@@ -11,11 +11,14 @@ from typing import Any
 import httpx
 
 
+AUTH_BASE = "https://auth.dhan.co"
 TRADING_BASE = "https://api.dhan.co/v2"
 DATA_BASE = "https://api.dhan.co/v2"
-_TRADING_TOKEN_URL = f"{TRADING_BASE}/oauth2/token"
-_DATA_TOKEN_URL = f"{DATA_BASE}/oauth2/token"
-_TRADING_FUND_LIMITS_URL = f"{TRADING_BASE}/fund_limits"
+# Dhan has no client_credentials token endpoint. API key/secret validity is
+# proven by triggering the first step of the OAuth consent flow.
+_TRADING_CONSENT_URL = f"{AUTH_BASE}/app/generate-consent"
+_DATA_CONSENT_URL = f"{AUTH_BASE}/app/generate-consent"
+_TRADING_FUND_LIMITS_URL = f"{TRADING_BASE}/fundlimit"
 _DATA_LTP_URL = f"{DATA_BASE}/marketdata/ltp"
 
 
@@ -34,16 +37,17 @@ class CredentialValidator:
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
-                    _TRADING_TOKEN_URL,
-                    data={
-                        "client_id": client_id,
-                        "grant_type": "client_credentials",
-                        "secret": api_secret,
-                    },
-                    headers={"api-key": api_key},
+                    _TRADING_CONSENT_URL,
+                    params={"client_id": client_id},
+                    headers={"app_id": api_key, "app_secret": api_secret},
                 )
                 resp.raise_for_status()
                 data = resp.json()
+                if data.get("status") != "success" or not data.get("consentAppId"):
+                    return ValidationResult(
+                        valid=False,
+                        message="Trading credentials invalid: consent not granted",
+                    )
                 return ValidationResult(
                     valid=True,
                     message="Trading credentials valid",
@@ -61,16 +65,17 @@ class CredentialValidator:
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
-                    _DATA_TOKEN_URL,
-                    data={
-                        "client_id": client_id,
-                        "grant_type": "client_credentials",
-                        "secret": api_secret,
-                    },
-                    headers={"api-key": api_key},
+                    _DATA_CONSENT_URL,
+                    params={"client_id": client_id},
+                    headers={"app_id": api_key, "app_secret": api_secret},
                 )
                 resp.raise_for_status()
                 data = resp.json()
+                if data.get("status") != "success" or not data.get("consentAppId"):
+                    return ValidationResult(
+                        valid=False,
+                        message="Data credentials invalid: consent not granted",
+                    )
                 return ValidationResult(
                     valid=True,
                     message="Data credentials valid",

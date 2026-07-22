@@ -4,10 +4,13 @@ Decouples data producers from consumers. All market data, signals,
 orders, and risk events flow through this bus.
 """
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine, Optional
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 class Topic(Enum):
     MARKET_DATA_TICK = "market.tick"
@@ -67,7 +70,14 @@ class EventBus:
             handlers = self._subscribers.get(event.topic, [])
             results = [h(event) for h in handlers]
             if results:
-                await asyncio.gather(*results, return_exceptions=True)
+                gathered = await asyncio.gather(*results, return_exceptions=True)
+                for i, result in enumerate(gathered):
+                    if isinstance(result, Exception):
+                        logger.exception(
+                            "EventBus handler error on topic %s",
+                            event.topic.value,
+                            exc_info=result,
+                        )
 
     async def stop(self):
         self._running = False

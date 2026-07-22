@@ -70,12 +70,11 @@ class DhanOAuthHelper:
 
         Step 3 of the OAuth consent flow.
         """
-        url = f"{self.AUTH_BASE_URL}/app/consume-conssent"
+        url = f"{self.AUTH_BASE_URL}/app/consumeApp-consent"
         headers = {"app_id": api_key, "app_secret": api_secret}
-        body = {"tokenId": token_id}
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.post(url, headers=headers, json=body)
+                resp = await client.get(url, headers=headers, params={"tokenId": token_id})
                 resp.raise_for_status()
                 data = resp.json()
                 result = ConsentResult(

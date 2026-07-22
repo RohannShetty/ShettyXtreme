@@ -47,8 +47,20 @@ def _make_executor() -> AsyncMock:
     return executor
 
 
+def _make_portfolio() -> Portfolio:
+    return Portfolio(
+        positions=[],
+        daily_pnl=0.0,
+        total_margin_used=0.0,
+        available_margin=1_000_000.0,
+    )
+
+
 def test_submit_signal_creates_pending() -> None:
-    engine = ExecutionEngine(executor=_make_executor(), risk_engine=RiskEngine())
+    engine = ExecutionEngine(
+        executor=_make_executor(), risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio,
+    )
     approval_id = engine.submit_signal(_make_signal(), _make_hint())
     pending = engine.get_pending_approvals()
     assert len(pending) == 1
@@ -61,7 +73,10 @@ def test_submit_signal_creates_pending() -> None:
 @pytest.mark.asyncio
 async def test_approve_places_order() -> None:
     executor = _make_executor()
-    engine = ExecutionEngine(executor=executor, risk_engine=RiskEngine())
+    engine = ExecutionEngine(
+        executor=executor, risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio,
+    )
     approval_id = engine.submit_signal(_make_signal(), _make_hint())
     order = await engine.approve(approval_id)
     assert isinstance(order, Order)
@@ -76,7 +91,10 @@ async def test_approve_places_order() -> None:
 @pytest.mark.asyncio
 async def test_approve_down_signal_is_sell() -> None:
     executor = _make_executor()
-    engine = ExecutionEngine(executor=executor, risk_engine=RiskEngine())
+    engine = ExecutionEngine(
+        executor=executor, risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio,
+    )
     approval_id = engine.submit_signal(_make_signal(SignalDirection.DOWN), _make_hint())
     order = await engine.approve(approval_id)
     assert order.side == OrderSide.SELL
@@ -85,7 +103,10 @@ async def test_approve_down_signal_is_sell() -> None:
 @pytest.mark.asyncio
 async def test_reject_no_order_placed() -> None:
     executor = _make_executor()
-    engine = ExecutionEngine(executor=executor, risk_engine=RiskEngine())
+    engine = ExecutionEngine(
+        executor=executor, risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio,
+    )
     approval_id = engine.submit_signal(_make_signal(), _make_hint())
     engine.reject(approval_id, "manual reject")
     assert executor.place_order.await_count == 0
@@ -99,7 +120,10 @@ async def test_pre_execution_risk_reject_blocks_order() -> None:
     risk_engine.check_entry = lambda signal, portfolio: RiskDecision.reject(  # type: ignore[assignment]
         "daily loss limit reached", filter_name="loss_limit"
     )
-    engine = ExecutionEngine(executor=executor, risk_engine=risk_engine)
+    engine = ExecutionEngine(
+        executor=executor, risk_engine=risk_engine,
+        portfolio_provider=_make_portfolio,
+    )
     approval_id = engine.submit_signal(_make_signal(), _make_hint())
     with pytest.raises(RuntimeError):
         await engine.approve(approval_id)
@@ -110,7 +134,10 @@ async def test_pre_execution_risk_reject_blocks_order() -> None:
 @pytest.mark.asyncio
 async def test_invalid_order_raises_before_place() -> None:
     executor = _make_executor()
-    engine = ExecutionEngine(executor=executor, risk_engine=RiskEngine())
+    engine = ExecutionEngine(
+        executor=executor, risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio,
+    )
     hint = _make_hint()
     hint["exchange"] = "BADX"  # invalid exchange -> validator raises
     approval_id = engine.submit_signal(_make_signal(), hint)
@@ -121,7 +148,8 @@ async def test_invalid_order_raises_before_place() -> None:
 
 def test_expire_stale_marks_expired() -> None:
     engine = ExecutionEngine(
-        executor=_make_executor(), risk_engine=RiskEngine(), approval_timeout_seconds=300
+        executor=_make_executor(), risk_engine=RiskEngine(), approval_timeout_seconds=300,
+        portfolio_provider=_make_portfolio,
     )
     approval_id = engine.submit_signal(_make_signal(), _make_hint())
     # Force the approval to be past its timeout window
@@ -136,6 +164,9 @@ def test_expire_stale_marks_expired() -> None:
 
 
 def test_lifecycle_transitions() -> None:
-    engine = ExecutionEngine(executor=_make_executor(), risk_engine=RiskEngine())
+    engine = ExecutionEngine(
+        executor=_make_executor(), risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio,
+    )
     approval_id = engine.submit_signal(_make_signal(), _make_hint())
     assert engine.get_approval(approval_id).status == ApprovalStatus.PENDING.value

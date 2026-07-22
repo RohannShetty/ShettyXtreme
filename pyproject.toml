@@ -21,6 +21,8 @@ dependencies = [
     "rich>=13",
     "structlog>=23",
     "textual>=0.41",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
 ]
 
 [project.optional-dependencies]

@@ -56,7 +56,7 @@ def compute_cost(
     notional = quantity * price
 
     slippage = notional * (slippage_bps / 10000.0)
-    num_lots = quantity / lot_size if lot_size > 0 else 1
+    num_lots = quantity // lot_size if lot_size > 0 else 1
     brokerage = brokerage_per_lot * num_lots
     stt = notional * _STT_RATE
     exchange_charges = notional * _EXCHANGE_RATE
@@ -68,7 +68,6 @@ def compute_cost(
         exchange_charges=round(exchange_charges, 2),
     )
 
-    # Marginal trade detection: if net EV < 2 * total cost
     breakdown.marginal_flag = False
     return breakdown
 

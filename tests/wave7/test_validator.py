@@ -12,11 +12,11 @@ from shettyxtreme.auth.validator import CredentialValidator, ValidationResult
 
 
 def test_validate_trading_valid() -> None:
-    """Mock httpx.post returning success, verify valid=True."""
+    """Mock generate-consent returning success, verify valid=True."""
     async def _run() -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"access_token": "tok_abc123"}
+        mock_resp.json.return_value = {"status": "success", "consentAppId": "abc123"}
 
         with patch("shettyxtreme.auth.validator.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
@@ -36,7 +36,7 @@ def test_validate_trading_valid() -> None:
 
 
 def test_validate_trading_invalid() -> None:
-    """Mock httpx.post returning error, verify valid=False."""
+    """Mock generate-consent returning 401, verify valid=False."""
     async def _run() -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 401
@@ -62,12 +62,35 @@ def test_validate_trading_invalid() -> None:
     asyncio.run(_run())
 
 
-def test_validate_data_valid() -> None:
-    """Mock httpx.post returning success for data API, verify valid=True."""
+def test_validate_trading_consent_not_granted() -> None:
+    """Mock generate-consent returning 200 but no consentAppId, verify valid=False."""
     async def _run() -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"access_token": "tok_abc123"}
+        mock_resp.json.return_value = {"status": "failed"}
+
+        with patch("shettyxtreme.auth.validator.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(return_value=mock_resp)
+            mock_client_cls.return_value = mock_client
+
+            validator = CredentialValidator()
+            result = await validator.validate_trading(
+                api_key="test_key", api_secret="test_secret", client_id="123"
+            )
+            assert result.valid is False
+
+    asyncio.run(_run())
+
+
+def test_validate_data_valid() -> None:
+    """Mock generate-consent returning success for data API, verify valid=True."""
+    async def _run() -> None:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"status": "success", "consentAppId": "abc123"}
 
         with patch("shettyxtreme.auth.validator.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
@@ -87,7 +110,7 @@ def test_validate_data_valid() -> None:
 
 
 def test_validate_data_invalid() -> None:
-    """Mock httpx.post returning error for data API, verify valid=False."""
+    """Mock generate-consent returning 401 for data API, verify valid=False."""
     async def _run() -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 401

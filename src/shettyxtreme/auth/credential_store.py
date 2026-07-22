@@ -73,6 +73,8 @@ class CredentialStore:
         if not self.trading_access_token or not self.trading_token_expiry:
             return False
         expiry = datetime.fromisoformat(self.trading_token_expiry)
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
         return expiry > datetime.now(timezone.utc)
 
     def is_data_valid(self) -> bool:
@@ -80,6 +82,8 @@ class CredentialStore:
         if not self.data_access_token or not self.data_token_expiry:
             return False
         expiry = datetime.fromisoformat(self.data_token_expiry)
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
         return expiry > datetime.now(timezone.utc)
 
     def update_trading_token(

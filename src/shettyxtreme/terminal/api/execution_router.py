@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -90,7 +90,7 @@ async def get_kill_switch() -> KillSwitchResponse:
     active = False
     if _kill_switch_path and os.path.exists(_kill_switch_path):
         active = True
-    return KillSwitchResponse(active=active, activated_at=datetime.utcnow() if active else None)
+    return KillSwitchResponse(active=active, activated_at=datetime.now(timezone.utc) if active else None)
 
 
 @router.post("/kill-switch", response_model=KillSwitchResponse)
@@ -105,7 +105,7 @@ async def activate_kill_switch(activate: bool = True) -> KillSwitchResponse:
 
     if activate:
         Path(_kill_switch_path).touch()
-        return KillSwitchResponse(active=True, activated_at=datetime.utcnow())
+        return KillSwitchResponse(active=True, activated_at=datetime.now(timezone.utc))
     else:
         Path(_kill_switch_path).unlink(missing_ok=True)
         return KillSwitchResponse(active=False)

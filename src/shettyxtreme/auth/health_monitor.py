@@ -42,31 +42,34 @@ class TokenHealthMonitor:
 
     async def _check_health(self) -> None:
         """Check both trading and data credential health, publish events."""
-        trading_expiry = getattr(self._credential_store, "trading_token_expiry", None)
-        data_expiry = getattr(self._credential_store, "data_token_expiry", None)
+        try:
+            trading_expiry = getattr(self._credential_store, "trading_token_expiry", None)
+            data_expiry = getattr(self._credential_store, "data_token_expiry", None)
 
-        trading_status, trading_days = self._get_status(trading_expiry, 3600)
-        data_status, data_days = self._get_status(data_expiry, 259200)
+            trading_status, trading_days = self._get_status(trading_expiry, 3600)
+            data_status, data_days = self._get_status(data_expiry, 259200)
 
-        health_data = {
-            "trading_status": trading_status,
-            "data_status": data_status,
-            "trading_expiry": trading_expiry,
-            "data_expiry": data_expiry,
-            "trading_days_to_expiry": trading_days,
-            "data_days_to_expiry": data_days,
-        }
+            health_data = {
+                "trading_status": trading_status,
+                "data_status": data_status,
+                "trading_expiry": trading_expiry,
+                "data_expiry": data_expiry,
+                "trading_days_to_expiry": trading_days,
+                "data_days_to_expiry": data_days,
+            }
 
-        await self._event_bus.publish(Event(Topic.CREDENTIAL_HEALTH_CHANGED, health_data, source="health_monitor"))
+            await self._event_bus.publish(Event(Topic.CREDENTIAL_HEALTH_CHANGED, health_data, source="health_monitor"))
 
-        for status in (trading_status, data_status):
-            if status in ("EXPIRED", "EXPIRING_SOON"):
-                await self._event_bus.publish(Event(
-                    Topic.CREDENTIAL_WARNING,
-                    {"message": f"Credential status changed to {status}", "trading_status": trading_status, "data_status": data_status},
-                    source="health_monitor",
-                ))
-                break
+            for status in (trading_status, data_status):
+                if status in ("EXPIRED", "EXPIRING_SOON"):
+                    await self._event_bus.publish(Event(
+                        Topic.CREDENTIAL_WARNING,
+                        {"message": f"Credential status changed to {status}", "trading_status": trading_status, "data_status": data_status},
+                        source="health_monitor",
+                    ))
+                    break
+        except Exception:
+            logger.exception("Health check failed")
 
     def _get_status(self, token_expiry: str | None, warning_threshold_seconds: int) -> tuple[str, float | None]:
         """Return (status_string, days_to_expiry) for a token expiry timestamp."""

@@ -60,9 +60,9 @@ class DhanDataAdapter:
     name: str = "dhan-data"
     description: str = "Dhan market data: live WS feed, historical OHLC, OI"
 
-    def __init__(self, client_id: str, api_key: str) -> None:
+    def __init__(self, client_id: str, access_token: str) -> None:
         self._client_id: str = client_id
-        self._api_key: str = api_key
+        self._access_token: str = access_token
         self._context: DhanContext | None = None
         self._dhan: DhanHQClient | None = None
         self._feed: MarketFeed | None = None
@@ -76,7 +76,7 @@ class DhanDataAdapter:
     def _init_context(self) -> None:
         """Initialize DhanContext with DATA credentials (not trading)."""
         self._context = DhanContext(
-            client_id=self._client_id, access_token=self._api_key,
+            client_id=self._client_id, access_token=self._access_token,
         )
         self._dhan = DhanHQClient(self._context)
         self._connected = True

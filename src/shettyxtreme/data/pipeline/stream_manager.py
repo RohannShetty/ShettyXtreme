@@ -127,11 +127,10 @@ class StreamManager:
     def _lazy_init_dhanhq(self) -> Any:
         """Lazy init DhanHQ client (can be mocked in tests)."""
         if self._dhanhq_instance is None:
-            from dhanhq import dhanhq
-            self._dhanhq_instance = dhanhq.DhanHQ(
-                client_id=self._client_id,
-                access_token=self._access_token,
-            )
+            from dhanhq import DhanContext as DhanContext_
+            from dhanhq.dhanhq import dhanhq as DhanHQClient
+            ctx = DhanContext_(client_id=self._client_id, access_token=self._access_token)
+            self._dhanhq_instance = DhanHQClient(ctx)
         return self._dhanhq_instance
 
     async def _connect_ws(self) -> None:

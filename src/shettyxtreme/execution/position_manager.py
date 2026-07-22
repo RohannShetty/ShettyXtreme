@@ -187,9 +187,10 @@ class PositionManager:
         if profit < min_profit:
             return
 
-        candidate = position.entry_price - (position.atr * self.tsl_atr_multiplier) \
-            if position.direction > 0 \
-            else position.entry_price + (position.atr * self.tsl_atr_multiplier)
+        if position.direction > 0:
+            candidate = position.ltp - (position.atr * self.tsl_atr_multiplier)
+        else:
+            candidate = position.ltp + (position.atr * self.tsl_atr_multiplier)
 
         if position.direction > 0:
             if position.tsl is None or candidate > position.tsl:

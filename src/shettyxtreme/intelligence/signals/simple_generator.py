@@ -146,7 +146,7 @@ class SimpleSignalGenerator:
         volume_confirmed = result.get("volume_confirmed", False)
 
         base_strength = (scanner_confidence / 100.0) * 10.0
-        weighted = base_strength * (weight / 2.0)
+        weighted = base_strength * weight
         weighted = min(weighted, 10.0)
 
         if volume_confirmed:

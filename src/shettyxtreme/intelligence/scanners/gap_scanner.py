@@ -104,21 +104,21 @@ class GapScanner:
                     "open": curr_bar.open,
                     "prev_close": prev_bar.close,
                 })
-
-        # Intraday gap
-        gap_pct = self._compute_gap_percent(prev_bar.close, curr_bar.open)
-        if abs(gap_pct) > 0.01:
-            direction = "bullish" if gap_pct > 0 else "bearish"
-            gap_type = self._categorise_gap(gap_pct, history, direction)
-            results.append({
-                "symbol": symbol,
-                "gap_type": gap_type,
-                "gap_percent": round(abs(gap_pct), 2),
-                "direction": direction,
-                "timestamp": now,
-                "open": curr_bar.open,
-                "prev_close": prev_bar.close,
-            })
+        else:
+            # Intraday gap (only when same session)
+            gap_pct = self._compute_gap_percent(prev_bar.close, curr_bar.open)
+            if abs(gap_pct) > 0.01:
+                direction = "bullish" if gap_pct > 0 else "bearish"
+                gap_type = self._categorise_gap(gap_pct, history, direction)
+                results.append({
+                    "symbol": symbol,
+                    "gap_type": gap_type,
+                    "gap_percent": round(abs(gap_pct), 2),
+                    "direction": direction,
+                    "timestamp": now,
+                    "open": curr_bar.open,
+                    "prev_close": prev_bar.close,
+                })
 
         return results
 
@@ -147,7 +147,7 @@ class GapScanner:
         if len(history) >= 3:
             trend_window = history[-(min(self.lookback, len(history) - 1)):-1]
             if trend_window:
-                trend_change = trend_window[-1].close - trend_window[0].open
+                trend_change = trend_window[-1].close - trend_window[0].close
                 trend_direction = "bullish" if trend_change >= 0 else "bearish"
                 if trend_direction != direction:
                     return "exhaustion"

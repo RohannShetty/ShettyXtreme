@@ -15,7 +15,7 @@ from shettyxtreme.core.interfaces.order_executor import (
     ProductType,
 )
 
-VALID_EXCHANGES: set[str] = {"NSE", "BSE"}
+VALID_EXCHANGES: set[str] = {"NSE", "BSE", "NFO", "BFO", "MCX", "NSE_FNO", "BSE_FNO", "MCX_FNO", "IDX_I"}
 VALID_ACTIONS: set[str] = {"BUY", "SELL"}
 VALID_PRICE_TYPES: set[str] = {"MARKET", "LIMIT", "SL", "SL-M"}
 VALID_PRODUCT_TYPES: set[str] = {"MIS", "NRML", "CNC", "MARGIN"}
