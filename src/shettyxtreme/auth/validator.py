@@ -53,6 +53,11 @@ class CredentialValidator:
                     message="Trading credentials valid",
                     details=data,
                 )
+        except (OSError, httpx.ConnectError, httpx.TimeoutException) as exc:
+            return ValidationResult(
+                valid=False,
+                message=f"Network error — cannot reach Dhan API: {exc}",
+            )
         except Exception as exc:
             return ValidationResult(
                 valid=False,
@@ -81,6 +86,11 @@ class CredentialValidator:
                     message="Data credentials valid",
                     details=data,
                 )
+        except (OSError, httpx.ConnectError, httpx.TimeoutException) as exc:
+            return ValidationResult(
+                valid=False,
+                message=f"Network error — cannot reach Dhan API: {exc}",
+            )
         except Exception as exc:
             return ValidationResult(
                 valid=False,
@@ -108,6 +118,11 @@ class CredentialValidator:
                     message="Access token valid",
                     details=resp.json(),
                 )
+        except (OSError, httpx.ConnectError, httpx.TimeoutException) as exc:
+            return ValidationResult(
+                valid=False,
+                message=f"Network error — cannot reach Dhan API: {exc}",
+            )
         except Exception as exc:
             return ValidationResult(
                 valid=False,
