@@ -7,8 +7,12 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
+import logging
+
 from shettyxtreme.auth.credential_store import CredentialStore
 from shettyxtreme.core.event_bus.event_bus import EventBus, Event, Topic
+
+logger = logging.getLogger(__name__)
 
 
 class TokenHealthMonitor:

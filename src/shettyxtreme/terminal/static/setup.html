@@ -95,6 +95,56 @@ body {
   margin-bottom: 16px;
 }
 
+/* ── Collapsible Instructions ────────────────────────────────── */
+.collapse-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #4AF626;
+  padding: 8px 0;
+  user-select: none;
+}
+.collapse-header:hover { color: #3CE01A; }
+.collapse-arrow {
+  transition: transform 0.2s;
+  font-size: 10px;
+}
+.collapse-arrow.open { transform: rotate(90deg); }
+.collapse-body {
+  display: none;
+  background: #1A1A1A;
+  border: 1px solid #1E1E1E;
+  border-radius: 4px;
+  padding: 12px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: #6C6C6C;
+  line-height: 1.7;
+}
+.collapse-body.open { display: block; }
+.collapse-body strong { color: #E0E0E0; }
+.collapse-body ol { margin: 6px 0 6px 16px; padding: 0; }
+.collapse-body ol li { margin-bottom: 4px; }
+.collapse-body .url-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #121212;
+  border: 1px solid #1E1E1E;
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin: 8px 0;
+}
+.collapse-body .url-text {
+  flex: 1;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #E0E0E0;
+  word-break: break-all;
+}
+
 /* ── Form Elements ───────────────────────────────────────────── */
 .field {
   margin-bottom: 14px;
@@ -169,6 +219,18 @@ body {
   padding: 6px 14px;
 }
 .btn-copy:hover:not(:disabled) { color: #E0E0E0; border-color: #3A3A3A; }
+.btn-copy-sm {
+  background: transparent;
+  color: #4AF626;
+  border: 1px solid #4AF62644;
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+.btn-copy-sm:hover { background: #4AF62622; }
 .btn-launch {
   background: #4AF626;
   color: #0A0A0A;
@@ -203,34 +265,6 @@ body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Postback URL Box ────────────────────────────────────────── */
-.url-box {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: #1A1A1A;
-  border: 1px solid #1E1E1E;
-  border-radius: 4px;
-  padding: 8px 12px;
-  margin-bottom: 14px;
-}
-.url-box .url-text {
-  flex: 1;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
-  color: #E0E0E0;
-  word-break: break-all;
-}
-.url-box .btn-copy { flex-shrink: 0; }
-
-.instructions {
-  font-size: 12px;
-  color: #6C6C6C;
-  line-height: 1.7;
-  margin-bottom: 14px;
-}
-.instructions strong { color: #E0E0E0; }
-
 /* ── Connection Status ───────────────────────────────────────── */
 .conn-status {
   display: flex;
@@ -254,6 +288,14 @@ body {
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
+}
+
+/* ── Connecting State ─────────────────────────────────────────── */
+.connecting-overlay {
+  text-align: center;
+  padding: 20px 0;
+  color: #6C6C6C;
+  font-size: 12px;
 }
 
 /* ── Summary ─────────────────────────────────────────────────── */
@@ -283,9 +325,32 @@ body {
   <div class="step active" id="step1">
     <div class="step-title">Trading API Credentials</div>
     <div class="step-desc">Enter your Dhan Trading API credentials to connect your trading account.</div>
+
+    <div class="collapse-header" id="tradingHelpToggle">
+      <span class="collapse-arrow" id="tradingArrow">&#9654;</span>
+      How to get credentials from Dhan Developer Portal
+    </div>
+    <div class="collapse-body" id="tradingHelpBody">
+      <ol>
+        <li>Go to <strong>https://developer.dhan.co/</strong> and log in</li>
+        <li>Click <strong>"Create New App"</strong> or select your existing app</li>
+        <li>Copy your <strong>Client ID</strong> (a string like "11345...")</li>
+        <li>Click <strong>"Generate API Key"</strong> and copy it</li>
+        <li>In the same app settings, set the <strong>Postback URL</strong> to:</li>
+      </ol>
+      <div class="url-box">
+        <span class="url-text" id="postbackUrlDisplay">http://localhost:8000/api/postback/dhan</span>
+        <button class="btn-copy-sm" id="btnCopyPostback">Copy</button>
+      </div>
+      <div style="margin-top:6px;">
+        Your credentials are entered as: <strong>client_id:::api_key</strong><br>
+        Example: <strong>11345:::abc123def456</strong>
+      </div>
+    </div>
+
     <div class="field">
-      <label>API Key</label>
-      <input type="text" id="tradingApiKey" placeholder="client_id:::api_key" autocomplete="off">
+      <label>API Key (client_id:::api_key)</label>
+      <input type="text" id="tradingApiKey" placeholder="11345:::abc123def456" autocomplete="off">
     </div>
     <div class="field">
       <label>API Secret</label>
@@ -303,8 +368,24 @@ body {
   <div class="step" id="step2">
     <div class="step-title">Data API Credentials</div>
     <div class="step-desc">Enter your Dhan Data API credentials for market data access.</div>
+
+    <div class="collapse-header" id="dataHelpToggle">
+      <span class="collapse-arrow" id="dataArrow">&#9654;</span>
+      How to get Data API credentials
+    </div>
+    <div class="collapse-body" id="dataHelpBody">
+      <ol>
+        <li>In the <strong>Dhan Developer Portal</strong>, go to your app</li>
+        <li>Scroll to the <strong>Data API</strong> section</li>
+        <li>Copy the <strong>Data Client ID</strong> and <strong>Data API Key</strong></li>
+      </ol>
+      <div style="margin-top:6px;">
+        Your credentials are entered as: <strong>client_id:::api_key</strong>
+      </div>
+    </div>
+
     <div class="field">
-      <label>API Key</label>
+      <label>API Key (client_id:::api_key)</label>
       <input type="text" id="dataApiKey" placeholder="client_id:::api_key" autocomplete="off">
     </div>
     <div class="field">
@@ -320,32 +401,11 @@ body {
     </div>
   </div>
 
-  <!-- Step 3: Postback URL Registration -->
+  <!-- Step 3: Connect & Verify (Unified) -->
   <div class="step" id="step3">
-    <div class="step-title">Postback URL Registration</div>
-    <div class="step-desc">Register the postback URL in your Dhan Developer Portal to enable order callbacks.</div>
-    <div class="url-box">
-      <span class="url-text" id="postbackUrl">http://localhost:8000/api/postback/dhan</span>
-      <button class="btn btn-copy" id="btnCopyUrl">Copy</button>
-    </div>
-    <div class="msg" id="msg3"></div>
-    <div class="instructions">
-      <strong>Steps:</strong><br>
-      1. Go to <strong>Dhan Developer Portal</strong><br>
-      2. Navigate to <strong>Your API App → Postback URL</strong><br>
-      3. Paste the URL above and save
-    </div>
-    <div class="btn-row">
-      <button class="btn btn-secondary" id="btnBack3">Back</button>
-      <div style="flex:1;"></div>
-      <button class="btn btn-primary" id="btnNext3">I've Registered</button>
-    </div>
-  </div>
-
-  <!-- Step 4: Connect to Dhan -->
-  <div class="step" id="step4">
     <div class="step-title">Connect to Dhan</div>
-    <div class="step-desc">Authorize both trading and data accounts via Dhan OAuth consent flow.</div>
+    <div class="step-desc">Authorize your accounts via Dhan OAuth consent flow.</div>
+
     <div class="conn-status" id="tradingConnStatus">
       <div class="conn-dot" id="tradingDot"></div>
       <span id="tradingConnLabel">Trading Account — Not Connected</span>
@@ -354,16 +414,25 @@ body {
       <div class="conn-dot" id="dataDot"></div>
       <span id="dataConnLabel">Data Account — Not Connected</span>
     </div>
-    <div class="msg" id="msg4"></div>
+
+    <div class="msg" id="msg3"></div>
+
+    <div id="connectingArea" style="display:none;">
+      <div class="connecting-overlay">
+        <span class="spinner"></span>
+        <span id="connectingText">Waiting for authorization...</span>
+      </div>
+    </div>
+
     <div class="btn-row" id="connBtnRow">
-      <button class="btn btn-secondary" id="btnBack4">Back</button>
+      <button class="btn btn-secondary" id="btnBack3">Back</button>
       <div style="flex:1;"></div>
-      <button class="btn btn-accent" id="btnConnectTrading">Connect Trading Account</button>
+      <button class="btn btn-primary" id="btnConnectAll">Connect to Dhan</button>
     </div>
   </div>
 
-  <!-- Step 5: Setup Complete -->
-  <div class="step" id="step5">
+  <!-- Step 4: Setup Complete -->
+  <div class="step" id="step4">
     <div class="step-title" style="color:#4AF626;">Setup Complete</div>
     <div class="step-desc">Your ShettyXtreme terminal is ready.</div>
     <div class="summary-grid" id="summaryGrid"></div>
@@ -375,14 +444,17 @@ body {
 
 <script>
 // ── Config ──────────────────────────────────────────────────────
-const STEPS = 5;
-const STEP_TITLES = ['Trading API', 'Data API', 'Postback', 'Connect', 'Done'];
+const STEPS = 4;
+const STEP_TITLES = ['Trading API', 'Data API', 'Connect', 'Done'];
 const POSTBACK_URL = 'http://localhost:8000/api/postback/dhan';
 
 // ── State ───────────────────────────────────────────────────────
 let currentStep = 1;
 let tradingTested = false;
 let dataTested = false;
+let tradingConnected = false;
+let dataConnected = false;
+let pollTimer = null;
 
 // ── Helpers ─────────────────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
@@ -412,19 +484,46 @@ function renderProgress() {
   let html = '';
   for (let i = 1; i <= STEPS; i++) {
     const cls = i < currentStep ? 'done' : i === currentStep ? 'active' : '';
-    html += `<div class="progress-step ${cls}"></div>`;
+    html += '<div class="progress-step ' + cls + '"></div>';
   }
-  html += `<span class="progress-label">${currentStep}/${STEPS}</span>`;
+  html += '<span class="progress-label">' + currentStep + '/' + STEPS + '</span>';
   bar.innerHTML = html;
 }
 
 // ── Step Navigation ─────────────────────────────────────────────
 function showStep(n) {
-  for (let i = 1; i <= STEPS; i++) {
-    $('step' + i).classList.toggle('active', i === n);
-  }
+  document.querySelectorAll('.step').forEach(function(el, idx) {
+    el.classList.toggle('active', (idx + 1) === n);
+  });
   currentStep = n;
   renderProgress();
+}
+
+// ── URL Param Parsing ───────────────────────────────────────────
+function checkUrlParams() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('connected') === 'trading') {
+    tradingConnected = true;
+    $('tradingDot').className = 'conn-dot connected';
+    $('tradingConnLabel').textContent = 'Trading Account — Connected';
+    setMsg(3, 'Trading account authorized via redirect.', 'success');
+  }
+  if (params.get('connected') === 'data') {
+    dataConnected = true;
+    $('dataDot').className = 'conn-dot connected';
+    $('dataConnLabel').textContent = 'Data Account — Connected';
+    if (tradingConnected) {
+      setMsg(3, 'Both accounts connected via redirect!', 'success');
+      setTimeout(function() { showStep(4); fetchAndRenderSummary(); }, 1000);
+    }
+  }
+  if (params.get('error')) {
+    setMsg(3, 'Authorization error: ' + params.get('error'), 'error');
+  }
+  // Clean URL params without reload
+  if (params.has('connected') || params.has('error')) {
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
 }
 
 // ── Auto-redirect if setup already complete ─────────────────────
@@ -437,13 +536,23 @@ async function checkStatus() {
         window.location.href = '/';
         return;
       }
+      if (d.trading_connected) $('#tradingConnLabel').textContent = 'Trading Account — Connected';
+      if (d.data_connected) $('#dataConnLabel').textContent = 'Data Account — Connected';
     }
   } catch (_) {}
   renderProgress();
 }
 
+// ── Collapsible Help Panels ─────────────────────────────────────
+function setupCollapse(toggleId, bodyId, arrowId) {
+  $(toggleId).addEventListener('click', function() {
+    $(bodyId).classList.toggle('open');
+    $(arrowId).classList.toggle('open');
+  });
+}
+
 // ── Step 1: Test Trading API ───────────────────────────────────
-$('btnTestTrading').addEventListener('click', async () => {
+$('btnTestTrading').addEventListener('click', async function() {
   const apiKey = $('tradingApiKey').value.trim();
   const apiSecret = $('tradingApiSecret').value.trim();
   if (!apiKey || !apiSecret) {
@@ -454,7 +563,6 @@ $('btnTestTrading').addEventListener('click', async () => {
   setLoading(btn, true);
   clearMsg(1);
   try {
-    // Save credentials first
     await fetch('/auth/credentials/trading', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -483,7 +591,7 @@ $('btnTestTrading').addEventListener('click', async () => {
 });
 
 // ── Step 2: Test Data API ─────────────────────────────────────
-$('btnTestData').addEventListener('click', async () => {
+$('btnTestData').addEventListener('click', async function() {
   const apiKey = $('dataApiKey').value.trim();
   const apiSecret = $('dataApiSecret').value.trim();
   if (!apiKey || !apiSecret) {
@@ -494,7 +602,6 @@ $('btnTestData').addEventListener('click', async () => {
   setLoading(btn, true);
   clearMsg(2);
   try {
-    // Save credentials first
     await fetch('/auth/credentials/data', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -522,98 +629,117 @@ $('btnTestData').addEventListener('click', async () => {
   }
 });
 
-// ── Step 3: Copy Postback URL ──────────────────────────────────
-$('btnCopyUrl').addEventListener('click', async () => {
+// ── Copy Postback URL ──────────────────────────────────────────
+$('btnCopyPostback').addEventListener('click', async function() {
   try {
     await navigator.clipboard.writeText(POSTBACK_URL);
-    $('btnCopyUrl').textContent = 'Copied!';
-    setMsg(3, 'URL copied to clipboard.', 'success');
-    setTimeout(() => { $('btnCopyUrl').textContent = 'Copy'; }, 2000);
+    $('btnCopyPostback').textContent = 'Copied!';
+    setTimeout(function() { $('btnCopyPostback').textContent = 'Copy'; }, 2000);
   } catch (_) {
-    setMsg(3, 'Copy failed. Select and copy manually.', 'error');
+    setMsg(1, 'Copy failed. Select and copy manually.', 'error');
   }
 });
 
-// ── Step 4: Connect Accounts ───────────────────────────────────
-$('btnConnectTrading').addEventListener('click', async () => {
-  clearMsg(4);
+// ── Step 3: Unified Connect ─────────────────────────────────────
+$('btnConnectAll').addEventListener('click', async function() {
+  clearMsg(3);
+  $('btnConnectAll').disabled = true;
+
+  // Show connecting overlay, hide buttons
+  $('connectingArea').style.display = 'block';
+  $('connectingText').textContent = 'Opening Dhan authorization for Trading Account...';
+  $('connBtnRow').style.display = 'none';
+
+  // Mark trading as pending
+  $('tradingDot').className = 'conn-dot pending';
+  $('tradingConnLabel').textContent = 'Trading Account — Pending Authorization';
+
   try {
+    // Start trading consent
     const r = await fetch('/auth/start-consent/trading', { method: 'POST' });
     const d = await r.json();
     if (r.ok && d.login_url) {
       window.open(d.login_url, '_blank');
-      $('tradingDot').className = 'conn-dot pending';
-      $('tradingConnLabel').textContent = 'Trading Account — Pending Authorization';
-      setMsg(4, 'Authorization page opened. After approving, click "Connect Data Account".', 'info');
-
-      // Show connect data button and hide trading button
-      $('btnConnectTrading').style.display = 'none';
-      const dataBtn = document.createElement('button');
-      dataBtn.className = 'btn btn-accent';
-      dataBtn.id = 'btnConnectData';
-      dataBtn.textContent = 'Connect Data Account';
-      dataBtn.addEventListener('click', connectData);
-      $('connBtnRow').appendChild(dataBtn);
+      // Start polling for trading
+      await pollForConnection('trading');
     } else {
-      setMsg(4, d.message || 'Failed to start consent flow.', 'error');
+      setMsg(3, d.message || 'Failed to start trading consent flow.', 'error');
+      resetConnectUI();
+      return;
     }
+
+    // Trading connected, now start data consent
+    $('connectingText').textContent = 'Opening Dhan authorization for Data Account...';
+    $('dataDot').className = 'conn-dot pending';
+    $('dataConnLabel').textContent = 'Data Account — Pending Authorization';
+
+    const r2 = await fetch('/auth/start-consent/data', { method: 'POST' });
+    const d2 = await r2.json();
+    if (r2.ok && d2.login_url) {
+      window.open(d2.login_url, '_blank');
+      await pollForConnection('data');
+    } else {
+      setMsg(3, d2.message || 'Failed to start data consent flow.', 'error');
+      resetConnectUI();
+      return;
+    }
+
+    // Both connected
+    setMsg(3, 'Both accounts connected!', 'success');
+    setTimeout(function() { showStep(4); fetchAndRenderSummary(); }, 800);
   } catch (e) {
-    setMsg(4, 'Network error. Is the server running?', 'error');
+    setMsg(3, 'Network error. Is the server running?', 'error');
+    resetConnectUI();
   }
 });
 
-async function connectData() {
-  clearMsg(4);
-  try {
-    const r = await fetch('/auth/start-consent/data', { method: 'POST' });
-    const d = await r.json();
-    if (r.ok && d.login_url) {
-      window.open(d.login_url, '_blank');
-      $('dataDot').className = 'conn-dot pending';
-      $('dataConnLabel').textContent = 'Data Account — Pending Authorization';
-      setMsg(4, 'Authorization page opened. After approving, check status and proceed.', 'info');
+async function pollForConnection(type) {
+  return new Promise(function(resolve) {
+    pollTimer = setInterval(async function() {
+      try {
+        const r = await fetch('/auth/status');
+        const d = await r.json();
 
-      // Add status check button
-      const checkBtn = document.createElement('button');
-      checkBtn.className = 'btn btn-primary';
-      checkBtn.id = 'btnCheckStatus';
-      checkBtn.textContent = 'Check Status';
-      checkBtn.addEventListener('click', checkConnectionStatus);
-      $('connBtnRow').appendChild(checkBtn);
-    } else {
-      setMsg(4, d.message || 'Failed to start consent flow.', 'error');
-    }
-  } catch (e) {
-    setMsg(4, 'Network error. Is the server running?', 'error');
-  }
+        if (type === 'trading' && d.trading_connected) {
+          clearInterval(pollTimer);
+          tradingConnected = true;
+          $('tradingDot').className = 'conn-dot connected';
+          $('tradingConnLabel').textContent = 'Trading Account — Connected';
+          setMsg(3, 'Trading account authorized.', 'success');
+          $('connectingText').textContent = 'Trading connected. Starting Data authorization...';
+          resolve();
+        }
+
+        if (type === 'data' && d.data_connected) {
+          clearInterval(pollTimer);
+          dataConnected = true;
+          $('dataDot').className = 'conn-dot connected';
+          $('dataConnLabel').textContent = 'Data Account — Connected';
+          resolve();
+        }
+      } catch (_) {}
+    }, 2000);
+  });
 }
 
-async function checkConnectionStatus() {
-  clearMsg(4);
+function resetConnectUI() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  $('connectingArea').style.display = 'none';
+  $('connBtnRow').style.display = 'flex';
+  $('btnConnectAll').disabled = false;
+}
+
+// ── Step 4: Summary ────────────────────────────────────────────
+async function fetchAndRenderSummary() {
   try {
     const r = await fetch('/auth/status');
-    const d = await r.json();
-    if (d.trading_connected) {
-      $('tradingDot').className = 'conn-dot connected';
-      $('tradingConnLabel').textContent = 'Trading Account — Connected';
-    }
-    if (d.data_connected) {
-      $('dataDot').className = 'conn-dot connected';
-      $('dataConnLabel').textContent = 'Data Account — Connected';
-    }
-    if (d.trading_connected && d.data_connected) {
-      setMsg(4, 'Both accounts connected! Proceeding...', 'success');
-      setTimeout(() => showStep(5), 1000);
+    if (r.ok) {
+      const d = await r.json();
       renderSummary(d);
-    } else {
-      setMsg(4, 'Still waiting for authorization. Try again after approving in Dhan.', 'info');
     }
-  } catch (e) {
-    setMsg(4, 'Could not check status. Try again.', 'error');
-  }
+  } catch (_) {}
 }
 
-// ── Step 5: Summary ────────────────────────────────────────────
 function renderSummary(status) {
   const grid = $('summaryGrid');
   const rows = [];
@@ -623,21 +749,31 @@ function renderSummary(status) {
   if (status.data_expiry) rows.push(['Data Token Expires', status.data_expiry]);
   rows.push(['Trading API', status.trading_connected ? 'Connected' : 'Not Connected']);
   rows.push(['Data API', status.data_connected ? 'Connected' : 'Not Connected']);
-  grid.innerHTML = rows.map(([label, val]) =>
-    `<span class="summary-label">${label}</span><span class="summary-value">${val}</span>`
-  ).join('');
+  grid.innerHTML = rows.map(function(pair) {
+    return '<span class="summary-label">' + pair[0] + '</span><span class="summary-value">' + pair[1] + '</span>';
+  }).join('');
 }
 
 // ── Navigation Buttons ──────────────────────────────────────────
-$('btnNext1').addEventListener('click', () => showStep(2));
-$('btnBack2').addEventListener('click', () => showStep(1));
-$('btnNext2').addEventListener('click', () => showStep(3));
-$('btnBack3').addEventListener('click', () => showStep(2));
-$('btnNext3').addEventListener('click', () => showStep(4));
-$('btnBack4').addEventListener('click', () => showStep(3));
-$('btnLaunch').addEventListener('click', () => { window.location.href = '/'; });
+$('btnNext1').addEventListener('click', function() { showStep(2); });
+$('btnBack2').addEventListener('click', function() { showStep(1); });
+$('btnNext2').addEventListener('click', function() { showStep(3); updateStep3Status(); });
+$('btnBack3').addEventListener('click', function() { resetConnectUI(); showStep(2); });
+$('btnLaunch').addEventListener('click', function() { window.location.href = '/'; });
+
+function updateStep3Status() {
+  clearMsg(3);
+  $('connectingArea').style.display = 'none';
+  $('connBtnRow').style.display = 'flex';
+  $('btnConnectAll').disabled = false;
+}
+
+// ── Collapse Setup ──────────────────────────────────────────────
+setupCollapse('tradingHelpToggle', 'tradingHelpBody', 'tradingArrow');
+setupCollapse('dataHelpToggle', 'dataHelpBody', 'dataArrow');
 
 // ── Init ────────────────────────────────────────────────────────
+checkUrlParams();
 checkStatus();
 </script>
 </body>

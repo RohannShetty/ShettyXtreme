@@ -6,6 +6,7 @@ Mounts static files and includes all routers.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -47,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 ws_manager = WebSocketManager()
 _event_bus: EventBus | None = None
+_event_bus_task: asyncio.Task | None = None
 _health_monitor: TokenHealthMonitor | None = None
 _trading_adapter: DhanTradingAdapter | None = None
 _data_adapter: DhanDataAdapter | None = None
@@ -56,7 +58,7 @@ _ingestion_pipeline: IngestionPipeline | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown lifecycle."""
-    global _event_bus, _health_monitor, _trading_adapter, _data_adapter, _ingestion_pipeline
+    global _event_bus, _event_bus_task, _health_monitor, _trading_adapter, _data_adapter, _ingestion_pipeline
     logger.info("ShettyXtreme Terminal starting up...")
 
     store = CredentialStore.load() or CredentialStore()
@@ -66,7 +68,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_settings(store, oauth, validator)
 
     _event_bus = EventBus()
-    await _event_bus.start()
+    _event_bus_task = asyncio.create_task(_event_bus.start())
     _health_monitor = TokenHealthMonitor(store, _event_bus)
     await _health_monitor.start()
 
@@ -110,6 +112,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception as exc:
             logger.error("Failed to initialize DhanTradingAdapter: %s", exc)
 
+    # Seed watchlist projection from default_watchlist.yaml regardless of credentials
+    watchlist_path = Path(__file__).resolve().parent.parent.parent.parent / "configs" / "default_watchlist.yaml"
+    if watchlist_path.exists():
+        import yaml
+        with open(watchlist_path, "r") as f:
+            watchlist_data = yaml.safe_load(f)
+        for idx in watchlist_data.get("default_watchlist", {}).get("indices", []):
+            sec_id = idx["security_id"]
+            exchange = idx.get("exchange", "NSE_FNO")
+            watchlist_proj.add(str(sec_id), exchange)
+        logger.info(
+            "Default watchlist seeded with %d instruments",
+            len(watchlist_data.get("default_watchlist", {}).get("indices", [])),
+        )
+    else:
+        logger.warning("Default watchlist not found at %s", watchlist_path)
+
     if store.is_data_valid() and store.data_access_token:
         try:
             _data_adapter = DhanDataAdapter(
@@ -130,22 +149,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             app.state.ingestion_pipeline = _ingestion_pipeline
 
-            # Load default watchlist and seed projection
-            watchlist_path = Path(__file__).resolve().parent.parent.parent.parent / "configs" / "default_watchlist.yaml"
-            if watchlist_path.exists():
-                import yaml
-                with open(watchlist_path, "r") as f:
-                    watchlist_data = yaml.safe_load(f)
-                symbols = []
-                for idx in watchlist_data.get("default_watchlist", {}).get("indices", []):
-                    sec_id = idx["security_id"]
-                    symbols.append(sec_id)
-                    watchlist_proj.add(str(sec_id), "NSE")
-                if symbols:
-                    await _ingestion_pipeline.start(symbols)
-                    logger.info("IngestionPipeline started with symbols: %s", symbols)
-            else:
-                logger.warning("Default watchlist not found at %s", watchlist_path)
+            # Start streaming existing watchlist
+            watchlist_data_proj = watchlist_proj.get()
+            if watchlist_data_proj:
+                symbols = list(watchlist_data_proj.keys())
+                await _ingestion_pipeline.start(symbols)
+                logger.info("IngestionPipeline started with symbols: %s", symbols)
         except Exception as exc:
             logger.error("Failed to initialize DhanDataAdapter or IngestionPipeline: %s", exc)
 
@@ -169,6 +178,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await _health_monitor.stop()
     if _event_bus:
         await _event_bus.stop()
+    if _event_bus_task:
+        _event_bus_task.cancel()
 
 
 app = FastAPI(

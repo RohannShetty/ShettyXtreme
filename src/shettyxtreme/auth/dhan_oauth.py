@@ -74,12 +74,12 @@ class DhanOAuthHelper:
             f"?consentAppId={consent_app_id}"
         )
 
-    def pop_consent_flow(self, consent_app_id: str) -> str:
+    def pop_consent_flow(self, consent_app_id: str) -> str | None:
         """Return and remove the flow type for a consentAppId.
 
-        Returns "trading" (default) if the ID is unknown.
+        Returns None if the ID is unknown.
         """
-        return _consent_flows.pop(consent_app_id, "trading")
+        return _consent_flows.pop(consent_app_id, None)
 
     async def consume_consent(
         self, api_key: str, api_secret: str, token_id: str,

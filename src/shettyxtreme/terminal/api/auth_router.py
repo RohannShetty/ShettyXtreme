@@ -1,6 +1,7 @@
 """Auth router for onboarding wizard and Dhan OAuth callback."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter
@@ -10,6 +11,8 @@ from pydantic import BaseModel
 from shettyxtreme.auth.credential_store import CredentialStore
 from shettyxtreme.auth.dhan_oauth import DhanOAuthHelper
 from shettyxtreme.auth.validator import CredentialValidator
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -173,37 +176,55 @@ async def start_consent_data() -> ConsentStartResponse:
     )
 
 
-@router.get("/dhan/callback")
+@router.get("/dhan/callback", response_model=None)
 async def dhan_callback(tokenId: str, consentAppId: str = "") -> RedirectResponse:
-    store = _get_store()
-    assert _oauth is not None
-    flow = _oauth.pop_consent_flow(consentAppId)
-    if flow == "data":
-        api_key = store.data_api_key
-        api_secret = store.data_api_secret
-    else:
-        api_key = store.trading_api_key
-        api_secret = store.trading_api_secret
-    result = await _oauth.consume_consent(
-        api_key=api_key,
-        api_secret=api_secret,
-        token_id=tokenId,
-    )
-    if result:
-        if flow == "data":
-            store.update_data_token(
-                access_token=result.access_token,
-                expiry=result.expiry_time,
-                client_id=result.client_id,
+    try:
+        flow_type = _oauth.pop_consent_flow(consentAppId)
+
+        if flow_type is None:
+            logger.warning("Unknown consent flow for %s", consentAppId)
+            return RedirectResponse(url="/static/setup.html?error=unknown_flow")
+
+        if flow_type == "trading":
+            creds = _store
+            result = await _oauth.consume_consent(
+                api_key=creds.trading_api_key,
+                api_secret=creds.trading_api_secret,
+                token_id=tokenId,
             )
-        else:
-            store.update_trading_token(
-                access_token=result.access_token,
-                expiry=result.expiry_time,
-                client_id=result.client_id,
+            if result:
+                _store.update_trading_token(
+                    access_token=result.access_token,
+                    expiry=result.expiry_time,
+                    client_id=result.client_id,
+                )
+                _store.save()
+                return RedirectResponse(url="/static/setup.html?connected=trading")
+            return RedirectResponse(url="/static/setup.html?error=consent_failed")
+
+        if flow_type == "data":
+            creds = _store
+            result = await _oauth.consume_consent(
+                api_key=creds.data_api_key,
+                api_secret=creds.data_api_secret,
+                token_id=tokenId,
             )
-        store.save()
-    return RedirectResponse(url="/")
+            if result:
+                _store.update_data_token(
+                    access_token=result.access_token,
+                    expiry=result.expiry_time,
+                    client_id=result.client_id,
+                )
+                _store.save()
+                return RedirectResponse(url="/static/setup.html?connected=data")
+            return RedirectResponse(url="/static/setup.html?error=consent_failed")
+
+        logger.warning("Unexpected flow_type: %s", flow_type)
+        return RedirectResponse(url="/static/setup.html?error=unknown_flow")
+
+    except Exception as exc:
+        logger.exception("OAuth callback failed")
+        return RedirectResponse(url="/static/setup.html?error=server_error")
 
 
 @router.post("/test/trading", response_model=ValidationResultResponse)

@@ -119,11 +119,14 @@ def test_start_consent_trading() -> None:
 
 
 def test_dhan_callback() -> None:
+    from shettyxtreme.terminal.api.auth_router import _oauth
+    _oauth.pop_consent_flow = MagicMock(return_value=None)
     app = _make_app()
     client = TestClient(app, follow_redirects=False)
     resp = client.get("/auth/dhan/callback?tokenId=test_token_999")
     assert resp.status_code == 307
-    assert resp.headers["location"] == "/"
+    assert "setup.html" in resp.headers["location"]
+    assert "error=unknown_flow" in resp.headers["location"]
 
 
 def test_dhan_callback_trading() -> None:
@@ -138,7 +141,7 @@ def test_dhan_callback_trading() -> None:
 
     resp = client.get("/auth/dhan/callback?tokenId=tok_trade_123&consentAppId=consent_trading_id")
     assert resp.status_code == 307
-    assert resp.headers["location"] == "/"
+    assert "connected=trading" in resp.headers["location"]
 
     status = client.get("/auth/status").json()
     assert status["trading_has_token"] is True
@@ -161,7 +164,7 @@ def test_dhan_callback_data() -> None:
 
     resp = client.get("/auth/dhan/callback?tokenId=tok_data_456&consentAppId=consent_data_id")
     assert resp.status_code == 307
-    assert resp.headers["location"] == "/"
+    assert "connected=data" in resp.headers["location"]
 
     status = client.get("/auth/status").json()
     assert status["data_has_token"] is True
