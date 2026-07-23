@@ -1,13 +1,61 @@
 """Tests for the FastAPI terminal API."""
 from __future__ import annotations
 
+import asyncio
 from typing import AsyncIterator
 
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 
+from shettyxtreme.core.event_bus.event_bus import EventBus
 from shettyxtreme.terminal.api.app import app
+from shettyxtreme.terminal.projections import (
+    AlertProjection,
+    HealthProjection,
+    IntelligenceProjection,
+    PositionProjection,
+    RiskProjection,
+    WatchlistProjection,
+)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def setup_projections() -> AsyncIterator[None]:
+    """Initialize projections on app.state for test endpoints."""
+    bus = EventBus()
+    bus_task = asyncio.create_task(bus.start())
+
+    app.state.event_bus = bus
+    app.state.trading_adapter = None
+    app.state.data_adapter = None
+    app.state.ingestion_pipeline = None
+
+    watchlist_proj = WatchlistProjection()
+    position_proj = PositionProjection()
+    risk_proj = RiskProjection()
+    alert_proj = AlertProjection()
+    intel_proj = IntelligenceProjection()
+    health_proj = HealthProjection()
+    health_proj.configure(event_bus=bus)
+
+    watchlist_proj.subscribe(bus)
+    position_proj.subscribe(bus)
+    risk_proj.subscribe(bus)
+    alert_proj.subscribe(bus)
+    intel_proj.subscribe(bus)
+
+    app.state.watchlist_projection = watchlist_proj
+    app.state.position_projection = position_proj
+    app.state.risk_projection = risk_proj
+    app.state.alert_projection = alert_proj
+    app.state.intelligence_projection = intel_proj
+    app.state.health_projection = health_proj
+
+    yield
+
+    await bus.stop()
+    bus_task.cancel()
 
 
 @pytest_asyncio.fixture

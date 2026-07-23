@@ -1,18 +1,11 @@
 """Intelligence router — regime, signal, voters, options, strategy hints."""
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
-from typing import Any
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
-from shettyxtreme.intelligence.options import (
-    compute_signal_drift_ev,
-    pcr_signal,
-    select_expiry,
-)
 from shettyxtreme.terminal.api.models import (
-    OptionsChainItem,
     OptionsChainResponse,
     RegimeResponse,
     SignalResponse,
@@ -22,44 +15,26 @@ from shettyxtreme.terminal.api.models import (
 
 router = APIRouter(prefix="/api/intelligence", tags=["intelligence"])
 
-# In-memory state (connected to real engine in production)
-_current_regime: dict[str, Any] = {
-    "regime": "range_bound",
-    "confidence": 0.5,
-    "transition": False,
-    "adx": 18.0,
-    "di_plus": 12.0,
-    "di_minus": 14.0,
-}
-
-_current_signal: dict[str, Any] = {
-    "direction": "NEUTRAL",
-    "conviction": 0.0,
-    "D": 0.0,
-    "P": 0.0,
-    "G": 0.0,
-    "voters": [],
-    "timestamp": datetime.now(timezone.utc),
-}
-
 
 @router.get("/regime", response_model=RegimeResponse)
-async def get_regime() -> RegimeResponse:
+async def get_regime(request: Request) -> RegimeResponse:
     """Return current market regime classification."""
+    r = request.app.state.intelligence_projection.get_regime()
     return RegimeResponse(
-        regime=_current_regime.get("regime", "range_bound"),
-        confidence=_current_regime.get("confidence", 0.5),
-        transition=_current_regime.get("transition", False),
-        adx=_current_regime.get("adx"),
-        di_plus=_current_regime.get("di_plus"),
-        di_minus=_current_regime.get("di_minus"),
+        regime=r.get("regime", "range_bound"),
+        confidence=r.get("confidence", 0.5),
+        transition=r.get("transition", False),
+        adx=r.get("adx"),
+        di_plus=r.get("di_plus"),
+        di_minus=r.get("di_minus"),
     )
 
 
 @router.get("/signal", response_model=SignalResponse)
-async def get_signal() -> SignalResponse:
+async def get_signal(request: Request) -> SignalResponse:
     """Return current aggregate signal from all voters."""
-    voters_raw = _current_signal.get("voters", [])
+    s = request.app.state.intelligence_projection.get_signal()
+    voters_raw = s.get("voters", [])
     voters = [
         VoterBreakdown(
             name=v.get("name", "unknown"),
@@ -70,20 +45,21 @@ async def get_signal() -> SignalResponse:
         for v in voters_raw
     ]
     return SignalResponse(
-        direction=_current_signal.get("direction", "NEUTRAL"),
-        conviction=_current_signal.get("conviction", 0.0),
-        D=_current_signal.get("D", 0.0),
-        P=_current_signal.get("P", 0.0),
-        G=_current_signal.get("G", 0.0),
+        direction=s.get("direction", "NEUTRAL"),
+        conviction=s.get("conviction", 0.0),
+        D=s.get("D", 0.0),
+        P=s.get("P", 0.0),
+        G=s.get("G", 0.0),
         voters=voters,
-        timestamp=_current_signal.get("timestamp"),
+        timestamp=s.get("timestamp"),
     )
 
 
 @router.get("/voters", response_model=list[VoterBreakdown])
-async def get_voters() -> list[VoterBreakdown]:
+async def get_voters(request: Request) -> list[VoterBreakdown]:
     """Return all active voters and their current votes."""
-    voters_raw = _current_signal.get("voters", [])
+    s = request.app.state.intelligence_projection.get_signal()
+    voters_raw = s.get("voters", [])
     return [
         VoterBreakdown(
             name=v.get("name", "unknown"),

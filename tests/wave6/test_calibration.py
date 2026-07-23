@@ -17,9 +17,6 @@ def _make_decision(conviction: float, win: bool) -> SignalDecision:
     sig = Signal(
         direction=SignalDirection.UP,
         conviction=conviction,
-        D=0.0,
-        P=1.0,
-        G=0.0,
         voters=[],
         timestamp=datetime.now(),
     )

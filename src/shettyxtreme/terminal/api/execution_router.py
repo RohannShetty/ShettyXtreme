@@ -4,9 +4,8 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from shettyxtreme.terminal.api.models import (
     KillSwitchResponse,
@@ -17,24 +16,14 @@ from shettyxtreme.terminal.api.models import (
 
 router = APIRouter(prefix="/api/execution", tags=["execution"])
 
-# ── In-memory state ────────────────────────────────────────────────────────
-_positions: list[dict[str, Any]] = []
 _current_mode: str = "OBSERVER"
 _kill_switch_path: str = ""
 
-# ── Risk state ─────────────────────────────────────────────────────────────
-_risk_state: dict[str, Any] = {
-    "daily_pnl": 0.0,
-    "margin_used": 0.0,
-    "margin_available": 500000.0,
-    "loss_limit": -5000.0,
-    "max_positions": 5,
-}
-
 
 @router.get("/positions", response_model=list[PositionResponse])
-async def get_positions() -> list[PositionResponse]:
+async def get_positions(request: Request) -> list[PositionResponse]:
     """Return all active positions with MTM."""
+    positions = request.app.state.position_projection.get()
     return [
         PositionResponse(
             symbol=p.get("symbol", ""),
@@ -46,21 +35,25 @@ async def get_positions() -> list[PositionResponse]:
             pnl=p.get("pnl", 0.0),
             product=p.get("product", "NRML"),
         )
-        for p in _positions
+        for p in positions
     ]
 
 
 @router.get("/risk", response_model=RiskResponse)
-async def get_risk() -> RiskResponse:
+async def get_risk(request: Request) -> RiskResponse:
     """Return risk summary."""
-    active_positions = sum(1 for p in _positions if abs(p.get("net_quantity", 0)) > 0)
+    risk = request.app.state.risk_projection.get()
+    positions = request.app.state.position_projection.get()
+    active_positions = sum(1 for p in positions if abs(p.get("net_quantity", 0)) > 0)
+    daily_pnl = risk.get("daily_pnl", 0.0)
+    loss_limit = risk.get("loss_limit", -5000.0)
     return RiskResponse(
-        daily_pnl=_risk_state.get("daily_pnl", 0.0),
-        margin_used=_risk_state.get("margin_used", 0.0),
-        margin_available=_risk_state.get("margin_available", 500000.0),
-        loss_limit=_risk_state.get("loss_limit", -5000.0),
-        loss_limit_hit=_risk_state.get("daily_pnl", 0.0) < _risk_state.get("loss_limit", -5000.0),
-        max_positions=_risk_state.get("max_positions", 5),
+        daily_pnl=daily_pnl,
+        margin_used=risk.get("margin_used", 0.0),
+        margin_available=risk.get("margin_available", 500000.0),
+        loss_limit=loss_limit,
+        loss_limit_hit=daily_pnl < loss_limit,
+        max_positions=risk.get("max_positions", 5),
         active_positions=active_positions,
     )
 

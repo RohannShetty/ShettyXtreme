@@ -66,7 +66,7 @@ def data_adapter() -> None:
         mock_dhan = _make_mock_dhanhq()
         mock_client_cls.return_value = mock_dhan
         adapter = DhanDataAdapter(
-            client_id=MOCK_CLIENT_ID, api_key=MOCK_API_KEY,
+            client_id=MOCK_CLIENT_ID, access_token=MOCK_API_KEY,
         )
         adapter._dhan = mock_dhan
         return adapter
@@ -222,8 +222,8 @@ class TestOptionChain:
         )
         dhan = data_adapter._dhan
         dhan.option_chain.assert_called_once_with(
-            underlying_scrip="13",
-            exchange_segment="NSE_FNO",
+            under_security_id="13",
+            under_exchange_segment="NSE_FNO",
             expiry="2024-01-25",
         )
 

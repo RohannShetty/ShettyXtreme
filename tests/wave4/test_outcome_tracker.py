@@ -23,9 +23,6 @@ def _make_signal(conviction: float = 0.7) -> Signal:
     return Signal(
         direction=SignalDirection.UP,
         conviction=conviction,
-        D=0.5,
-        P=1.0,
-        G=0.1,
         voters=[],
         timestamp=datetime.now(),
     )

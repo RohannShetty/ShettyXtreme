@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from shettyxtreme.terminal.api.models import (
     ComponentHealth,
@@ -59,15 +59,21 @@ def _get_market_session(ist: datetime) -> tuple[str, str, str]:
 
 
 @router.get("", response_model=HealthResponse)
-async def get_health() -> HealthResponse:
-    """Return health status of all components."""
+async def get_health(request: Request) -> HealthResponse:
+    """Return health status of all components from the HealthProjection."""
+    health_proj = request.app.state.health_projection
+    result = health_proj.get()
     components = [
-        ComponentHealth(name="event_bus", status="healthy", latency_ms=0.5, last_check=datetime.now(timezone.utc)),
-        ComponentHealth(name="dhan_trading", status="healthy", latency_ms=45.0, last_check=datetime.now(timezone.utc)),
-        ComponentHealth(name="dhan_data", status="healthy", latency_ms=32.0, last_check=datetime.now(timezone.utc)),
-        ComponentHealth(name="storage", status="healthy", latency_ms=2.0, last_check=datetime.now(timezone.utc)),
+        ComponentHealth(
+            name=c["name"],
+            status=c["status"],
+            latency_ms=c.get("latency_ms"),
+            last_check=c.get("last_check"),
+            message=c.get("message", ""),
+        )
+        for c in result.get("components", [])
     ]
-    return HealthResponse(components=components, overall="healthy")
+    return HealthResponse(components=components, overall=result.get("overall", "healthy"))
 
 
 @router.get("/session", response_model=SessionResponse)

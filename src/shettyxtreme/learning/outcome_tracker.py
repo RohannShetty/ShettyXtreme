@@ -46,13 +46,18 @@ class SignalDecision:
 
 def _serialize_signal(signal: Signal) -> str:
     """Serialize a Signal to a JSON string."""
-    return json.dumps(asdict(signal), default=str)
+    data = asdict(signal)
+    data["direction"] = signal.direction.value
+    return json.dumps(data, default=str)
 
 
 def _deserialize_signal(raw: str) -> Signal:
     """Reconstruct a Signal from a JSON string."""
     data = json.loads(raw)
-    data["direction"] = SignalDirection(data["direction"])
+    dir_val = data["direction"]
+    if isinstance(dir_val, str) and dir_val.startswith("SignalDirection."):
+        dir_val = dir_val.split(".", 1)[1].lower()
+    data["direction"] = SignalDirection(dir_val)
     voters = []
     for v in data.get("voters", []):
         voters.append(

@@ -8,6 +8,10 @@ from .greeks import GreeksCalculator
 from .iv_rank import IVRankCalculator, IVRankResult, IVSnapshot
 from .strategy_analyzer import StrategyAnalyzer, StrategyAnalysis, StrategyParams
 from .oi_tracker import OITracker, OIAlert, OISnapshot
+try:
+    from .quantlib_pricer import QuantLibPricer
+except ImportError:
+    QuantLibPricer = None  # type: ignore
 
 __all__ = [
     "GreeksCalculator",
@@ -20,4 +24,5 @@ __all__ = [
     "OITracker",
     "OIAlert",
     "OISnapshot",
+    "QuantLibPricer",
 ]

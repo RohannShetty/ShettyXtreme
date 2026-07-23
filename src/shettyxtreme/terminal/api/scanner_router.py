@@ -1,10 +1,9 @@
 """Scanner router — gap detection, clusters, alerts, logs."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 from shettyxtreme.terminal.api.models import (
     AlertResponse,
@@ -15,10 +14,9 @@ from shettyxtreme.terminal.api.models import (
 
 router = APIRouter(prefix="/api/scanner", tags=["scanner"])
 
-# ── In-memory store ────────────────────────────────────────────────────────
+# ── In-memory store (gaps, clusters, logs not yet on EventBus) ──────────────
 _gaps: list[dict[str, Any]] = []
 _clusters: list[dict[str, Any]] = []
-_alerts: list[dict[str, Any]] = []
 _logs: list[dict[str, Any]] = []
 
 
@@ -53,8 +51,9 @@ async def get_clusters() -> list[ClusterResponse]:
 
 
 @router.get("/alerts", response_model=list[AlertResponse])
-async def get_alerts() -> list[AlertResponse]:
+async def get_alerts(request: Request) -> list[AlertResponse]:
     """Return active alerts (staleness, threshold breaches)."""
+    alerts = request.app.state.alert_projection.get()
     return [
         AlertResponse(
             alert_type=a.get("alert_type", "staleness"),
@@ -62,7 +61,7 @@ async def get_alerts() -> list[AlertResponse]:
             message=a.get("message", ""),
             timestamp=a.get("timestamp"),
         )
-        for a in _alerts
+        for a in alerts
     ]
 
 

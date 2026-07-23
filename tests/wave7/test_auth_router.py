@@ -42,6 +42,7 @@ def _make_mock_oauth() -> MagicMock:
             ddpi_status=True,
         )
     )
+    oauth.pop_consent_flow = MagicMock(return_value="trading")
     return oauth
 
 
@@ -123,6 +124,48 @@ def test_dhan_callback() -> None:
     resp = client.get("/auth/dhan/callback?tokenId=test_token_999")
     assert resp.status_code == 307
     assert resp.headers["location"] == "/"
+
+
+def test_dhan_callback_trading() -> None:
+    app = _make_app()
+    client = TestClient(app, follow_redirects=False)
+
+    # Save credentials first
+    client.post(
+        "/auth/credentials/trading",
+        json={"api_key": "trading_key", "api_secret": "trading_secret"},
+    )
+
+    resp = client.get("/auth/dhan/callback?tokenId=tok_trade_123&consentAppId=consent_trading_id")
+    assert resp.status_code == 307
+    assert resp.headers["location"] == "/"
+
+    status = client.get("/auth/status").json()
+    assert status["trading_has_token"] is True
+    assert status["data_has_token"] is False
+
+
+def test_dhan_callback_data() -> None:
+    app = _make_app()
+    client = TestClient(app, follow_redirects=False)
+
+    # Save data credentials
+    client.post(
+        "/auth/credentials/data",
+        json={"api_key": "data_key", "api_secret": "data_secret"},
+    )
+
+    # Configure mock to return "data" for this consent ID
+    from shettyxtreme.terminal.api.auth_router import _oauth
+    _oauth.pop_consent_flow = MagicMock(return_value="data")
+
+    resp = client.get("/auth/dhan/callback?tokenId=tok_data_456&consentAppId=consent_data_id")
+    assert resp.status_code == 307
+    assert resp.headers["location"] == "/"
+
+    status = client.get("/auth/status").json()
+    assert status["data_has_token"] is True
+    assert status["trading_has_token"] is False
 
 
 def test_auth_logout() -> None:

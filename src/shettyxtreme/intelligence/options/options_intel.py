@@ -9,6 +9,12 @@ import math
 from datetime import date, timedelta
 from typing import Any
 
+try:
+    from shettyxtreme.options.quantlib_pricer import QuantLibPricer
+    _QUANTLIB_AVAILABLE = True
+except ImportError:
+    _QUANTLIB_AVAILABLE = False
+
 
 # ---------------------------------------------------------------------------
 # IV Rank / Percentile
@@ -115,7 +121,12 @@ def select_expiry(
     Returns:
         Expiry date as ISO string (YYYY-MM-DD).
     """
-    dte = (weekly_expiry - current_date).days
+    try:
+        pricer = QuantLibPricer()
+        dte = pricer.business_days_to_expiry(current_date, weekly_expiry)
+    except ImportError:
+        dte = (weekly_expiry - current_date).days
+
     if dte <= dte_threshold:
         # Roll to next week (add 7 days)
         next_expiry = weekly_expiry + timedelta(days=7)

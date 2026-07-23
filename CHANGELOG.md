@@ -23,8 +23,23 @@
   - Fixed `get_bars()` to use half-open interval `[start, end)` semantics (matching standard time-series conventions).
   - Added empty list guard in `write_ticks` to prevent DuckDB errors.
 
-## [2026-07-23] - Feature Engine Fixes
+## [2026-07-23] - Projection Wiring + Test Suite Overhaul
+
+### Added
+- **Projections**: Wired all 6 projection classes (Watchlist, Position, Risk, Alert, Intelligence, Health) into FastAPI lifespan, subscribed to EventBus topics.
+- **Router Wiring**: All 5 routers (watchlist, intelligence, execution, scanner, health) now read from `app.state` projections instead of in-memory stubs.
+- **Health Endpoint**: Now checks real EventBus state and adapter references via `HealthProjection`.
 
 ### Fixed
+- **QuantLib**: Changed module-level `ImportError` raise to lazy guard — `QuantLibPricer` is importable without QuantLib installed, raises only on instantiation.
+- **Signal Serialization**: `outcome_tracker.py` now serializes `SignalDirection` via `.value` instead of `asdict()`; deserialization handles both `"up"` and `"SignalDirection.UP"` formats.
+- **Analytics**: Removed stale reference to deprecated `Signal.D` / `Signal.P` fields.
+- **Test Suite**:
+  - Fixed `test_api.py` fixture — uses `asyncio.create_task` for EventBus (was blocking with `await`).
+  - Fixed lambda closure bug in `test_signal_engine.py` (3 tests).
+  - Fixed `Signal(...)` construction in 8 test files (removed D/P/G kwargs).
+  - Fixed `test_dhan_data_adapter.py` — `api_key` → `access_token`.
+  - Fixed expiry selection tests — QuantLibPricer instantiation fallback.
+  - Fixed option chain test — updated expected arg names to match adapter.
 - **Feature Engine**: Resolved `TypeError: Any cannot be instantiated` by using proxy objects for indicators during tests.
 - **Test Suite**: Cleaned up `__pycache__` directories.

@@ -2,12 +2,17 @@
 
 Provides delta, gamma, theta, vega, and rho using the Black-76 model.
 Pure computation — takes parameters, returns dicts. No I/O.
+
+Optionally uses QuantLib for advanced pricing when use_quantlib=True.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .quantlib_pricer import QuantLibPricer
 
 OptionType = Literal["CALL", "PUT"]
 
@@ -43,7 +48,30 @@ class GreeksCalculator:
 
     Black-76 is the standard model for pricing European options on futures,
     which is the convention for Indian index options (Nifty, Bank Nifty, etc.).
+
+    Optionally uses QuantLib for advanced pricing when use_quantlib=True.
     """
+
+    def __init__(self, use_quantlib: bool = False) -> None:
+        """Initialize the Greeks calculator.
+
+        Args:
+            use_quantlib: If True, delegate to QuantLibPricer for advanced
+                pricing. Falls back to pure-Python Black-76 on ImportError.
+        """
+        self._use_quantlib = use_quantlib
+        self._quantlib_pricer = None
+        if use_quantlib:
+            try:
+                from .quantlib_pricer import QuantLibPricer
+                self._quantlib_pricer = QuantLibPricer()
+            except ImportError:
+                self._use_quantlib = False
+
+    @property
+    def use_quantlib(self) -> bool:
+        """Return whether QuantLib is being used."""
+        return self._use_quantlib
 
     def calculate_all(
         self,
@@ -67,6 +95,10 @@ class GreeksCalculator:
         Returns:
             Dictionary with keys: delta, gamma, theta, vega, rho.
         """
+        if self._use_quantlib and self._quantlib_pricer is not None:
+            return self._quantlib_pricer.compute_greeks(
+                spot, strike, rate, iv, tte, option_type
+            )
         if tte <= 0.0:
             return self._zero_greeks()
         if iv <= 0.0 or spot <= 0.0 or strike <= 0.0:
@@ -187,6 +219,10 @@ class GreeksCalculator:
         rate: float = 0.0,
     ) -> float:
         """Compute the Black-76 option premium."""
+        if self._use_quantlib and self._quantlib_pricer is not None:
+            return self._quantlib_pricer.price_european(
+                spot, strike, rate, iv, tte, option_type
+            )
         if tte <= 0.0 or iv <= 0.0 or spot <= 0.0 or strike <= 0.0:
             return 0.0
         is_call = option_type.upper() == "CALL"

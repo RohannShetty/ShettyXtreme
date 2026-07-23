@@ -28,9 +28,6 @@ def _decision(
         signal=Signal(
             direction=SignalDirection.UP,
             conviction=conviction,
-            D=0.5,
-            P=1.0,
-            G=0.1,
             voters=voters or [],
         ),
         timestamp=None,  # type: ignore[arg-type]

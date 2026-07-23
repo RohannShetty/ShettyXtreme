@@ -17,7 +17,7 @@ from shettyxtreme.intelligence.signals.signal_engine import (
 
 
 def _make_signal() -> Signal:
-    return Signal(direction=SignalDirection.UP, conviction=0.8, D=0.6, P=1.0, G=0.1, voters=[])
+    return Signal(direction=SignalDirection.UP, conviction=0.8, voters=[])
 
 
 @pytest.mark.asyncio

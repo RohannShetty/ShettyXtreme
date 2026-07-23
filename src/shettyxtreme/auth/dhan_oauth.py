@@ -11,6 +11,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Maps consentAppId -> flow type ("trading" or "data") so the single callback
+# endpoint knows which credential set to use when consuming the token.
+_consent_flows: dict[str, str] = {}
+
 
 @dataclass(frozen=True)
 class ConsentResult:
@@ -30,10 +34,15 @@ class DhanOAuthHelper:
 
     async def generate_consent(
         self, api_key: str, api_secret: str, client_id: str,
+        *, state: str = "trading",
     ) -> str | None:
         """Generate a consent request and return the consentAppId.
 
         Step 1 of the OAuth consent flow.
+
+        Args:
+            state: Flow identifier ("trading" or "data") stored server-side
+                   so the callback knows which credentials to use.
         """
         url = f"{self.AUTH_BASE_URL}/app/generate-consent?client_id={client_id}"
         headers = {"app_id": api_key, "app_secret": api_secret}
@@ -44,9 +53,11 @@ class DhanOAuthHelper:
                 data = resp.json()
                 consent_app_id = data.get("consentAppId")
                 if consent_app_id:
+                    _consent_flows[consent_app_id] = state
                     logger.info(
-                        "Consent generated, consentAppId=%s",
+                        "Consent generated, consentAppId=%s state=%s",
                         consent_app_id[:4] + "****" if len(consent_app_id) > 4 else consent_app_id,
+                        state,
                     )
                 return consent_app_id
         except Exception:
@@ -62,6 +73,13 @@ class DhanOAuthHelper:
             f"{self.AUTH_BASE_URL}/login/consentApp-login"
             f"?consentAppId={consent_app_id}"
         )
+
+    def pop_consent_flow(self, consent_app_id: str) -> str:
+        """Return and remove the flow type for a consentAppId.
+
+        Returns "trading" (default) if the ID is unknown.
+        """
+        return _consent_flows.pop(consent_app_id, "trading")
 
     async def consume_consent(
         self, api_key: str, api_secret: str, token_id: str,

@@ -416,8 +416,8 @@ class DhanDataAdapter:
         assert self._dhan is not None
         try:
             result: dict[str, Any] = self._dhan.option_chain(
-                underlying_scrip=underlying_scrip,
-                exchange_segment=exchange_segment,
+                under_security_id=underlying_scrip,
+                under_exchange_segment=exchange_segment,
                 expiry=expiry,
             )
             self._last_tick_time = time.time()

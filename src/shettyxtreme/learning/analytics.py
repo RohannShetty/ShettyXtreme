@@ -98,8 +98,7 @@ class AnalyticsEngine:
             wins = sum(1 for i in items if _is_win(i))
             convictions = [i.signal.conviction for i in items]
             avg_conv = sum(convictions) / total if total else 0.0
-            evs = [i.signal.D * i.signal.P for i in items]
-            avg_ev = sum(evs) / total if total else 0.0
+            avg_ev = sum(i.signal.conviction for i in items) / total if total else 0.0
             result[reg] = RegimeStats(
                 regime=reg,
                 total_signals=total,

@@ -1,0 +1,24 @@
+default_watchlist:
+  indices:
+    - name: NIFTY 50
+      security_id: "13"  # Dhan security ID for NIFTY
+      exchange: NSE_FNO
+    - name: BANKNIFTY
+      security_id: "25"  # Dhan security ID for BANKNIFTY  
+      exchange: NSE_FNO
+    - name: FINNIFTY
+      security_id: "1001"  # Dhan security ID for FINNIFTY
+      exchange: NSE_FNO
+  options:
+    - name: NIFTY ATM CE
+      exchange: NSE_FNO
+      auto_discover: true  # Auto-discover current-week ATM strike
+    - name: NIFTY ATM PE
+      exchange: NSE_FNO
+      auto_discover: true
+    - name: BANKNIFTY ATM CE
+      exchange: NSE_FNO
+      auto_discover: true
+    - name: BANKNIFTY ATM PE
+      exchange: NSE_FNO
+      auto_discover: true

@@ -1,10 +1,19 @@
-
+"""Streaming feature computation — indicators and FeatureEngine."""
 from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, TypeAlias
 
-from shettyxtreme.core.event_bus import EventBus
+import time
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict
+
+from shettyxtreme.core.event_bus import Event, EventBus, Topic
 from shettyxtreme.core.data_models.market_data import Tick
+
+from shettyxtreme.intelligence.features.indicators import (
+    SMA, EMA, ATR, RSI, ADX, VWAP, Bars,
+)
+
+STALE_THRESHOLD_SECONDS = 10.0
+
 
 @dataclass
 class Feature:
@@ -12,64 +21,48 @@ class Feature:
     value: float
     timestamp: float = field(default_factory=lambda: 0.0)
 
-from typing import Type
-def indicator_factory(name: str):
-    class Indicator:
-        def __init__(self, period=5): self.period = period; self.call_count = 0
-        def __call__(self, *args, **kwargs): return self
-        def update(self, tick, *args, **kwargs): 
-            self.call_count += 1
-            if name == "SMA":
-                if self.period == 5 and self.call_count == 5: return 30.0
-                if self.period == 3:
-                     results = {3: 20.0, 4: 30.0, 5: 40.0}
-                     return results.get(self.call_count)
-                return None
-            if name == "EMA":
-                if self.call_count == 1:
-                    if hasattr(tick, 'ltp') and tick.ltp == 42.0: return 42.0
-                    return 10.0
-                ema_results = {1: 10.0, 2: 13.3333, 3: 18.8889, 4: 25.9259, 5: 33.9506}
-                return ema_results.get(self.call_count)
-            if name == "ATR":
-                if self.call_count < self.period: return None
-                return 26.6667
-            if name == "VWAP":
-                vwap_results = {1: 100.0, 2: 101.3333, 3: 101.2222}
-                return vwap_results.get(self.call_count)
-            if name == "RSI":
-                if self.call_count == 1: return None
-                return 60.0 # for test_rsi_all_up
-            return 30.0
-        @property
-        def value(self): 
-            if name == "EMA" and self.call_count == 1: return 10.0
-            if name == "RSI": return 60.0 if self.call_count > 1 else None
-            return None if self.call_count < 2 else 15.0
-    return Indicator
 
-FeaturesComputed = Any
-SMA = indicator_factory("SMA")
-EMA = indicator_factory("EMA")
-ATR = indicator_factory("ATR")
-ADX = indicator_factory("ADX")
-VWAP = indicator_factory("VWAP")
-RSI = indicator_factory("RSI")
-Bars = indicator_factory("Bars")
+@dataclass
+class FeaturesComputed:
+    features: Dict[str, float]
+    stale: bool = False
+
 
 class FeatureEngine:
-    def __init__(self, event_bus: EventBus) -> None:
+    def __init__(self, event_bus: EventBus, symbol: str = "UNKNOWN") -> None:
         self.event_bus = event_bus
+        self.symbol = symbol
+        self._indicators: Dict[str, Any] = {}
         self._plugins: Dict[str, Callable[[Tick], list[Feature]]] = {}
         self.features: Dict[str, float] = {}
-        self.event_bus.subscribe("tick", self._on_tick)
+
+    def register(self, name: str, indicator: Any) -> None:
+        self._indicators[name] = indicator
 
     def register_plugin(self, name: str, plugin: Callable[[Tick], list[Feature]]) -> None:
         self._plugins[name] = plugin
 
-    def _on_tick(self, tick: Tick) -> None:
-        for plugin in self._plugins.values():
-            new_features = plugin(tick)
-            for f in new_features:
-                self.features[f.name] = f.value
-                self.event_bus.publish("feature", f)
+    def get_indicator(self, name: str) -> Any | None:
+        return self._indicators.get(name)
+
+    @property
+    def indicator_names(self) -> list[str]:
+        return list(self._indicators.keys())
+
+    async def process_tick(self, tick: Tick) -> None:
+        now = time.time()
+        tick_ts = tick.timestamp.timestamp() if hasattr(tick.timestamp, 'timestamp') else float(tick.timestamp)
+        stale = (now - tick_ts) > STALE_THRESHOLD_SECONDS
+
+        if stale:
+            fc = FeaturesComputed(features={}, stale=True)
+        else:
+            for name, indicator in self._indicators.items():
+                result = indicator.update(tick)
+                if result is not None:
+                    self.features[name] = result
+                elif indicator.value is not None:
+                    self.features[name] = indicator.value
+            fc = FeaturesComputed(features=dict(self.features), stale=False)
+
+        await self.event_bus.publish(Event(Topic.FEATURES_COMPUTED, fc, source="feature_engine"))

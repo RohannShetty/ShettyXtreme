@@ -20,9 +20,6 @@ def _make_signal(direction: SignalDirection = SignalDirection.UP) -> Signal:
     return Signal(
         direction=direction,
         conviction=0.8,
-        D=0.7,
-        P=0.8,
-        G=0.1,
         voters=[Vote(direction=1.0, confidence=0.8, weight=1.0, name="test")],
     )
 

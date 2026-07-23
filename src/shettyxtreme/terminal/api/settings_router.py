@@ -92,6 +92,7 @@ async def reauth_trading() -> ConsentResponse:
         api_key=store.trading_api_key,
         api_secret=store.trading_api_secret,
         client_id=store.trading_client_id or "",
+        state="trading",
     )
     login_url = _oauth.get_login_url(consent_app_id or "")
     return ConsentResponse(
@@ -108,6 +109,7 @@ async def reauth_data() -> ConsentResponse:
         api_key=store.data_api_key,
         api_secret=store.data_api_secret,
         client_id=store.data_client_id or "",
+        state="data",
     )
     login_url = _oauth.get_login_url(consent_app_id or "")
     return ConsentResponse(

@@ -147,6 +147,7 @@ async def start_consent_trading() -> ConsentStartResponse:
         api_key=store.trading_api_key,
         api_secret=store.trading_api_secret,
         client_id=store.trading_client_id or "",
+        state="trading",
     )
     login_url = _oauth.get_login_url(consent_app_id or "")
     return ConsentStartResponse(
@@ -163,6 +164,7 @@ async def start_consent_data() -> ConsentStartResponse:
         api_key=store.data_api_key,
         api_secret=store.data_api_secret,
         client_id=store.data_client_id or "",
+        state="data",
     )
     login_url = _oauth.get_login_url(consent_app_id or "")
     return ConsentStartResponse(
@@ -172,20 +174,34 @@ async def start_consent_data() -> ConsentStartResponse:
 
 
 @router.get("/dhan/callback")
-async def dhan_callback(tokenId: str) -> RedirectResponse:
+async def dhan_callback(tokenId: str, consentAppId: str = "") -> RedirectResponse:
     store = _get_store()
     assert _oauth is not None
+    flow = _oauth.pop_consent_flow(consentAppId)
+    if flow == "data":
+        api_key = store.data_api_key
+        api_secret = store.data_api_secret
+    else:
+        api_key = store.trading_api_key
+        api_secret = store.trading_api_secret
     result = await _oauth.consume_consent(
-        api_key=store.trading_api_key,
-        api_secret=store.trading_api_secret,
+        api_key=api_key,
+        api_secret=api_secret,
         token_id=tokenId,
     )
     if result:
-        store.update_trading_token(
-            access_token=result.access_token,
-            expiry=result.expiry_time,
-            client_id=result.client_id,
-        )
+        if flow == "data":
+            store.update_data_token(
+                access_token=result.access_token,
+                expiry=result.expiry_time,
+                client_id=result.client_id,
+            )
+        else:
+            store.update_trading_token(
+                access_token=result.access_token,
+                expiry=result.expiry_time,
+                client_id=result.client_id,
+            )
         store.save()
     return RedirectResponse(url="/")
 
