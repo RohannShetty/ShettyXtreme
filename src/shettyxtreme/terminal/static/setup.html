@@ -342,6 +342,20 @@ body {
         <span class="url-text" id="postbackUrlDisplay">http://localhost:8000/api/postback/dhan</span>
         <button class="btn-copy-sm" id="btnCopyPostback">Copy</button>
       </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid #1E1E1E;">
+        <div class="step-desc" style="margin-bottom:6px;">Step 2: Register OAuth Redirect URL</div>
+        <div class="instructions">
+          In your Dhan app settings, set the <strong>OAuth Redirect URL</strong> to:
+        </div>
+        <div class="url-box" style="margin-bottom:10px;">
+          <span class="url-text" id="oAuthUrl">http://localhost:8000/auth/dhan/callback</span>
+          <button class="btn btn-copy" id="btnCopyOAuth">Copy</button>
+        </div>
+        <div class="instructions">
+          This is required so Dhan can redirect back to your terminal after you approve the consent.
+          Without this, the authorization will appear stuck on "Pending Authorization" forever.
+        </div>
+      </div>
       <div style="margin-top:6px;">
         Your credentials are entered as: <strong>client_id:::api_key</strong><br>
         Example: <strong>11345:::abc123def456</strong>
@@ -382,6 +396,19 @@ body {
       <div style="margin-top:6px;">
         Your credentials are entered as: <strong>client_id:::api_key</strong>
       </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid #1E1E1E;">
+        <div class="step-desc" style="margin-bottom:6px;">Register OAuth Redirect URL</div>
+        <div class="instructions">
+          Set the <strong>OAuth Redirect URL</strong> in your Dhan app settings to:
+        </div>
+        <div class="url-box" style="margin-bottom:10px;">
+          <span class="url-text">http://localhost:8000/auth/dhan/callback</span>
+        </div>
+        <div class="instructions">
+          The same URL is used for both Trading and Data API authorization flows.
+          Without this, authorization will appear stuck on "Pending Authorization" forever.
+        </div>
+      </div>
     </div>
 
     <div class="field">
@@ -401,33 +428,40 @@ body {
     </div>
   </div>
 
-  <!-- Step 3: Connect & Verify (Unified) -->
+  <!-- Step 3: Connect & Verify (Independent) -->
   <div class="step" id="step3">
     <div class="step-title">Connect to Dhan</div>
     <div class="step-desc">Authorize your accounts via Dhan OAuth consent flow.</div>
 
+    <!-- Trading Account -->
     <div class="conn-status" id="tradingConnStatus">
       <div class="conn-dot" id="tradingDot"></div>
       <span id="tradingConnLabel">Trading Account — Not Connected</span>
+      <div style="flex:1;"></div>
+      <button class="btn btn-accent" id="btnConnectTrading" style="font-size:11px;padding:4px 12px;">Connect Trading Account</button>
     </div>
+
+    <!-- Data Account -->
     <div class="conn-status" id="dataConnStatus">
       <div class="conn-dot" id="dataDot"></div>
       <span id="dataConnLabel">Data Account — Not Connected</span>
+      <div style="flex:1;"></div>
+      <button class="btn btn-accent" id="btnConnectData" style="font-size:11px;padding:4px 12px;">Connect Data Account</button>
     </div>
 
     <div class="msg" id="msg3"></div>
 
-    <div id="connectingArea" style="display:none;">
+    <div id="connectingOverlay3" style="display:none;">
       <div class="connecting-overlay">
         <span class="spinner"></span>
-        <span id="connectingText">Waiting for authorization...</span>
+        <span id="connectingText3">Waiting for authorization...</span>
       </div>
     </div>
 
-    <div class="btn-row" id="connBtnRow">
+    <div class="btn-row" id="connBtnRow3" style="display:none;">
       <button class="btn btn-secondary" id="btnBack3">Back</button>
       <div style="flex:1;"></div>
-      <button class="btn btn-primary" id="btnConnectAll">Connect to Dhan</button>
+      <button class="btn btn-primary" id="btnDone3">Done</button>
     </div>
   </div>
 
@@ -452,9 +486,6 @@ const POSTBACK_URL = 'http://localhost:8000/api/postback/dhan';
 let currentStep = 1;
 let tradingTested = false;
 let dataTested = false;
-let tradingConnected = false;
-let dataConnected = false;
-let pollTimer = null;
 
 // ── Helpers ─────────────────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
@@ -503,19 +534,16 @@ function showStep(n) {
 function checkUrlParams() {
   const params = new URLSearchParams(window.location.search);
   if (params.get('connected') === 'trading') {
-    tradingConnected = true;
     $('tradingDot').className = 'conn-dot connected';
     $('tradingConnLabel').textContent = 'Trading Account — Connected';
-    setMsg(3, 'Trading account authorized via redirect.', 'success');
+    $('btnConnectTrading').textContent = 'Connected';
+    $('btnConnectTrading').disabled = true;
   }
   if (params.get('connected') === 'data') {
-    dataConnected = true;
     $('dataDot').className = 'conn-dot connected';
     $('dataConnLabel').textContent = 'Data Account — Connected';
-    if (tradingConnected) {
-      setMsg(3, 'Both accounts connected via redirect!', 'success');
-      setTimeout(function() { showStep(4); fetchAndRenderSummary(); }, 1000);
-    }
+    $('btnConnectData').textContent = 'Connected';
+    $('btnConnectData').disabled = true;
   }
   if (params.get('error')) {
     setMsg(3, 'Authorization error: ' + params.get('error'), 'error');
@@ -523,6 +551,11 @@ function checkUrlParams() {
   // Clean URL params without reload
   if (params.has('connected') || params.has('error')) {
     window.history.replaceState({}, document.title, window.location.pathname);
+  }
+  // Auto-check if both done
+  if ($('tradingDot').className.includes('connected') && $('dataDot').className.includes('connected')) {
+    showStep(4);
+    fetchAndRenderSummary();
   }
 }
 
@@ -629,104 +662,133 @@ $('btnTestData').addEventListener('click', async function() {
   }
 });
 
-// ── Copy Postback URL ──────────────────────────────────────────
-$('btnCopyPostback').addEventListener('click', async function() {
+// ── Copy OAuth URL ──────────────────────────────────────────────
+$('btnCopyOAuth').addEventListener('click', async function() {
   try {
-    await navigator.clipboard.writeText(POSTBACK_URL);
-    $('btnCopyPostback').textContent = 'Copied!';
-    setTimeout(function() { $('btnCopyPostback').textContent = 'Copy'; }, 2000);
+    await navigator.clipboard.writeText('http://localhost:8000/auth/dhan/callback');
+    $('btnCopyOAuth').textContent = 'Copied!';
+    setTimeout(function() { $('btnCopyOAuth').textContent = 'Copy'; }, 2000);
   } catch (_) {
     setMsg(1, 'Copy failed. Select and copy manually.', 'error');
   }
 });
 
-// ── Step 3: Unified Connect ─────────────────────────────────────
-$('btnConnectAll').addEventListener('click', async function() {
+// ── Step 3: Independent Connect ──────────────────────────────────
+const POLL_TIMEOUT_MS = 60000;
+let tradePollTimer = null;
+let dataPollTimer = null;
+
+$('btnConnectTrading').addEventListener('click', async function() {
   clearMsg(3);
-  $('btnConnectAll').disabled = true;
-
-  // Show connecting overlay, hide buttons
-  $('connectingArea').style.display = 'block';
-  $('connectingText').textContent = 'Opening Dhan authorization for Trading Account...';
-  $('connBtnRow').style.display = 'none';
-
-  // Mark trading as pending
+  $('btnConnectTrading').disabled = true;
   $('tradingDot').className = 'conn-dot pending';
   $('tradingConnLabel').textContent = 'Trading Account — Pending Authorization';
+  setMsg(3, 'Opening Dhan authorization for Trading Account...', 'info');
 
   try {
-    // Start trading consent
     const r = await fetch('/auth/start-consent/trading', { method: 'POST' });
     const d = await r.json();
     if (r.ok && d.login_url) {
       window.open(d.login_url, '_blank');
-      // Start polling for trading
-      await pollForConnection('trading');
+      startTradePolling();
     } else {
-      setMsg(3, d.message || 'Failed to start trading consent flow.', 'error');
-      resetConnectUI();
-      return;
+      setMsg(3, d.message || 'Failed to start trading consent.', 'error');
+      $('btnConnectTrading').disabled = false;
+      $('tradingDot').className = 'conn-dot';
+      $('tradingConnLabel').textContent = 'Trading Account — Not Connected';
     }
-
-    // Trading connected, now start data consent
-    $('connectingText').textContent = 'Opening Dhan authorization for Data Account...';
-    $('dataDot').className = 'conn-dot pending';
-    $('dataConnLabel').textContent = 'Data Account — Pending Authorization';
-
-    const r2 = await fetch('/auth/start-consent/data', { method: 'POST' });
-    const d2 = await r2.json();
-    if (r2.ok && d2.login_url) {
-      window.open(d2.login_url, '_blank');
-      await pollForConnection('data');
-    } else {
-      setMsg(3, d2.message || 'Failed to start data consent flow.', 'error');
-      resetConnectUI();
-      return;
-    }
-
-    // Both connected
-    setMsg(3, 'Both accounts connected!', 'success');
-    setTimeout(function() { showStep(4); fetchAndRenderSummary(); }, 800);
   } catch (e) {
     setMsg(3, 'Network error. Is the server running?', 'error');
-    resetConnectUI();
+    $('btnConnectTrading').disabled = false;
+    $('tradingDot').className = 'conn-dot';
+    $('tradingConnLabel').textContent = 'Trading Account — Not Connected';
   }
 });
 
-async function pollForConnection(type) {
-  return new Promise(function(resolve) {
-    pollTimer = setInterval(async function() {
-      try {
-        const r = await fetch('/auth/status');
-        const d = await r.json();
+$('btnConnectData').addEventListener('click', async function() {
+  clearMsg(3);
+  $('btnConnectData').disabled = true;
+  $('dataDot').className = 'conn-dot pending';
+  $('dataConnLabel').textContent = 'Data Account — Pending Authorization';
+  setMsg(3, 'Opening Dhan authorization for Data Account...', 'info');
 
-        if (type === 'trading' && d.trading_connected) {
-          clearInterval(pollTimer);
-          tradingConnected = true;
-          $('tradingDot').className = 'conn-dot connected';
-          $('tradingConnLabel').textContent = 'Trading Account — Connected';
-          setMsg(3, 'Trading account authorized.', 'success');
-          $('connectingText').textContent = 'Trading connected. Starting Data authorization...';
-          resolve();
-        }
+  try {
+    const r = await fetch('/auth/start-consent/data', { method: 'POST' });
+    const d = await r.json();
+    if (r.ok && d.login_url) {
+      window.open(d.login_url, '_blank');
+      startDataPolling();
+    } else {
+      setMsg(3, d.message || 'Failed to start data consent.', 'error');
+      $('btnConnectData').disabled = false;
+      $('dataDot').className = 'conn-dot';
+      $('dataConnLabel').textContent = 'Data Account — Not Connected';
+    }
+  } catch (e) {
+    setMsg(3, 'Network error. Is the server running?', 'error');
+    $('btnConnectData').disabled = false;
+    $('dataDot').className = 'conn-dot';
+    $('dataConnLabel').textContent = 'Data Account — Not Connected';
+  }
+});
 
-        if (type === 'data' && d.data_connected) {
-          clearInterval(pollTimer);
-          dataConnected = true;
-          $('dataDot').className = 'conn-dot connected';
-          $('dataConnLabel').textContent = 'Data Account — Connected';
-          resolve();
-        }
-      } catch (_) {}
-    }, 2000);
-  });
+function startTradePolling() {
+  const started = Date.now();
+  tradePollTimer = setInterval(async function() {
+    try {
+      const r = await fetch('/auth/status');
+      const d = await r.json();
+      if (d.trading_connected) {
+        clearInterval(tradePollTimer); tradePollTimer = null;
+        $('tradingDot').className = 'conn-dot connected';
+        $('tradingConnLabel').textContent = 'Trading Account — Connected';
+        $('btnConnectTrading').disabled = true;
+        $('btnConnectTrading').textContent = 'Connected';
+        checkBothDone();
+      }
+    } catch (_) {}
+    if (Date.now() - started > POLL_TIMEOUT_MS) {
+      clearInterval(tradePollTimer); tradePollTimer = null;
+      $('btnConnectTrading').disabled = false;
+      $('tradingDot').className = 'conn-dot';
+      $('tradingConnLabel').textContent = 'Trading Account — Not Connected';
+      setMsg(3, 'Authorization timed out. Make sure your Dhan app has the OAuth Redirect URL set to: http://localhost:8000/auth/dhan/callback', 'error');
+    }
+  }, 2000);
 }
 
-function resetConnectUI() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  $('connectingArea').style.display = 'none';
-  $('connBtnRow').style.display = 'flex';
-  $('btnConnectAll').disabled = false;
+function startDataPolling() {
+  const started = Date.now();
+  dataPollTimer = setInterval(async function() {
+    try {
+      const r = await fetch('/auth/status');
+      const d = await r.json();
+      if (d.data_connected) {
+        clearInterval(dataPollTimer); dataPollTimer = null;
+        $('dataDot').className = 'conn-dot connected';
+        $('dataConnLabel').textContent = 'Data Account — Connected';
+        $('btnConnectData').disabled = true;
+        $('btnConnectData').textContent = 'Connected';
+        checkBothDone();
+      }
+    } catch (_) {}
+    if (Date.now() - started > POLL_TIMEOUT_MS) {
+      clearInterval(dataPollTimer); dataPollTimer = null;
+      $('btnConnectData').disabled = false;
+      $('dataDot').className = 'conn-dot';
+      $('dataConnLabel').textContent = 'Data Account — Not Connected';
+      setMsg(3, 'Authorization timed out. Make sure your Dhan app has the OAuth Redirect URL set to: http://localhost:8000/auth/dhan/callback', 'error');
+    }
+  }, 2000);
+}
+
+function checkBothDone() {
+  const tradeDot = $('tradingDot').className;
+  const dataDot = $('dataDot').className;
+  if (tradeDot.includes('connected') && dataDot.includes('connected')) {
+    setMsg(3, 'Both accounts connected!', 'success');
+    setTimeout(function() { showStep(4); fetchAndRenderSummary(); }, 800);
+  }
 }
 
 // ── Step 4: Summary ────────────────────────────────────────────
@@ -758,14 +820,30 @@ function renderSummary(status) {
 $('btnNext1').addEventListener('click', function() { showStep(2); });
 $('btnBack2').addEventListener('click', function() { showStep(1); });
 $('btnNext2').addEventListener('click', function() { showStep(3); updateStep3Status(); });
-$('btnBack3').addEventListener('click', function() { resetConnectUI(); showStep(2); });
+$('btnBack3').addEventListener('click', function() { showStep(2); });
+$('btnDone3').addEventListener('click', function() { showStep(4); fetchAndRenderSummary(); });
 $('btnLaunch').addEventListener('click', function() { window.location.href = '/'; });
 
 function updateStep3Status() {
   clearMsg(3);
-  $('connectingArea').style.display = 'none';
-  $('connBtnRow').style.display = 'flex';
-  $('btnConnectAll').disabled = false;
+  fetch('/auth/status').then(function(r) { return r.json(); }).then(function(d) {
+    if (d.trading_connected) {
+      $('tradingDot').className = 'conn-dot connected';
+      $('tradingConnLabel').textContent = 'Trading Account — Connected';
+      $('btnConnectTrading').textContent = 'Connected';
+      $('btnConnectTrading').disabled = true;
+    }
+    if (d.data_connected) {
+      $('dataDot').className = 'conn-dot connected';
+      $('dataConnLabel').textContent = 'Data Account — Connected';
+      $('btnConnectData').textContent = 'Connected';
+      $('btnConnectData').disabled = true;
+    }
+    if (d.trading_connected && d.data_connected) {
+      setMsg(3, 'Both accounts already connected!', 'success');
+      setTimeout(function() { showStep(4); fetchAndRenderSummary(); }, 500);
+    }
+  }).catch(function() {});
 }
 
 // ── Collapse Setup ──────────────────────────────────────────────

@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.error("Failed to initialize DhanTradingAdapter: %s", exc)
 
     # Seed watchlist projection from default_watchlist.yaml regardless of credentials
-    watchlist_path = Path(__file__).resolve().parent.parent.parent.parent / "configs" / "default_watchlist.yaml"
+    watchlist_path = Path(__file__).resolve().parent.parent.parent.parent.parent / "configs" / "default_watchlist.yaml"
     if watchlist_path.exists():
         import yaml
         with open(watchlist_path, "r") as f:
