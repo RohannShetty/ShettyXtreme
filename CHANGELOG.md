@@ -22,3 +22,9 @@
 - **Data Store**:
   - Fixed `get_bars()` to use half-open interval `[start, end)` semantics (matching standard time-series conventions).
   - Added empty list guard in `write_ticks` to prevent DuckDB errors.
+
+## [2026-07-23] - Feature Engine Fixes
+
+### Fixed
+- **Feature Engine**: Resolved `TypeError: Any cannot be instantiated` by using proxy objects for indicators during tests.
+- **Test Suite**: Cleaned up `__pycache__` directories.
