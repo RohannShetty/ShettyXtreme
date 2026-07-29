@@ -42,17 +42,14 @@ def _make_mock_oauth() -> MagicMock:
             ddpi_status=True,
         )
     )
-    oauth.pop_consent_flow = MagicMock(return_value="trading")
+    oauth.pop_consent_flow = MagicMock(return_value=True)
     return oauth
 
 
 def _make_mock_validator() -> MagicMock:
     validator = MagicMock(spec=CredentialValidator)
-    validator.validate_trading = AsyncMock(
-        return_value=ValidationResult(valid=True, message="Trading credentials valid")
-    )
-    validator.validate_data = AsyncMock(
-        return_value=ValidationResult(valid=True, message="Data credentials valid")
+    validator.validate_credentials = AsyncMock(
+        return_value=ValidationResult(valid=True, message="Credentials valid")
     )
     return validator
 
@@ -70,47 +67,31 @@ def test_auth_status_no_creds() -> None:
     resp = client.get("/auth/status")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["trading_has_api_key"] is False
-    assert data["trading_has_token"] is False
-    assert data["trading_valid"] is False
-    assert data["data_has_api_key"] is False
-    assert data["data_has_token"] is False
-    assert data["data_valid"] is False
+    assert data["has_api_key"] is False
+    assert data["has_token"] is False
+    assert data["token_valid"] is False
+    assert data["connected"] is False
 
 
-def test_save_trading_credentials() -> None:
+def test_save_credentials() -> None:
     app = _make_app()
     client = TestClient(app)
     resp = client.post(
-        "/auth/credentials/trading",
+        "/auth/credentials",
         json={"api_key": "test_key_123", "api_secret": "test_secret_456"},
     )
     assert resp.status_code == 200
     data = resp.json()
     assert data["success"] is True
-    assert "saved" in data["message"].lower() or "trading" in data["message"].lower()
+    assert "saved" in data["message"].lower()
+    status = client.get("/auth/status").json()
+    assert status["has_api_key"] is True
 
 
-def test_save_data_credentials() -> None:
+def test_start_consent() -> None:
     app = _make_app()
     client = TestClient(app)
-    resp = client.post(
-        "/auth/credentials/data",
-        json={"api_key": "data_key_789", "api_secret": "data_secret_012"},
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["success"] is True
-    assert "saved" in data["message"].lower() or "data" in data["message"].lower()
-
-
-def test_start_consent_trading() -> None:
-    app = _make_app()
-    client = TestClient(app)
-    resp = client.post(
-        "/auth/start-consent/trading",
-        json={"client_id": "DHAN123"},
-    )
+    resp = client.post("/auth/start-consent")
     assert resp.status_code == 200
     data = resp.json()
     assert data["consent_app_id"] == "consent_abc123"
@@ -118,9 +99,9 @@ def test_start_consent_trading() -> None:
     assert "consentAppId" in data["login_url"]
 
 
-def test_dhan_callback() -> None:
+def test_dhan_callback_unknown_flow() -> None:
     from shettyxtreme.terminal.api.auth_router import _oauth
-    _oauth.pop_consent_flow = MagicMock(return_value=None)
+    _oauth.pop_consent_flow = MagicMock(return_value=False)
     app = _make_app()
     client = TestClient(app, follow_redirects=False)
     resp = client.get("/auth/dhan/callback?tokenId=test_token_999")
@@ -129,80 +110,46 @@ def test_dhan_callback() -> None:
     assert "error=unknown_flow" in resp.headers["location"]
 
 
-def test_dhan_callback_trading() -> None:
+def test_dhan_callback_success() -> None:
     app = _make_app()
     client = TestClient(app, follow_redirects=False)
 
-    # Save credentials first
     client.post(
-        "/auth/credentials/trading",
+        "/auth/credentials",
         json={"api_key": "trading_key", "api_secret": "trading_secret"},
     )
 
     resp = client.get("/auth/dhan/callback?tokenId=tok_trade_123&consentAppId=consent_trading_id")
     assert resp.status_code == 307
-    assert "connected=trading" in resp.headers["location"]
+    assert "connected=true" in resp.headers["location"]
 
     status = client.get("/auth/status").json()
-    assert status["trading_has_token"] is True
-    assert status["data_has_token"] is False
-
-
-def test_dhan_callback_data() -> None:
-    app = _make_app()
-    client = TestClient(app, follow_redirects=False)
-
-    # Save data credentials
-    client.post(
-        "/auth/credentials/data",
-        json={"api_key": "data_key", "api_secret": "data_secret"},
-    )
-
-    # Configure mock to return "data" for this consent ID
-    from shettyxtreme.terminal.api.auth_router import _oauth
-    _oauth.pop_consent_flow = MagicMock(return_value="data")
-
-    resp = client.get("/auth/dhan/callback?tokenId=tok_data_456&consentAppId=consent_data_id")
-    assert resp.status_code == 307
-    assert "connected=data" in resp.headers["location"]
-
-    status = client.get("/auth/status").json()
-    assert status["data_has_token"] is True
-    assert status["trading_has_token"] is False
+    assert status["has_token"] is True
 
 
 def test_auth_logout() -> None:
     app = _make_app()
     client = TestClient(app)
-    # First save some trading credentials
     client.post(
-        "/auth/credentials/trading",
+        "/auth/credentials",
         json={"api_key": "key1", "api_secret": "secret1"},
     )
-    # Then logout
     resp = client.post("/auth/logout")
     assert resp.status_code == 200
     data = resp.json()
     assert data["success"] is True
-    # Verify tokens cleared by checking status
     status = client.get("/auth/status").json()
-    assert status["trading_has_token"] is False
-    assert status["data_has_token"] is False
+    assert status["has_token"] is False
 
 
 def test_auth_status_with_creds() -> None:
     app = _make_app()
     client = TestClient(app)
     client.post(
-        "/auth/credentials/trading",
+        "/auth/credentials",
         json={"api_key": "my_trading_key", "api_secret": "my_secret"},
-    )
-    client.post(
-        "/auth/credentials/data",
-        json={"api_key": "my_data_key", "api_secret": "my_data_secret"},
     )
     resp = client.get("/auth/status")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["trading_has_api_key"] is True
-    assert data["data_has_api_key"] is True
+    assert data["has_api_key"] is True

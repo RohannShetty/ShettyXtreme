@@ -26,12 +26,6 @@ class Config:
     dhan_client_id: str | None = None
     dhan_access_token: str | None = None
 
-    # Dhan dual-path credentials (trading + data, separate to avoid error 806)
-    dhan_trading_client_id: str | None = None
-    dhan_trading_access_token: str | None = None
-    dhan_data_api_key: str | None = None
-    dhan_data_client_id: str | None = None
-
 class ConfigManager:
     def __init__(self, config_path: str | None = None):
         self._config = Config()
@@ -56,10 +50,7 @@ class ConfigManager:
             "SHETTY_DRY_RUN": "dry_run",
             "DHAN_CLIENT_ID": "dhan_client_id",
             "DHAN_ACCESS_TOKEN": "dhan_access_token",
-            "DHAN_TRADING_CLIENT_ID": "dhan_trading_client_id",
-            "DHAN_TRADING_ACCESS_TOKEN": "dhan_trading_access_token",
-            "DHAN_DATA_API_KEY": "dhan_data_api_key",
-            "DHAN_DATA_CLIENT_ID": "dhan_data_client_id",
+
         }
         for env_key, config_key in env_map.items():
             val = os.environ.get(env_key)

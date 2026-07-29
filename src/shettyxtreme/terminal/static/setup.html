@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ShettyXtreme — Setup</title>
 <style>
-/* ── Reset & Base ───────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
 body {
@@ -20,7 +19,6 @@ body {
 }
 .num { font-family: 'JetBrains Mono', monospace; }
 
-/* ── Card ────────────────────────────────────────────────────── */
 .setup-card {
   background: #121212;
   border: 1px solid #1E1E1E;
@@ -42,7 +40,6 @@ body {
   margin-bottom: 20px;
 }
 
-/* ── Progress ────────────────────────────────────────────────── */
 .progress {
   display: flex;
   align-items: center;
@@ -81,7 +78,6 @@ body {
 }
 .progress-label.active { color: #4AF626; }
 
-/* ── Steps ───────────────────────────────────────────────────── */
 .step { display: none; }
 .step.active { display: block; }
 .step-title {
@@ -95,7 +91,6 @@ body {
   margin-bottom: 16px;
 }
 
-/* ── Collapsible Instructions ────────────────────────────────── */
 .collapse-header {
   display: flex;
   align-items: center;
@@ -145,7 +140,6 @@ body {
   word-break: break-all;
 }
 
-/* ── Form Elements ───────────────────────────────────────────── */
 .field {
   margin-bottom: 14px;
 }
@@ -172,7 +166,6 @@ body {
 .field input::placeholder { color: #3A3A3A; }
 .field input:focus { border-color: #4AF626; }
 
-/* ── Buttons ─────────────────────────────────────────────────── */
 .btn-row {
   display: flex;
   gap: 10px;
@@ -242,7 +235,6 @@ body {
 .btn-launch:hover:not(:disabled) { background: #3CE01A; }
 .btn:active:not(:disabled) { transform: scale(0.98); }
 
-/* ── Status / Feedback ───────────────────────────────────────── */
 .msg {
   margin-top: 10px;
   font-size: 12px;
@@ -265,7 +257,6 @@ body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Connection Status ───────────────────────────────────────── */
 .conn-status {
   display: flex;
   align-items: center;
@@ -290,7 +281,6 @@ body {
   50% { opacity: 0.4; }
 }
 
-/* ── Connecting State ─────────────────────────────────────────── */
 .connecting-overlay {
   text-align: center;
   padding: 20px 0;
@@ -298,7 +288,6 @@ body {
   font-size: 12px;
 }
 
-/* ── Summary ─────────────────────────────────────────────────── */
 .summary-grid {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -318,43 +307,32 @@ body {
   <h1>SHETTYXTREME</h1>
   <div class="subtitle">Initial Setup Wizard</div>
 
-  <!-- Progress Bar -->
   <div class="progress" id="progressBar"></div>
 
-  <!-- Step 1: Trading API Credentials -->
+  <!-- Step 1: API Credentials -->
   <div class="step active" id="step1">
-    <div class="step-title">Trading API Credentials</div>
-    <div class="step-desc">Enter your Dhan Trading API credentials to connect your trading account.</div>
+    <div class="step-title">API Credentials</div>
+    <div class="step-desc">Enter your Dhan API credentials. One set of credentials handles both trading and market data.</div>
 
-    <div class="collapse-header" id="tradingHelpToggle">
-      <span class="collapse-arrow" id="tradingArrow">&#9654;</span>
+    <div class="collapse-header" id="helpToggle">
+      <span class="collapse-arrow" id="helpArrow">&#9654;</span>
       How to get credentials from Dhan Developer Portal
     </div>
-    <div class="collapse-body" id="tradingHelpBody">
+    <div class="collapse-body" id="helpBody">
       <ol>
         <li>Go to <strong>https://developer.dhan.co/</strong> and log in</li>
         <li>Click <strong>"Create New App"</strong> or select your existing app</li>
         <li>Copy your <strong>Client ID</strong> (a string like "11345...")</li>
         <li>Click <strong>"Generate API Key"</strong> and copy it</li>
-        <li>In the same app settings, set the <strong>Postback URL</strong> to:</li>
+        <li>In the same app settings, set the <strong>OAuth Redirect URL</strong> to:</li>
       </ol>
       <div class="url-box">
-        <span class="url-text" id="postbackUrlDisplay">http://localhost:8000/api/postback/dhan</span>
-        <button class="btn-copy-sm" id="btnCopyPostback">Copy</button>
+        <span class="url-text" id="oAuthUrl">http://localhost:8000/auth/dhan/callback</span>
+        <button class="btn-copy-sm" id="btnCopyOAuth">Copy</button>
       </div>
-      <div style="margin-top:10px;padding-top:10px;border-top:1px solid #1E1E1E;">
-        <div class="step-desc" style="margin-bottom:6px;">Step 2: Register OAuth Redirect URL</div>
-        <div class="instructions">
-          In your Dhan app settings, set the <strong>OAuth Redirect URL</strong> to:
-        </div>
-        <div class="url-box" style="margin-bottom:10px;">
-          <span class="url-text" id="oAuthUrl">http://localhost:8000/auth/dhan/callback</span>
-          <button class="btn btn-copy" id="btnCopyOAuth">Copy</button>
-        </div>
-        <div class="instructions">
-          This is required so Dhan can redirect back to your terminal after you approve the consent.
-          Without this, the authorization will appear stuck on "Pending Authorization" forever.
-        </div>
+      <div style="margin-top:8px;">
+        <strong>Important:</strong> Enable both <strong>"Trading"</strong> and <strong>"Market Data"</strong> capabilities in your app.
+        Without both enabled, the authorization will fail with Error 806.
       </div>
       <div style="margin-top:6px;">
         Your credentials are entered as: <strong>client_id:::api_key</strong><br>
@@ -364,102 +342,43 @@ body {
 
     <div class="field">
       <label>API Key (client_id:::api_key)</label>
-      <input type="text" id="tradingApiKey" placeholder="11345:::abc123def456" autocomplete="off">
+      <input type="text" id="apiKey" placeholder="11345:::abc123def456" autocomplete="off">
     </div>
     <div class="field">
       <label>API Secret</label>
-      <input type="password" id="tradingApiSecret" placeholder="Enter API secret" autocomplete="off">
+      <input type="password" id="apiSecret" placeholder="Enter API secret" autocomplete="off">
     </div>
     <div class="msg" id="msg1"></div>
     <div class="btn-row">
-      <button class="btn btn-accent" id="btnTestTrading">Test Connection</button>
+      <button class="btn btn-accent" id="btnTest">Test Connection</button>
       <div style="flex:1;"></div>
       <button class="btn btn-primary" id="btnNext1" disabled>Next</button>
     </div>
   </div>
 
-  <!-- Step 2: Data API Credentials -->
+  <!-- Step 2: OAuth Consent -->
   <div class="step" id="step2">
-    <div class="step-title">Data API Credentials</div>
-    <div class="step-desc">Enter your Dhan Data API credentials for market data access.</div>
+    <div class="step-title">Authorize with Dhan</div>
+    <div class="step-desc">Complete the OAuth consent flow to authorize your terminal.</div>
 
-    <div class="collapse-header" id="dataHelpToggle">
-      <span class="collapse-arrow" id="dataArrow">&#9654;</span>
-      How to get Data API credentials
-    </div>
-    <div class="collapse-body" id="dataHelpBody">
-      <ol>
-        <li>In the <strong>Dhan Developer Portal</strong>, go to your app</li>
-        <li>Scroll to the <strong>Data API</strong> section</li>
-        <li>Copy the <strong>Data Client ID</strong> and <strong>Data API Key</strong></li>
-      </ol>
-      <div style="margin-top:6px;">
-        Your credentials are entered as: <strong>client_id:::api_key</strong>
-      </div>
-      <div style="margin-top:10px;padding-top:10px;border-top:1px solid #1E1E1E;">
-        <div class="step-desc" style="margin-bottom:6px;">Register OAuth Redirect URL</div>
-        <div class="instructions">
-          Set the <strong>OAuth Redirect URL</strong> in your Dhan app settings to:
-        </div>
-        <div class="url-box" style="margin-bottom:10px;">
-          <span class="url-text">http://localhost:8000/auth/dhan/callback</span>
-        </div>
-        <div class="instructions">
-          The same URL is used for both Trading and Data API authorization flows.
-          Without this, authorization will appear stuck on "Pending Authorization" forever.
-        </div>
-      </div>
+    <div class="conn-status">
+      <div class="conn-dot" id="connDot"></div>
+      <span id="connLabel">Not Connected</span>
+      <div style="flex:1;"></div>
+      <button class="btn btn-accent" id="btnConnect" style="font-size:11px;padding:4px 12px;">Connect Account</button>
     </div>
 
-    <div class="field">
-      <label>API Key (client_id:::api_key)</label>
-      <input type="text" id="dataApiKey" placeholder="client_id:::api_key" autocomplete="off">
-    </div>
-    <div class="field">
-      <label>API Secret</label>
-      <input type="password" id="dataApiSecret" placeholder="Enter API secret" autocomplete="off">
-    </div>
     <div class="msg" id="msg2"></div>
+
     <div class="btn-row">
       <button class="btn btn-secondary" id="btnBack2">Back</button>
-      <button class="btn btn-accent" id="btnTestData">Test Connection</button>
       <div style="flex:1;"></div>
       <button class="btn btn-primary" id="btnNext2" disabled>Next</button>
     </div>
   </div>
 
-  <!-- Step 3: Connect & Verify (Independent) -->
+  <!-- Step 3: Setup Complete -->
   <div class="step" id="step3">
-    <div class="step-title">Connect to Dhan</div>
-    <div class="step-desc">Authorize your accounts via Dhan OAuth consent flow.</div>
-
-    <!-- Trading Account -->
-    <div class="conn-status" id="tradingConnStatus">
-      <div class="conn-dot" id="tradingDot"></div>
-      <span id="tradingConnLabel">Trading Account — Not Connected</span>
-      <div style="flex:1;"></div>
-      <button class="btn btn-accent" id="btnConnectTrading" style="font-size:11px;padding:4px 12px;">Connect Trading Account</button>
-    </div>
-
-    <!-- Data Account -->
-    <div class="conn-status" id="dataConnStatus">
-      <div class="conn-dot" id="dataDot"></div>
-      <span id="dataConnLabel">Data Account — Not Connected</span>
-      <div style="flex:1;"></div>
-      <button class="btn btn-accent" id="btnConnectData" style="font-size:11px;padding:4px 12px;">Connect Data Account</button>
-    </div>
-
-    <div class="msg" id="msg3"></div>
-
-    <div class="btn-row" id="connBtnRow3" style="display:none;">
-      <button class="btn btn-secondary" id="btnBack3">Back</button>
-      <div style="flex:1;"></div>
-      <button class="btn btn-primary" id="btnDone3">Done</button>
-    </div>
-  </div>
-
-  <!-- Step 4: Setup Complete -->
-  <div class="step" id="step4">
     <div class="step-title" style="color:#4AF626;">Setup Complete</div>
     <div class="step-desc">Your ShettyXtreme terminal is ready.</div>
     <div class="summary-grid" id="summaryGrid"></div>
@@ -470,17 +389,12 @@ body {
 </div>
 
 <script>
-// ── Config ──────────────────────────────────────────────────────
-const STEPS = 4;
-const STEP_TITLES = ['Trading API', 'Data API', 'Connect', 'Done'];
-const POSTBACK_URL = 'http://localhost:8000/api/postback/dhan';
+const STEPS = 3;
+const STEP_TITLES = ['Credentials', 'Connect', 'Done'];
 
-// ── State ───────────────────────────────────────────────────────
 let currentStep = 1;
-let tradingTested = false;
-let dataTested = false;
+let credsTested = false;
 
-// ── Helpers ─────────────────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
 
 function setMsg(stepId, text, type) {
@@ -502,7 +416,6 @@ function setLoading(btn, loading) {
   }
 }
 
-// ── Progress Bar ────────────────────────────────────────────────
 function renderProgress() {
   const bar = $('progressBar');
   let html = '';
@@ -514,7 +427,6 @@ function renderProgress() {
   bar.innerHTML = html;
 }
 
-// ── Step Navigation ─────────────────────────────────────────────
 function showStep(n) {
   document.querySelectorAll('.step').forEach(function(el, idx) {
     el.classList.toggle('active', (idx + 1) === n);
@@ -523,58 +435,42 @@ function showStep(n) {
   renderProgress();
 }
 
-// ── URL Param Parsing ───────────────────────────────────────────
 function checkUrlParams() {
   const params = new URLSearchParams(window.location.search);
-  if (params.get('connected') === 'trading') {
-    $('tradingDot').className = 'conn-dot connected';
-    $('tradingConnLabel').textContent = 'Trading Account — Connected';
-    $('btnConnectTrading').textContent = 'Connected';
-    $('btnConnectTrading').disabled = true;
-  }
-  if (params.get('connected') === 'data') {
-    $('dataDot').className = 'conn-dot connected';
-    $('dataConnLabel').textContent = 'Data Account — Connected';
-    $('btnConnectData').textContent = 'Connected';
-    $('btnConnectData').disabled = true;
+  if (params.get('connected') === 'true') {
+    $('connDot').className = 'conn-dot connected';
+    $('connLabel').textContent = 'Connected';
+    $('btnConnect').textContent = 'Connected';
+    $('btnConnect').disabled = true;
+    $('btnNext2').disabled = false;
   }
   if (params.get('error')) {
-    setMsg(3, 'Authorization error: ' + params.get('error'), 'error');
+    setMsg(2, 'Authorization error: ' + params.get('error'), 'error');
   }
-  // Clean URL params without reload
   if (params.has('connected') || params.has('error')) {
     window.history.replaceState({}, document.title, window.location.pathname);
+    showStep(2);
   }
 }
 
-// ── Auto-redirect if setup already complete ─────────────────────
 async function checkStatus() {
   try {
     const r = await fetch('/auth/status');
     if (r.ok) {
       const d = await r.json();
-      if (d.trading_connected) {
-        $('tradingDot').className = 'conn-dot connected';
-        $('tradingConnLabel').textContent = 'Trading Account — Connected';
-        $('btnConnectTrading').textContent = 'Connected';
-        $('btnConnectTrading').disabled = true;
-      }
-      if (d.data_connected) {
-        $('dataDot').className = 'conn-dot connected';
-        $('dataConnLabel').textContent = 'Data Account — Connected';
-        $('btnConnectData').textContent = 'Connected';
-        $('btnConnectData').disabled = true;
-      }
-      if (d.trading_connected && d.data_connected) {
-        setMsg(3, 'Both accounts connected!', 'success');
-        setTimeout(function() { showStep(4); fetchAndRenderSummary(); }, 500);
+      if (d.connected) {
+        $('connDot').className = 'conn-dot connected';
+        $('connLabel').textContent = 'Connected';
+        $('btnConnect').textContent = 'Connected';
+        $('btnConnect').disabled = true;
+        $('btnNext2').disabled = false;
+        setMsg(2, 'Account already connected!', 'success');
       }
     }
   } catch (_) {}
   renderProgress();
 }
 
-// ── Collapsible Help Panels ─────────────────────────────────────
 function setupCollapse(toggleId, bodyId, arrowId) {
   $(toggleId).addEventListener('click', function() {
     $(bodyId).classList.toggle('open');
@@ -582,36 +478,35 @@ function setupCollapse(toggleId, bodyId, arrowId) {
   });
 }
 
-// ── Step 1: Test Trading API ───────────────────────────────────
-$('btnTestTrading').addEventListener('click', async function() {
-  const apiKey = $('tradingApiKey').value.trim();
-  const apiSecret = $('tradingApiSecret').value.trim();
+$('btnTest').addEventListener('click', async function() {
+  const apiKey = $('apiKey').value.trim();
+  const apiSecret = $('apiSecret').value.trim();
   if (!apiKey || !apiSecret) {
     setMsg(1, 'Both fields are required.', 'error');
     return;
   }
-  const btn = $('btnTestTrading');
+  const btn = $('btnTest');
   setLoading(btn, true);
   clearMsg(1);
   try {
-    const r = await fetch('/auth/test/trading', {
+    const r = await fetch('/auth/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret })
     });
     const d = await r.json();
     if (r.ok && d.valid) {
-      await fetch('/auth/credentials/trading', {
+      await fetch('/auth/credentials', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret })
       });
-      setMsg(1, 'Trading API connection verified.', 'success');
-      tradingTested = true;
+      setMsg(1, 'API connection verified.', 'success');
+      credsTested = true;
       $('btnNext1').disabled = false;
     } else {
       setMsg(1, d.message || 'Connection failed. Check credentials.', 'error');
-      tradingTested = false;
+      credsTested = false;
       $('btnNext1').disabled = true;
     }
   } catch (e) {
@@ -621,46 +516,6 @@ $('btnTestTrading').addEventListener('click', async function() {
   }
 });
 
-// ── Step 2: Test Data API ─────────────────────────────────────
-$('btnTestData').addEventListener('click', async function() {
-  const apiKey = $('dataApiKey').value.trim();
-  const apiSecret = $('dataApiSecret').value.trim();
-  if (!apiKey || !apiSecret) {
-    setMsg(2, 'Both fields are required.', 'error');
-    return;
-  }
-  const btn = $('btnTestData');
-  setLoading(btn, true);
-  clearMsg(2);
-  try {
-    const r = await fetch('/auth/test/data', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret })
-    });
-    const d = await r.json();
-    if (r.ok && d.valid) {
-      await fetch('/auth/credentials/data', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret })
-      });
-      setMsg(2, 'Data API connection verified.', 'success');
-      dataTested = true;
-      $('btnNext2').disabled = false;
-    } else {
-      setMsg(2, d.message || 'Connection failed. Check credentials.', 'error');
-      dataTested = false;
-      $('btnNext2').disabled = true;
-    }
-  } catch (e) {
-    setMsg(2, 'Network error. Is the server running?', 'error');
-  } finally {
-    setLoading(btn, false);
-  }
-});
-
-// ── Copy OAuth URL ──────────────────────────────────────────────
 $('btnCopyOAuth').addEventListener('click', async function() {
   try {
     await navigator.clipboard.writeText('http://localhost:8000/auth/dhan/callback');
@@ -671,67 +526,33 @@ $('btnCopyOAuth').addEventListener('click', async function() {
   }
 });
 
-// ── Step 3: OAuth Connect (Direct Redirect) ──────────────────────
-
-$('btnConnectTrading').addEventListener('click', async function() {
-  clearMsg(3);
-  $('btnConnectTrading').disabled = true;
-  $('tradingDot').className = 'conn-dot pending';
-  $('tradingConnLabel').textContent = 'Trading Account — Redirecting to Dhan...';
-  setMsg(3, 'Redirecting to Dhan for authorization...', 'info');
+$('btnConnect').addEventListener('click', async function() {
+  clearMsg(2);
+  $('btnConnect').disabled = true;
+  $('connDot').className = 'conn-dot pending';
+  $('connLabel').textContent = 'Redirecting to Dhan...';
+  setMsg(2, 'Redirecting to Dhan for authorization...', 'info');
 
   try {
-    const r = await fetch('/auth/start-consent/trading', { method: 'POST' });
+    const r = await fetch('/auth/start-consent', { method: 'POST' });
     const d = await r.json();
     if (r.ok && d.consent_app_id) {
       window.location.href = d.login_url;
     } else {
-      const detail = d.detail || 'Failed to start trading consent.';
-      setMsg(3, detail, 'error');
-      $('btnConnectTrading').disabled = false;
-      $('tradingDot').className = 'conn-dot';
-      $('tradingConnLabel').textContent = 'Trading Account — Not Connected';
+      const detail = d.detail || 'Failed to start consent.';
+      setMsg(2, detail, 'error');
+      $('btnConnect').disabled = false;
+      $('connDot').className = 'conn-dot';
+      $('connLabel').textContent = 'Not Connected';
     }
   } catch (e) {
-    setMsg(3, 'Network error. Is the server running?', 'error');
-    $('btnConnectTrading').disabled = false;
-    $('tradingDot').className = 'conn-dot';
-    $('tradingConnLabel').textContent = 'Trading Account — Not Connected';
+    setMsg(2, 'Network error. Is the server running?', 'error');
+    $('btnConnect').disabled = false;
+    $('connDot').className = 'conn-dot';
+    $('connLabel').textContent = 'Not Connected';
   }
 });
 
-$('btnConnectData').addEventListener('click', async function() {
-  clearMsg(3);
-  $('btnConnectData').disabled = true;
-  $('dataDot').className = 'conn-dot pending';
-  $('dataConnLabel').textContent = 'Data Account — Redirecting to Dhan...';
-  setMsg(3, 'Redirecting to Dhan for authorization...', 'info');
-
-  try {
-    const r = await fetch('/auth/start-consent/data', { method: 'POST' });
-    const d = await r.json();
-    if (r.ok && d.consent_app_id) {
-      window.location.href = d.login_url;
-    } else {
-      const detail = d.detail || 'Failed to start data consent.';
-      setMsg(3, detail, 'error');
-      $('btnConnectData').disabled = false;
-      $('dataDot').className = 'conn-dot';
-      $('dataConnLabel').textContent = 'Data Account — Not Connected';
-    }
-  } catch (e) {
-    setMsg(3, 'Network error. Is the server running?', 'error');
-    $('btnConnectData').disabled = false;
-    $('dataDot').className = 'conn-dot';
-    $('dataConnLabel').textContent = 'Data Account — Not Connected';
-  }
-});
-
-// Polling removed — now uses direct redirect flow.
-// Dhan callback redirects back to setup.html?connected=trading|data.
-// checkUrlParams() handles the return and checkStatus() syncs from server.
-
-// ── Step 4: Summary ────────────────────────────────────────────
 async function fetchAndRenderSummary() {
   try {
     const r = await fetch('/auth/status');
@@ -747,50 +568,22 @@ function renderSummary(status) {
   const rows = [];
   if (status.client_name) rows.push(['Client Name', status.client_name]);
   if (status.client_id) rows.push(['Client ID', status.client_id]);
-  if (status.trading_expiry) rows.push(['Trading Token Expires', status.trading_expiry]);
-  if (status.data_expiry) rows.push(['Data Token Expires', status.data_expiry]);
-  rows.push(['Trading API', status.trading_connected ? 'Connected' : 'Not Connected']);
-  rows.push(['Data API', status.data_connected ? 'Connected' : 'Not Connected']);
+  if (status.token_expiry) rows.push(['Token Expires', status.token_expiry]);
+  rows.push(['API Key', status.has_api_key ? 'Configured' : 'Missing']);
+  rows.push(['Access Token', status.has_token ? 'Active' : 'Missing']);
+  rows.push(['Connection', status.connected ? 'Connected' : 'Not Connected']);
   grid.innerHTML = rows.map(function(pair) {
     return '<span class="summary-label">' + pair[0] + '</span><span class="summary-value">' + pair[1] + '</span>';
   }).join('');
 }
 
-// ── Navigation Buttons ──────────────────────────────────────────
 $('btnNext1').addEventListener('click', function() { showStep(2); });
 $('btnBack2').addEventListener('click', function() { showStep(1); });
-$('btnNext2').addEventListener('click', function() { showStep(3); updateStep3Status(); });
-$('btnBack3').addEventListener('click', function() { showStep(2); });
-$('btnDone3').addEventListener('click', function() { showStep(4); fetchAndRenderSummary(); });
+$('btnNext2').addEventListener('click', function() { showStep(3); fetchAndRenderSummary(); });
 $('btnLaunch').addEventListener('click', function() { window.location.href = '/'; });
 
-function updateStep3Status() {
-  clearMsg(3);
-  fetch('/auth/status').then(function(r) { return r.json(); }).then(function(d) {
-    if (d.trading_connected) {
-      $('tradingDot').className = 'conn-dot connected';
-      $('tradingConnLabel').textContent = 'Trading Account — Connected';
-      $('btnConnectTrading').textContent = 'Connected';
-      $('btnConnectTrading').disabled = true;
-    }
-    if (d.data_connected) {
-      $('dataDot').className = 'conn-dot connected';
-      $('dataConnLabel').textContent = 'Data Account — Connected';
-      $('btnConnectData').textContent = 'Connected';
-      $('btnConnectData').disabled = true;
-    }
-    if (d.trading_connected && d.data_connected) {
-      setMsg(3, 'Both accounts already connected!', 'success');
-      setTimeout(function() { showStep(4); fetchAndRenderSummary(); }, 500);
-    }
-  }).catch(function() {});
-}
+setupCollapse('helpToggle', 'helpBody', 'helpArrow');
 
-// ── Collapse Setup ──────────────────────────────────────────────
-setupCollapse('tradingHelpToggle', 'tradingHelpBody', 'tradingArrow');
-setupCollapse('dataHelpToggle', 'dataHelpBody', 'dataArrow');
-
-// ── Init ────────────────────────────────────────────────────────
 checkUrlParams();
 checkStatus();
 </script>

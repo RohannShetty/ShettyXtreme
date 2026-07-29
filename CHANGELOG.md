@@ -1,5 +1,24 @@
 # ShettyXtreme Changelog
 
+## [2026-07-30] - Credential Consolidation: Dual → Single Dhan Credential
+
+### Changed
+- **CredentialStore**: Merged 10 dual fields (trading + data) → 6 single fields (`client_id`, `api_key`, `api_secret`, `access_token`, `token_expiry`, `client_name`)
+- **Migration**: Auto-migrates old dual-format `credentials.enc` on first load
+- **Validator**: `validate_trading()`/`validate_data()` → single `validate_credentials()`
+- **ConfigManager**: Removed `DHAN_TRADING_CLIENT_ID`, `DHAN_DATA_*` env override fields
+- **AuthRouter**: Collapsed 9 dual endpoints → 6 single endpoints; removed `/trading`/`/data` path suffixes
+- **DhanOAuth**: Removed `state="trading"` parameter; `_consent_flows` dict → set
+- **HealthMonitor**: Removed `trading_status`/`data_status` dual tracking → single `status`
+- **Setup Wizard**: 4-step → 3-step; single credential input; single OAuth connect button
+
+### Removed
+- Dual credential paths: OAuth consent flow now uses one consent for both trading + market data
+- Stale test files and test cases referencing dual endpoints
+
+### Added
+- Migration test: verifies old `trading_*`/`data_*` `credentials.enc` is transparently migrated
+
 ## [2026-07-29] - OAuth Redirect Flow + LSP/Git Hygiene
 
 ### Added

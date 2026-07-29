@@ -15,7 +15,6 @@ from typing import Any
 import httpx
 
 _FUND_LIMITS_URL = "https://api.dhan.co/v2/fundlimit"
-_LTP_URL = "https://api.dhan.co/v2/marketdata/ltp"
 
 
 @dataclass
@@ -27,7 +26,7 @@ class ValidationResult:
 
 class CredentialValidator:
 
-    async def validate_trading(
+    async def validate_credentials(
         self, api_key: str, api_secret: str, client_id: str
     ) -> ValidationResult:
         if not api_key or not api_secret:
@@ -37,37 +36,14 @@ class CredentialValidator:
             )
         return ValidationResult(
             valid=True,
-            message="Trading credentials saved. Actual validation occurs during OAuth consent.",
+            message="Credentials saved. Actual validation occurs during OAuth consent.",
         )
 
-    async def validate_data(
-        self, api_key: str, api_secret: str, client_id: str
-    ) -> ValidationResult:
-        if not api_key or not api_secret:
-            return ValidationResult(
-                valid=False,
-                message="Both API key and secret are required.",
-            )
-        return ValidationResult(
-            valid=True,
-            message="Data credentials saved. Actual validation occurs during OAuth consent.",
-        )
-
-    async def validate_access_token(
-        self, access_token: str, is_trading: bool
-    ) -> ValidationResult:
+    async def validate_access_token(self, access_token: str) -> ValidationResult:
         try:
             headers = {"access-token": access_token}
-            if is_trading:
-                url = _FUND_LIMITS_URL
-            else:
-                url = _LTP_URL
-                params = {"symbol": "NIFTY", "exchange": "NSE", "security-type": "INDEX"}
             async with httpx.AsyncClient() as client:
-                if is_trading:
-                    resp = await client.get(url, headers=headers)
-                else:
-                    resp = await client.get(url, headers=headers, params=params)
+                resp = await client.get(_FUND_LIMITS_URL, headers=headers)
                 resp.raise_for_status()
                 return ValidationResult(
                     valid=True,

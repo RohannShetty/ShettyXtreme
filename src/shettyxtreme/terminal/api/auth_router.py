@@ -31,18 +31,12 @@ def init_auth(
     _validator = validator
 
 
-# ── Pydantic models ────────────────────────────────────────────────────────
 class CredentialStatusResponse(BaseModel):
-    trading_has_api_key: bool = False
-    trading_has_token: bool = False
-    trading_valid: bool = False
-    trading_expiry: str | None = None
-    trading_connected: bool = False
-    data_has_api_key: bool = False
-    data_has_token: bool = False
-    data_valid: bool = False
-    data_expiry: str | None = None
-    data_connected: bool = False
+    has_api_key: bool = False
+    has_token: bool = False
+    token_valid: bool = False
+    token_expiry: str | None = None
+    connected: bool = False
     setup_complete: bool = False
     client_name: str | None = None
     client_id: str | None = None
@@ -80,94 +74,49 @@ class ValidationResultResponse(BaseModel):
     message: str
 
 
-# ── Helpers ─────────────────────────────────────────────────────────────────
 def _get_store() -> CredentialStore:
     if _store is None:
         return CredentialStore()
     return _store
 
 
-# ── Endpoints ───────────────────────────────────────────────────────────────
 @router.get("/status", response_model=CredentialStatusResponse)
 async def get_status() -> CredentialStatusResponse:
     store = _get_store()
-    trading_valid = store.is_trading_valid() if store.trading_access_token else False
-    data_valid = store.is_data_valid() if store.data_access_token else False
-    trading_connected = trading_valid and bool(store.trading_access_token)
-    data_connected = data_valid and bool(store.data_access_token)
-    setup_complete = trading_connected and data_connected
+    token_valid = store.is_token_valid() if store.access_token else False
+    connected = token_valid and bool(store.access_token)
     return CredentialStatusResponse(
-        trading_has_api_key=bool(store.trading_api_key),
-        trading_has_token=bool(store.trading_access_token),
-        trading_valid=trading_valid,
-        trading_expiry=store.trading_token_expiry,
-        trading_connected=trading_connected,
-        data_has_api_key=bool(store.data_api_key),
-        data_has_token=bool(store.data_access_token),
-        data_valid=data_valid,
-        data_expiry=store.data_token_expiry,
-        data_connected=data_connected,
-        setup_complete=setup_complete,
+        has_api_key=bool(store.api_key),
+        has_token=bool(store.access_token),
+        token_valid=token_valid,
+        token_expiry=store.token_expiry,
+        connected=connected,
+        setup_complete=connected,
         client_name=store.client_name,
-        client_id=store.trading_client_id or store.data_client_id,
+        client_id=store.client_id,
     )
 
 
-@router.post("/credentials/trading", response_model=SaveResult)
-async def save_trading_credentials(body: CredentialBody) -> SaveResult:
+@router.post("/credentials", response_model=SaveResult)
+async def save_credentials(body: CredentialBody) -> SaveResult:
     store = _get_store()
     client_id, api_key = _split_combined_key(body.api_key)
-    store.trading_api_key = api_key
-    store.trading_api_secret = body.api_secret
+    store.api_key = api_key
+    store.api_secret = body.api_secret
     if client_id:
-        store.trading_client_id = client_id
+        store.client_id = client_id
     store.save()
-    return SaveResult(success=True, message="Trading credentials saved")
+    return SaveResult(success=True, message="Credentials saved")
 
 
-@router.post("/credentials/data", response_model=SaveResult)
-async def save_data_credentials(body: CredentialBody) -> SaveResult:
-    store = _get_store()
-    client_id, api_key = _split_combined_key(body.api_key)
-    store.data_api_key = api_key
-    store.data_api_secret = body.api_secret
-    if client_id:
-        store.data_client_id = client_id
-    store.save()
-    return SaveResult(success=True, message="Data credentials saved")
-
-
-@router.post("/start-consent/trading", response_model=ConsentStartResponse)
-async def start_consent_trading() -> ConsentStartResponse:
+@router.post("/start-consent", response_model=ConsentStartResponse)
+async def start_consent() -> ConsentStartResponse:
     store = _get_store()
     assert _oauth is not None
     consent_app_id = await _oauth.generate_consent(
-        api_key=store.trading_api_key,
-        api_secret=store.trading_api_secret,
-        client_id=store.trading_client_id or "",
-        state="trading",
-    )
-    if not consent_app_id:
-        raise HTTPException(
-            status_code=502,
-            detail="Failed to generate consent. Check your API credentials and ensure the OAuth redirect URL is set correctly in the Dhan Developer Portal.",
-        )
-    login_url = _oauth.get_login_url(consent_app_id)
-    return ConsentStartResponse(
-        consent_app_id=consent_app_id,
-        login_url=login_url,
-    )
-
-
-@router.post("/start-consent/data", response_model=ConsentStartResponse)
-async def start_consent_data() -> ConsentStartResponse:
-    store = _get_store()
-    assert _oauth is not None
-    consent_app_id = await _oauth.generate_consent(
-        api_key=store.data_api_key,
-        api_secret=store.data_api_secret,
-        client_id=store.data_client_id or "",
-        state="data",
+        api_key=store.api_key,
+        api_secret=store.api_secret,
+        client_id=store.client_id or "",
     )
     if not consent_app_id:
         raise HTTPException(
@@ -184,85 +133,45 @@ async def start_consent_data() -> ConsentStartResponse:
 @router.get("/dhan/callback", response_model=None)
 async def dhan_callback(tokenId: str, consentAppId: str = "") -> RedirectResponse:
     try:
-        flow_type = _oauth.pop_consent_flow(consentAppId)
-
-        if flow_type is None:
+        known = _oauth.pop_consent_flow(consentAppId)
+        if not known:
             logger.warning("Unknown consent flow for %s", consentAppId)
             return RedirectResponse(url="/static/setup.html?error=unknown_flow")
 
-        if flow_type == "trading":
-            creds = _store
-            result = await _oauth.consume_consent(
-                api_key=creds.trading_api_key,
-                api_secret=creds.trading_api_secret,
-                token_id=tokenId,
+        store = _get_store()
+        result = await _oauth.consume_consent(
+            api_key=store.api_key,
+            api_secret=store.api_secret,
+            token_id=tokenId,
+        )
+        if result:
+            store.update_token(
+                access_token=result.access_token,
+                expiry=result.expiry_time,
+                client_id=result.client_id,
             )
-            if result:
-                _store.update_trading_token(
-                    access_token=result.access_token,
-                    expiry=result.expiry_time,
-                    client_id=result.client_id,
-                )
-                _store.save()
-                return RedirectResponse(url="/static/setup.html?connected=trading")
-            return RedirectResponse(url="/static/setup.html?error=consent_failed")
-
-        if flow_type == "data":
-            creds = _store
-            result = await _oauth.consume_consent(
-                api_key=creds.data_api_key,
-                api_secret=creds.data_api_secret,
-                token_id=tokenId,
-            )
-            if result:
-                _store.update_data_token(
-                    access_token=result.access_token,
-                    expiry=result.expiry_time,
-                    client_id=result.client_id,
-                )
-                _store.save()
-                return RedirectResponse(url="/static/setup.html?connected=data")
-            return RedirectResponse(url="/static/setup.html?error=consent_failed")
-
-        logger.warning("Unexpected flow_type: %s", flow_type)
-        return RedirectResponse(url="/static/setup.html?error=unknown_flow")
+            store.client_name = result.client_name
+            store.save()
+            return RedirectResponse(url="/static/setup.html?connected=true")
+        return RedirectResponse(url="/static/setup.html?error=consent_failed")
 
     except Exception:
         logger.exception("OAuth callback failed")
         return RedirectResponse(url="/static/setup.html?error=server_error")
 
 
-@router.post("/test/trading", response_model=ValidationResultResponse)
-async def test_trading(body: CredentialBody | None = None) -> ValidationResultResponse:
+@router.post("/test", response_model=ValidationResultResponse)
+async def test_credentials(body: CredentialBody | None = None) -> ValidationResultResponse:
     store = _get_store()
     assert _validator is not None
     if body:
         client_id, api_key = _split_combined_key(body.api_key)
         api_secret = body.api_secret
     else:
-        client_id = store.trading_client_id or ""
-        api_key = store.trading_api_key
-        api_secret = store.trading_api_secret
-    result = await _validator.validate_trading(
-        api_key=api_key,
-        api_secret=api_secret,
-        client_id=client_id,
-    )
-    return ValidationResultResponse(valid=result.valid, message=result.message)
-
-
-@router.post("/test/data", response_model=ValidationResultResponse)
-async def test_data(body: CredentialBody | None = None) -> ValidationResultResponse:
-    store = _get_store()
-    assert _validator is not None
-    if body:
-        client_id, api_key = _split_combined_key(body.api_key)
-        api_secret = body.api_secret
-    else:
-        client_id = store.data_client_id or ""
-        api_key = store.data_api_key
-        api_secret = store.data_api_secret
-    result = await _validator.validate_data(
+        client_id = store.client_id or ""
+        api_key = store.api_key
+        api_secret = store.api_secret
+    result = await _validator.validate_credentials(
         api_key=api_key,
         api_secret=api_secret,
         client_id=client_id,
@@ -273,7 +182,6 @@ async def test_data(body: CredentialBody | None = None) -> ValidationResultRespo
 @router.post("/logout", response_model=SaveResult)
 async def logout() -> SaveResult:
     store = _get_store()
-    store.trading_access_token = None
-    store.data_access_token = None
+    store.access_token = None
     store.save()
     return SaveResult(success=True, message="Access tokens cleared")

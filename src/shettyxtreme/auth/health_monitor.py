@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 
 class TokenHealthMonitor:
-    """Periodically checks credential health and publishes status events."""
 
     def __init__(self, credential_store: CredentialStore, event_bus: EventBus) -> None:
         self._credential_store = credential_store
@@ -24,18 +23,15 @@ class TokenHealthMonitor:
         self._running: bool = False
 
     async def start(self) -> None:
-        """Start the background monitoring loop."""
         self._running = True
         self._task = asyncio.create_task(self._monitor_loop())
 
     async def stop(self) -> None:
-        """Stop the background monitoring loop."""
         self._running = False
         if self._task is not None:
             self._task.cancel()
 
     async def _monitor_loop(self) -> None:
-        """Main loop: check health every 5 minutes."""
         try:
             while self._running:
                 await self._check_health()
@@ -44,38 +40,29 @@ class TokenHealthMonitor:
             pass
 
     async def _check_health(self) -> None:
-        """Check both trading and data credential health, publish events."""
         try:
-            trading_expiry = getattr(self._credential_store, "trading_token_expiry", None)
-            data_expiry = getattr(self._credential_store, "data_token_expiry", None)
+            token_expiry = getattr(self._credential_store, "token_expiry", None)
 
-            trading_status, trading_days = self._get_status(trading_expiry, 3600)
-            data_status, data_days = self._get_status(data_expiry, 259200)
+            status, days = self._get_status(token_expiry)
 
             health_data = {
-                "trading_status": trading_status,
-                "data_status": data_status,
-                "trading_expiry": trading_expiry,
-                "data_expiry": data_expiry,
-                "trading_days_to_expiry": trading_days,
-                "data_days_to_expiry": data_days,
+                "status": status,
+                "expiry": token_expiry,
+                "days_to_expiry": days,
             }
 
             await self._event_bus.publish(Event(Topic.CREDENTIAL_HEALTH_CHANGED, health_data, source="health_monitor"))
 
-            for status in (trading_status, data_status):
-                if status in ("EXPIRED", "EXPIRING_SOON"):
-                    await self._event_bus.publish(Event(
-                        Topic.CREDENTIAL_WARNING,
-                        {"message": f"Credential status changed to {status}", "trading_status": trading_status, "data_status": data_status},
-                        source="health_monitor",
-                    ))
-                    break
+            if status in ("EXPIRED", "EXPIRING_SOON"):
+                await self._event_bus.publish(Event(
+                    Topic.CREDENTIAL_WARNING,
+                    {"message": f"Credential status changed to {status}"},
+                    source="health_monitor",
+                ))
         except Exception:
             logger.exception("Health check failed")
 
-    def _get_status(self, token_expiry: str | None, warning_threshold_seconds: int) -> tuple[str, float | None]:
-        """Return (status_string, days_to_expiry) for a token expiry timestamp."""
+    def _get_status(self, token_expiry: str | None) -> tuple[str, float | None]:
         if token_expiry is None:
             return ("UNKNOWN", None)
 
@@ -93,6 +80,6 @@ class TokenHealthMonitor:
 
         if delta.total_seconds() <= 0:
             return ("EXPIRED", days_to_expiry)
-        if delta.total_seconds() <= warning_threshold_seconds:
+        if delta.total_seconds() <= 3600:
             return ("EXPIRING_SOON", days_to_expiry)
         return ("HEALTHY", days_to_expiry)
