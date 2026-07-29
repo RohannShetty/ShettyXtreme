@@ -8,8 +8,8 @@ persists them via TimeSeriesStore.
 import asyncio
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import datetime, timedelta
+from typing import Any
 
 from shettyxtreme.core.data_models import Bar, Tick
 from shettyxtreme.core.event_bus import Event, EventBus, Topic
@@ -23,16 +23,25 @@ TIMEFRAMES = [1, 5, 15, 60]
 class BarBuilderState:
     """In-memory aggregation state for a single symbol+timeframe."""
 
-    __slots__ = ("open_", "high", "low", "close", "volume", "oi",
-                 "period_start", "period_end", "tick_count")
+    __slots__ = (
+        "close",
+        "high",
+        "low",
+        "oi",
+        "open_",
+        "period_end",
+        "period_start",
+        "tick_count",
+        "volume",
+    )
 
     def __init__(self, period_start: datetime, period_end: datetime) -> None:
-        self.open_: Optional[float] = None
+        self.open_: float | None = None
         self.high: float = 0.0
         self.low: float = float("inf")
         self.close: float = 0.0
         self.volume: int = 0
-        self.oi: Optional[int] = None
+        self.oi: int | None = None
         self.period_start = period_start
         self.period_end = period_end
         self.tick_count: int = 0
@@ -94,7 +103,7 @@ class BarBuilder:
         self._ts_store = ts_store
         self._state: dict[str, dict[int, BarBuilderState]] = defaultdict(dict)
         self._running = False
-        self._task: Optional[asyncio.Task[None]] = None
+        self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         """Subscribe to tick events and begin bar aggregation."""

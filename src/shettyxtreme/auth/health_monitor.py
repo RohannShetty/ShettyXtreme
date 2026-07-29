@@ -5,12 +5,11 @@ Checks credential health periodically and publishes events to the bus.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
-
 import logging
+from datetime import UTC, datetime
 
 from shettyxtreme.auth.credential_store import CredentialStore
-from shettyxtreme.core.event_bus.event_bus import EventBus, Event, Topic
+from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
 
 logger = logging.getLogger(__name__)
 
@@ -85,9 +84,9 @@ class TokenHealthMonitor:
         except (ValueError, TypeError):
             return ("UNKNOWN", None)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if expiry_dt.tzinfo is None:
-            expiry_dt = expiry_dt.replace(tzinfo=timezone.utc)
+            expiry_dt = expiry_dt.replace(tzinfo=UTC)
 
         delta = expiry_dt - now
         days_to_expiry = delta.total_seconds() / 86400

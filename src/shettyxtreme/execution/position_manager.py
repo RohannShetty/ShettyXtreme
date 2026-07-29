@@ -13,16 +13,16 @@ the favourable direction (never widens).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from shettyxtreme.intelligence.signals.signal_engine import Signal
 from shettyxtreme.intelligence.risk.cost_model import CostBreakdown, compute_cost
+from shettyxtreme.intelligence.signals.signal_engine import Signal
 
 
 class Action(str, Enum):
@@ -210,7 +210,7 @@ class PositionManager:
     # EOD
     # ------------------------------------------------------------------
     def _is_eod(self, now: datetime | None = None) -> bool:
-        ref = now or datetime.now(timezone.utc)
+        ref = now or datetime.now(UTC)
         hour, minute = (ref.hour, ref.minute)
         try:
             eh, em = int(self.eod_exit_time.split(":")[0]), int(self.eod_exit_time.split(":")[1])

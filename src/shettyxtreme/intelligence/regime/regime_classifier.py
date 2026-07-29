@@ -10,9 +10,7 @@ No Markov chains, no hidden state models.
 """
 from __future__ import annotations
 
-import math
 from enum import Enum
-from typing import Any
 
 
 class Regime(Enum):

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Literal, Callable
+from typing import Literal
 
 StrategyName = Literal[
     "LONG_CALL",

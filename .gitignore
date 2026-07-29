@@ -58,3 +58,7 @@ _*.py
 # Knowledge graph tooling (generated indices)
 .codegraph/
 graphify-out/
+
+# Agent / tool configuration
+.opencode/
+.serena/

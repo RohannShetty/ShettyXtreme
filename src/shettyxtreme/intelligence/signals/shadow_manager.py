@@ -6,8 +6,8 @@ conviction / D / P / G and never enter the global voter registry.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Optional
 
 from shettyxtreme.intelligence.regime import Regime
 from shettyxtreme.intelligence.signals.signal_engine import Vote
@@ -32,8 +32,8 @@ class ShadowManager:
 
     def __init__(self, db_path: str | None = None) -> None:
         self._shadows: dict[str, ShadowFn] = {}
-        self._db_path: Optional[str] = db_path
-        self._conn: Optional[sqlite3.Connection] = None
+        self._db_path: str | None = db_path
+        self._conn: sqlite3.Connection | None = None
         if db_path is not None:
             self._conn = sqlite3.connect(db_path)
             self._conn.row_factory = sqlite3.Row

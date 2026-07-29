@@ -14,10 +14,11 @@ position_manager.py.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
 
 from shettyxtreme.core.interfaces.order_executor import (
@@ -28,7 +29,11 @@ from shettyxtreme.core.interfaces.order_executor import (
     ProductType,
 )
 from shettyxtreme.integration.order_validator import OrderValidator
-from shettyxtreme.intelligence.risk.risk_engine import Portfolio, RiskDecision, RiskEngine
+from shettyxtreme.intelligence.risk.risk_engine import (
+    Portfolio,
+    RiskDecision,
+    RiskEngine,
+)
 from shettyxtreme.intelligence.signals.signal_engine import Signal, SignalDirection
 
 
@@ -48,7 +53,7 @@ class PendingApproval:
     strategy_hint: dict[str, Any]
     timestamp: datetime
     status: str
-    expires_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     order: Order | None = None
 
 
@@ -114,7 +119,7 @@ class ExecutionEngine:
 
     def submit_signal(self, signal: Signal, strategy_hint: dict[str, Any]) -> str:
         """Create a PENDING approval and return its id."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         approval_id = uuid4().hex
         expires_at = now + timedelta(seconds=self._approval_timeout)
         approval = PendingApproval(
@@ -168,7 +173,7 @@ class ExecutionEngine:
 
         Returns the count of newly expired approvals.
         """
-        cutoff = now or datetime.now(timezone.utc)
+        cutoff = now or datetime.now(UTC)
         count = 0
         for approval in self._approvals.values():
             if approval.status != ApprovalStatus.PENDING.value:

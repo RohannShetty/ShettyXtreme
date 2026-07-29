@@ -239,9 +239,7 @@ class AnalyticsEngine:
         max_dd = 0.0
         for p in pnls:
             cum += p
-            if cum > peak:
-                peak = cum
+            peak = max(peak, cum)
             dd = peak - cum
-            if dd > max_dd:
-                max_dd = dd
+            max_dd = max(max_dd, dd)
         return max_dd

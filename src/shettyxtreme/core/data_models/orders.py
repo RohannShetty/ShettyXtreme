@@ -1,15 +1,15 @@
 """Standard order and trade models."""
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
+
 
 @dataclass
 class Order:
     order_id: str; symbol: str; exchange: str; side: str
     order_type: str; quantity: int; price: float; status: str
     filled_quantity: int = 0; average_price: float = 0.0
-    trigger_price: Optional[float] = None; tag: Optional[str] = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    trigger_price: float | None = None; tag: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 @dataclass
 class OrderResult:
@@ -20,7 +20,7 @@ class OrderResult:
 class Fill:
     trade_id: str; order_id: str; symbol: str; exchange: str
     side: str; quantity: int; price: float; timestamp: datetime
-    order_tag: Optional[str] = None
+    order_tag: str | None = None
 
 @dataclass
 class Position:
@@ -31,7 +31,7 @@ class Position:
 class Trade:
     trade_id: str; symbol: str; side: str
     entry_price: float; quantity: int; entry_time: datetime
-    exit_price: Optional[float] = None
-    exit_time: Optional[datetime] = None
-    pnl: Optional[float] = None
-    strategy: Optional[str] = None
+    exit_price: float | None = None
+    exit_time: datetime | None = None
+    pnl: float | None = None
+    strategy: str | None = None

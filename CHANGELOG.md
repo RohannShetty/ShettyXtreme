@@ -1,5 +1,22 @@
 # ShettyXtreme Changelog
 
+## [2026-07-29] - OAuth Redirect Flow + LSP/Git Hygiene
+
+### Added
+- **LSP Config**: `.vscode/settings.json` targeting `.venv\Scripts\python.exe` (Python 3.11), `typeCheckingMode=basic`
+- **Project Standards**: `.python-version`, `.editorconfig`, `[tool.pyright]` in `pyproject.toml`
+
+### Fixed
+- **OAuth Consent Flow**: Replaced `window.open`+polling with direct redirect in `setup.html` — no more wasted consents, no two-tab confusion
+- **Credential Validation**: `validator.py` now uses lightweight format-only checks instead of calling Dhan's `generate-consent` (which consumed consent slots per validation attempt)
+- **Save-Before-Validate**: `setup.html` steps 1 and 2 now test credentials first, save only after successful validation
+- **Error Handling**: `auth_router.py` raises `HTTPException(502)` when `generate_consent` returns `None` instead of failing silently
+- **Dead Code**: Removed unused `ClientIdBody` model, stale polling functions, and `connectingOverlay3` from setup wizard
+- **Tests**: Updated 5 validator tests to match new format-only validation behavior
+
+### Changed
+- **Graphify**: Refreshed knowledge graph — 2441 nodes, 4534 edges, 147 communities
+
 ## [2026-07-22] - Critical Bug Fixes (Wave 7 Handoff)
 
 ### Fixed

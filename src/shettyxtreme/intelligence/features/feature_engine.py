@@ -2,15 +2,12 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict
+from typing import Any
 
-from shettyxtreme.core.event_bus import Event, EventBus, Topic
 from shettyxtreme.core.data_models.market_data import Tick
-
-from shettyxtreme.intelligence.features.indicators import (
-    SMA, EMA, ATR, RSI, ADX, VWAP, Bars,
-)
+from shettyxtreme.core.event_bus import Event, EventBus, Topic
 
 STALE_THRESHOLD_SECONDS = 10.0
 
@@ -24,7 +21,7 @@ class Feature:
 
 @dataclass
 class FeaturesComputed:
-    features: Dict[str, float]
+    features: dict[str, float]
     stale: bool = False
 
 
@@ -32,9 +29,9 @@ class FeatureEngine:
     def __init__(self, event_bus: EventBus, symbol: str = "UNKNOWN") -> None:
         self.event_bus = event_bus
         self.symbol = symbol
-        self._indicators: Dict[str, Any] = {}
-        self._plugins: Dict[str, Callable[[Tick], list[Feature]]] = {}
-        self.features: Dict[str, float] = {}
+        self._indicators: dict[str, Any] = {}
+        self._plugins: dict[str, Callable[[Tick], list[Feature]]] = {}
+        self.features: dict[str, float] = {}
 
     def register(self, name: str, indicator: Any) -> None:
         self._indicators[name] = indicator

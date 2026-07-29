@@ -1,6 +1,7 @@
-from typing import Protocol, runtime_checkable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Protocol, runtime_checkable
+
 
 @dataclass
 class Position:

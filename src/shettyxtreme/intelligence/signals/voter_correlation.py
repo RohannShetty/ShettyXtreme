@@ -7,7 +7,6 @@ Stdlib only — no scipy/pandas.
 from __future__ import annotations
 
 from itertools import combinations
-from typing import Any
 
 from shettyxtreme.intelligence.signals.signal_engine import Vote
 

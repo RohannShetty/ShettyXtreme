@@ -1,6 +1,7 @@
 """Storage manager - unified access to all storage backends."""
 from .kv_store import KVStore
 
+
 class StorageManager:
     def __init__(self, data_dir: str = "data"):
         self.kv = KVStore(f"{data_dir}/shetty_kv.db")

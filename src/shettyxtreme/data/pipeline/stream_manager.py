@@ -7,8 +7,9 @@ publication onto the EventBus.
 
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from shettyxtreme.core.data_models import Tick
 from shettyxtreme.core.event_bus import Event, EventBus, Topic
@@ -45,7 +46,7 @@ class StreamManager:
         self._instruments: dict[str, list[str | int]] = {}
         self._running = False
         self._connected = False
-        self._ws_task: Optional[asyncio.Task[None]] = None
+        self._ws_task: asyncio.Task[None] | None = None
         self._dhanhq_instance: Any = None
 
     # ------------------------------------------------------------------
@@ -179,7 +180,7 @@ class StreamManager:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_tick(raw: dict[str, Any]) -> Optional[Tick]:
+    def _parse_tick(raw: dict[str, Any]) -> Tick | None:
         """Parse a DhanHQ tick dict into a Tick dataclass."""
         if not raw or "security_id" not in raw:
             return None
@@ -194,7 +195,7 @@ class StreamManager:
             exchange=exchange,
             ltp=float(raw.get("ltp", 0)),
             volume=int(raw.get("volume", raw.get("ltq", 0))),
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             bid=float(raw["bid"]) if raw.get("bid") is not None else None,
             ask=float(raw["ask"]) if raw.get("ask") is not None else None,
             open=float(raw["open"]) if raw.get("open") is not None else None,

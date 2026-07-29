@@ -7,7 +7,6 @@ raw conviction when insufficient data is available.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from shettyxtreme.learning.outcome_tracker import OutcomeLabel, SignalDecision
 
@@ -29,7 +28,7 @@ class CalibrationCurve:
     """Binning-based conviction calibration (no scipy dependency)."""
 
     def __init__(self) -> None:
-        self._bins: list[Optional[CalibrationPoint]] = [None] * NUM_BINS
+        self._bins: list[CalibrationPoint | None] = [None] * NUM_BINS
         self._total_fitted: int = 0
 
     def fit(self, decisions: list[SignalDecision]) -> None:

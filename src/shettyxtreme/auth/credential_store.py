@@ -11,7 +11,7 @@ import hashlib
 import json
 import socket
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from cryptography.fernet import Fernet
@@ -74,8 +74,8 @@ class CredentialStore:
             return False
         expiry = datetime.fromisoformat(self.trading_token_expiry)
         if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=timezone.utc)
-        return expiry > datetime.now(timezone.utc)
+            expiry = expiry.replace(tzinfo=UTC)
+        return expiry > datetime.now(UTC)
 
     def is_data_valid(self) -> bool:
         """True when data token exists and has not expired."""
@@ -83,8 +83,8 @@ class CredentialStore:
             return False
         expiry = datetime.fromisoformat(self.data_token_expiry)
         if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=timezone.utc)
-        return expiry > datetime.now(timezone.utc)
+            expiry = expiry.replace(tzinfo=UTC)
+        return expiry > datetime.now(UTC)
 
     def update_trading_token(
         self, access_token: str, expiry: str, client_id: str

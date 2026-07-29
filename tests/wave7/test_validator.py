@@ -1,4 +1,4 @@
-"""Tests for CredentialValidator (read-only credential validation)."""
+"""Tests for CredentialValidator (lightweight format-only validation)."""
 from __future__ import annotations
 
 import asyncio
@@ -12,126 +12,63 @@ from shettyxtreme.auth.validator import CredentialValidator, ValidationResult
 
 
 def test_validate_trading_valid() -> None:
-    """Mock generate-consent returning success, verify valid=True."""
+    """Verify valid=True with OAuth message for well-formed credentials."""
     async def _run() -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"status": "success", "consentAppId": "abc123"}
-
-        with patch("shettyxtreme.auth.validator.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.post = AsyncMock(return_value=mock_resp)
-            mock_client_cls.return_value = mock_client
-
-            validator = CredentialValidator()
-            result = await validator.validate_trading(
-                api_key="test_key", api_secret="test_secret", client_id="123"
-            )
-            assert result.valid is True
-            assert "Trading credentials valid" in result.message
+        validator = CredentialValidator()
+        result = await validator.validate_trading(
+            api_key="test_key", api_secret="test_secret", client_id="123"
+        )
+        assert result.valid is True
+        assert "OAuth consent" in result.message
 
     asyncio.run(_run())
 
 
-def test_validate_trading_invalid() -> None:
-    """Mock generate-consent returning 401, verify valid=False."""
+def test_validate_trading_invalid_empty_key() -> None:
+    """Verify valid=False when credentials are empty."""
     async def _run() -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 401
-        mock_resp.json.return_value = {"error": "invalid_key"}
-        mock_resp.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError(
-            "401", request=MagicMock(), response=mock_resp
-        ))
-
-        with patch("shettyxtreme.auth.validator.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.post = AsyncMock(return_value=mock_resp)
-            mock_client_cls.return_value = mock_client
-
-            validator = CredentialValidator()
-            result = await validator.validate_trading(
-                api_key="bad_key", api_secret="bad_secret", client_id="123"
-            )
-            assert result.valid is False
-            assert "Trading credentials invalid" in result.message
+        validator = CredentialValidator()
+        result = await validator.validate_trading(
+            api_key="", api_secret="test_secret", client_id="123"
+        )
+        assert result.valid is False
 
     asyncio.run(_run())
 
 
-def test_validate_trading_consent_not_granted() -> None:
-    """Mock generate-consent returning 200 but no consentAppId, verify valid=False."""
+def test_validate_trading_invalid_empty_secret() -> None:
+    """Verify valid=False when secret is empty."""
     async def _run() -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"status": "failed"}
-
-        with patch("shettyxtreme.auth.validator.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.post = AsyncMock(return_value=mock_resp)
-            mock_client_cls.return_value = mock_client
-
-            validator = CredentialValidator()
-            result = await validator.validate_trading(
-                api_key="test_key", api_secret="test_secret", client_id="123"
-            )
-            assert result.valid is False
+        validator = CredentialValidator()
+        result = await validator.validate_trading(
+            api_key="test_key", api_secret="", client_id="123"
+        )
+        assert result.valid is False
 
     asyncio.run(_run())
 
 
 def test_validate_data_valid() -> None:
-    """Mock generate-consent returning success for data API, verify valid=True."""
+    """Verify valid=True with OAuth message for well-formed credentials."""
     async def _run() -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"status": "success", "consentAppId": "abc123"}
-
-        with patch("shettyxtreme.auth.validator.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.post = AsyncMock(return_value=mock_resp)
-            mock_client_cls.return_value = mock_client
-
-            validator = CredentialValidator()
-            result = await validator.validate_data(
-                api_key="test_key", api_secret="test_secret", client_id="123"
-            )
-            assert result.valid is True
-            assert "Data credentials valid" in result.message
+        validator = CredentialValidator()
+        result = await validator.validate_data(
+            api_key="test_key", api_secret="test_secret", client_id="123"
+        )
+        assert result.valid is True
+        assert "OAuth consent" in result.message
 
     asyncio.run(_run())
 
 
-def test_validate_data_invalid() -> None:
-    """Mock generate-consent returning 401 for data API, verify valid=False."""
+def test_validate_data_invalid_empty_key() -> None:
+    """Verify valid=False when credentials are empty."""
     async def _run() -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 401
-        mock_resp.json.return_value = {"error": "invalid_key"}
-        mock_resp.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError(
-            "401", request=MagicMock(), response=mock_resp
-        ))
-
-        with patch("shettyxtreme.auth.validator.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.post = AsyncMock(return_value=mock_resp)
-            mock_client_cls.return_value = mock_client
-
-            validator = CredentialValidator()
-            result = await validator.validate_data(
-                api_key="bad_key", api_secret="bad_secret", client_id="123"
-            )
-            assert result.valid is False
-            assert "Data credentials invalid" in result.message
+        validator = CredentialValidator()
+        result = await validator.validate_data(
+            api_key="", api_secret="test_secret", client_id="123"
+        )
+        assert result.valid is False
 
     asyncio.run(_run())
 

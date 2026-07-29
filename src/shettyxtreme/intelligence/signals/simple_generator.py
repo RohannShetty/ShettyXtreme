@@ -2,10 +2,12 @@
 """SimpleSignalGenerator — combines scanner outputs into tradable signals."""
 
 from __future__ import annotations
+
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
+
 from shettyxtreme.core.event_bus import Event, EventBus, Topic
 
 logger = logging.getLogger(__name__)
@@ -20,7 +22,7 @@ class Signal:
     strength: float
     source: str
     reasoning: str
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -83,7 +85,7 @@ class SimpleSignalGenerator:
     ) -> list[Signal]:
         """Process scanner outputs and emit signals for qualifying results."""
         signals: list[Signal] = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         for scanner_name, results in scanner_results.items():
             for result in results:

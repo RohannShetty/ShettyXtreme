@@ -7,7 +7,6 @@ stops from realized behavior rather than guesswork.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -49,16 +48,14 @@ class MfeMaeCalculator:
             favorable = entry_price - ltp
             adverse = ltp - entry_price
 
-        if favorable > self._mfe[signal_id]:
-            self._mfe[signal_id] = favorable
-        if adverse > self._mae[signal_id]:
-            self._mae[signal_id] = adverse
+        self._mfe[signal_id] = max(self._mfe[signal_id], favorable)
+        self._mae[signal_id] = max(self._mae[signal_id], adverse)
 
-    def get_mfe(self, signal_id: str) -> Optional[float]:
+    def get_mfe(self, signal_id: str) -> float | None:
         """Return MFE for a signal, or None if untracked."""
         return self._mfe.get(signal_id)
 
-    def get_mae(self, signal_id: str) -> Optional[float]:
+    def get_mae(self, signal_id: str) -> float | None:
         """Return MAE for a signal, or None if untracked."""
         return self._mae.get(signal_id)
 

@@ -1,7 +1,9 @@
 from typing import Protocol, runtime_checkable
-from .order_executor import OrderExecutor
-from .market_data_stream import MarketDataStream
+
 from .account_info import AccountInfo
+from .market_data_stream import MarketDataStream
+from .order_executor import OrderExecutor
+
 
 @runtime_checkable
 class BrokerGateway(OrderExecutor, MarketDataStream, AccountInfo, Protocol):

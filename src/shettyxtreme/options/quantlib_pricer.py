@@ -34,6 +34,19 @@ try:
 except ImportError as e:
     _quantlib_import_error = e
 
+NSE_CALENDAR = _NSE_CALENDAR
+
+DAY_COUNT = _DAY_COUNT
+
+BUSINESS_DAY_CONVENTION = _BUSINESS_DAY_CONVENTION
+
+
+def _to_ql_date(d: date) -> object:
+    """Convert a Python date to a QuantLib date."""
+    if _ql is None:
+        raise ImportError("QuantLib is required for _to_ql_date")
+    return _ql.Date(d.day, d.month, d.year)
+
 
 class QuantLibPricer:
     """Advanced options pricer using QuantLib for Indian markets.
@@ -55,7 +68,7 @@ class QuantLibPricer:
         self._bdc = _BUSINESS_DAY_CONVENTION
 
     def _to_ql_date(self, d: date) -> object:
-        return self._ql.Date(d.day, d.month, d.year)
+        return _to_ql_date(d)
 
     def _to_python_date(self, d: object) -> date:
         return date(d.year(), d.month(), d.day())

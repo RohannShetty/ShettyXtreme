@@ -57,6 +57,6 @@ class TestBarBuilder:
         bb = BarBuilder(event_bus=eb, ts_store=None)
         task = asyncio.create_task(bb.start())
         await asyncio.sleep(0.05)
-        bb.stop()
+        await bb.stop()
         await task
         assert True

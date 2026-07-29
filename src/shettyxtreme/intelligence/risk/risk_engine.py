@@ -8,10 +8,10 @@ Key design:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Protocol
 
 from shettyxtreme.core.data_models import Position
-from shettyxtreme.intelligence.signals.signal_engine import Signal, SignalDirection
+from shettyxtreme.intelligence.signals.signal_engine import Signal
 
 
 # ---------------------------------------------------------------------------
@@ -36,14 +36,14 @@ class RiskDecision:
     reason: str
     filter_name: str = ""
 
-    ALLOW: "RiskDecision" = None  # type: ignore
+    ALLOW: RiskDecision = None  # type: ignore
 
     @staticmethod
-    def allow(filter_name: str = "") -> "RiskDecision":
+    def allow(filter_name: str = "") -> RiskDecision:
         return RiskDecision(allowed=True, reason="", filter_name=filter_name)
 
     @staticmethod
-    def reject(reason: str, filter_name: str = "") -> "RiskDecision":
+    def reject(reason: str, filter_name: str = "") -> RiskDecision:
         return RiskDecision(allowed=False, reason=reason, filter_name=filter_name)
 
 

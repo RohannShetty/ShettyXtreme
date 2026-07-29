@@ -6,7 +6,7 @@ that the FastAPI router endpoints read from.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
@@ -183,7 +183,7 @@ class IntelligenceProjection:
             "P": 0.0,
             "G": 0.0,
             "voters": [],
-            "timestamp": datetime.now(timezone.utc),
+            "timestamp": datetime.now(UTC),
         }
 
     def on_regime_changed(self, event: Event) -> None:
@@ -233,7 +233,7 @@ class HealthProjection:
     def get(self) -> dict[str, Any]:
         import time
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         components: list[dict[str, Any]] = []
 
         # EventBus

@@ -25,7 +25,6 @@ class Bars:
             self._low = min(self._low, price)  # type: ignore[arg-type]
         self._close = price
         self._volume += tick.volume if tick.volume else 0
-        return None
 
     @property
     def value(self) -> None:

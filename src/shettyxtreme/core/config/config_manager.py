@@ -4,10 +4,11 @@ Pattern: Load config.yaml -> override with env vars -> validate with pydantic.
 Secrets from env vars only, never from config files committed to git.
 """
 import os
-import yaml
+from dataclasses import dataclass
 from pathlib import Path
-from dataclasses import dataclass, field
-from typing import Optional
+
+import yaml
+
 
 @dataclass
 class Config:
@@ -22,8 +23,8 @@ class Config:
     log_dir: str = "logs"
 
     # Broker credentials (loaded from env)
-    dhan_client_id: Optional[str] = None
-    dhan_access_token: Optional[str] = None
+    dhan_client_id: str | None = None
+    dhan_access_token: str | None = None
 
     # Dhan dual-path credentials (trading + data, separate to avoid error 806)
     dhan_trading_client_id: str | None = None
@@ -32,7 +33,7 @@ class Config:
     dhan_data_client_id: str | None = None
 
 class ConfigManager:
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: str | None = None):
         self._config = Config()
         if config_path:
             self._load_yaml(config_path)

@@ -18,7 +18,6 @@ from dhanhq import DhanContext
 from dhanhq import dhanhq as DhanHQClient
 
 from shettyxtreme.core.interfaces.account_info import (
-    AccountInfo,
     Holding,
     OrderBook,
     Position,
@@ -26,7 +25,6 @@ from shettyxtreme.core.interfaces.account_info import (
 from shettyxtreme.core.interfaces.order_executor import (
     Order,
     OrderResult,
-    OrderSide,
     OrderStatus,
     OrderType,
     ProductType,

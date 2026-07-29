@@ -19,15 +19,12 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from dhanhq import DhanContext
+from dhanhq import DhanContext, MarketFeed
 from dhanhq import dhanhq as DhanHQClient
-from dhanhq import MarketFeed
 
-from shettyxtreme.core.interfaces.data_provider import DataProvider
 from shettyxtreme.core.interfaces.market_data_stream import (
     Bar,
     BarCallback,
-    MarketDataStream,
     Tick,
     TickCallback,
 )

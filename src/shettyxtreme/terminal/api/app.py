@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from shettyxtreme.auth.credential_store import CredentialStore
@@ -26,13 +26,15 @@ from shettyxtreme.core.storage.time_series_store import TimeSeriesStore
 from shettyxtreme.data.ingestion import IngestionPipeline
 from shettyxtreme.integration.dhan.data_adapter import DhanDataAdapter
 from shettyxtreme.integration.dhan.trading_adapter import DhanTradingAdapter
-from shettyxtreme.terminal.api.auth_router import init_auth, router as auth_router
+from shettyxtreme.terminal.api.auth_router import init_auth
+from shettyxtreme.terminal.api.auth_router import router as auth_router
 from shettyxtreme.terminal.api.execution_router import router as execution_router
 from shettyxtreme.terminal.api.health_router import router as health_router
 from shettyxtreme.terminal.api.intelligence_router import router as intelligence_router
 from shettyxtreme.terminal.api.postback_router import router as postback_router
 from shettyxtreme.terminal.api.scanner_router import router as scanner_router
-from shettyxtreme.terminal.api.settings_router import init_settings, router as settings_router
+from shettyxtreme.terminal.api.settings_router import init_settings
+from shettyxtreme.terminal.api.settings_router import router as settings_router
 from shettyxtreme.terminal.api.watchlist_router import router as watchlist_router
 from shettyxtreme.terminal.api.ws_manager import WebSocketManager
 from shettyxtreme.terminal.projections import (
@@ -184,7 +186,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="ShettyXtreme Terminal",
-    version="0.3.0",
+    version="0.6.0",
     lifespan=lifespan,
 )
 

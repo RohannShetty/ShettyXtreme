@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import time
-from typing import Optional
 
 from shettyxtreme.intelligence.risk.cost_model import compute_cost
 from shettyxtreme.learning.outcome_tracker import SignalDecision
@@ -33,7 +32,7 @@ class WalkforwardResult:
 class WalkforwardEvaluator:
     """Evaluate signal decisions against premium entry/exit prices."""
 
-    def __init__(self, config: Optional[dict] = None) -> None:
+    def __init__(self, config: dict | None = None) -> None:
         cfg = config or {}
         self.tp1 = float(cfg.get("tp1", 0.30))
         self.tp2 = float(cfg.get("tp2", 0.60))
@@ -158,9 +157,7 @@ class WalkforwardEvaluator:
         max_dd = 0.0
         for p in pnls:
             cum += p
-            if cum > peak:
-                peak = cum
+            peak = max(peak, cum)
             dd = peak - cum
-            if dd > max_dd:
-                max_dd = dd
+            max_dd = max(max_dd, dd)
         return max_dd

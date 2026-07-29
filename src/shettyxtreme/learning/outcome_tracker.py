@@ -11,7 +11,6 @@ import sqlite3
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from enum import Enum
-from typing import Any
 from uuid import uuid4
 
 from shettyxtreme.core.data_models.orders import Order

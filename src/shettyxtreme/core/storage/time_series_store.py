@@ -1,7 +1,7 @@
 """Time-series store for market data (bars, ticks)."""
-from pathlib import Path
-from typing import Optional
 from datetime import datetime
+from pathlib import Path
+
 try:
     import duckdb
     _DUCKDB_AVAILABLE = True
@@ -50,7 +50,7 @@ class TimeSeriesStore:
     
     def write_bar(self, symbol: str, exchange: str, timeframe: str,
                   open_: float, high: float, low: float, close: float,
-                  volume: int, timestamp: datetime, oi: Optional[int] = None):
+                  volume: int, timestamp: datetime, oi: int | None = None):
         self._conn.execute(
             "INSERT INTO bars VALUES (nextval('bar_id_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (symbol, exchange, timeframe, open_, high, low, close, volume, timestamp, oi)

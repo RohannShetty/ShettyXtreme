@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from statistics import mean
 from typing import Any
 
@@ -96,7 +96,7 @@ class PriceBreakoutScanner:
         avg_volume = int(mean(b.volume for b in window)) if window else 0
 
         results: list[dict[str, Any]] = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if resistance > 0:
             breakout_pct = ((current_bar.close - resistance) / resistance) * 100.0

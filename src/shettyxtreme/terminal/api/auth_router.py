@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
@@ -74,10 +73,6 @@ def _split_combined_key(api_key: str) -> tuple[str, str]:
         client_id, _, key = api_key.partition(":::")
         return client_id.strip(), key.strip()
     return "", api_key.strip()
-
-
-class ClientIdBody(BaseModel):
-    client_id: str
 
 
 class ValidationResultResponse(BaseModel):
@@ -152,9 +147,14 @@ async def start_consent_trading() -> ConsentStartResponse:
         client_id=store.trading_client_id or "",
         state="trading",
     )
-    login_url = _oauth.get_login_url(consent_app_id or "")
+    if not consent_app_id:
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to generate consent. Check your API credentials and ensure the OAuth redirect URL is set correctly in the Dhan Developer Portal.",
+        )
+    login_url = _oauth.get_login_url(consent_app_id)
     return ConsentStartResponse(
-        consent_app_id=consent_app_id or "",
+        consent_app_id=consent_app_id,
         login_url=login_url,
     )
 
@@ -169,9 +169,14 @@ async def start_consent_data() -> ConsentStartResponse:
         client_id=store.data_client_id or "",
         state="data",
     )
-    login_url = _oauth.get_login_url(consent_app_id or "")
+    if not consent_app_id:
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to generate consent. Check your API credentials and ensure the OAuth redirect URL is set correctly in the Dhan Developer Portal.",
+        )
+    login_url = _oauth.get_login_url(consent_app_id)
     return ConsentStartResponse(
-        consent_app_id=consent_app_id or "",
+        consent_app_id=consent_app_id,
         login_url=login_url,
     )
 
@@ -222,7 +227,7 @@ async def dhan_callback(tokenId: str, consentAppId: str = "") -> RedirectRespons
         logger.warning("Unexpected flow_type: %s", flow_type)
         return RedirectResponse(url="/static/setup.html?error=unknown_flow")
 
-    except Exception as exc:
+    except Exception:
         logger.exception("OAuth callback failed")
         return RedirectResponse(url="/static/setup.html?error=server_error")
 

@@ -6,8 +6,6 @@ messages on invalid combinations.
 """
 from __future__ import annotations
 
-from typing import Any
-
 from shettyxtreme.core.interfaces.order_executor import (
     Order,
     OrderSide,

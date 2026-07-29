@@ -1,4 +1,5 @@
-from typing import Protocol, runtime_checkable, Generic, TypeVar, Any
+from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
+
 Q = TypeVar("Q"); D = TypeVar("D")
 
 @runtime_checkable

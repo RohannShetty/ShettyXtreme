@@ -2,7 +2,8 @@
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
+
 
 class KVStore:
     def __init__(self, db_path: str = "data/shetty_kv.db"):

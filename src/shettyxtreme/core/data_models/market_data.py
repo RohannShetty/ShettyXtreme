@@ -1,20 +1,19 @@
 """Standard market data models."""
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
-from typing import Optional
+
 
 @dataclass
 class Bar:
     symbol: str; exchange: str; timeframe: str
     open: float; high: float; low: float; close: float; volume: int
-    timestamp: datetime; oi: Optional[int] = None
+    timestamp: datetime; oi: int | None = None
 
 @dataclass
 class Tick:
     symbol: str; exchange: str; ltp: float; volume: int
-    timestamp: datetime; bid: Optional[float] = None; ask: Optional[float] = None
-    open: Optional[float] = None; high: Optional[float] = None; low: Optional[float] = None; close: Optional[float] = None
+    timestamp: datetime; bid: float | None = None; ask: float | None = None
+    open: float | None = None; high: float | None = None; low: float | None = None; close: float | None = None
 
 @dataclass
 class Quote:

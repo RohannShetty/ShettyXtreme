@@ -9,10 +9,7 @@ Optionally uses QuantLib for advanced pricing when use_quantlib=True.
 from __future__ import annotations
 
 import math
-from typing import Literal, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .quantlib_pricer import QuantLibPricer
+from typing import Literal
 
 OptionType = Literal["CALL", "PUT"]
 

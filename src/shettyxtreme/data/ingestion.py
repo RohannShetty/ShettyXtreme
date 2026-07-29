@@ -6,7 +6,7 @@ storage, and event bus into a unified ingestion lifecycle.
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from shettyxtreme.core.event_bus import EventBus
 from shettyxtreme.core.storage.time_series_store import TimeSeriesStore
@@ -42,7 +42,7 @@ class IngestionPipeline:
         )
         self._bar_builder = BarBuilder(event_bus=event_bus, ts_store=ts_store)
         self._running = False
-        self._event_bus_task: Optional[asyncio.Task[None]] = None
+        self._event_bus_task: asyncio.Task[None] | None = None
 
     async def start(self, symbols: list[str]) -> None:
         """Start the full data pipeline.

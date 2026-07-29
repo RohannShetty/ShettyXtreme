@@ -1,9 +1,8 @@
 """Settings router for credential management UI."""
 from __future__ import annotations
 
-from pydantic import BaseModel
-
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from shettyxtreme.auth.credential_store import CredentialStore
 from shettyxtreme.auth.dhan_oauth import DhanOAuthHelper

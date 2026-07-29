@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from shettyxtreme.core.data_models import Bar
@@ -81,7 +81,7 @@ class GapScanner:
     ) -> list[dict[str, Any]]:
         """Detect gaps between consecutive bars."""
         results: list[dict[str, Any]] = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if len(history) < 2:
             return results

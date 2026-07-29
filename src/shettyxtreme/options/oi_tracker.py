@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from shettyxtreme.core.event_bus import Event, EventBus, Topic
@@ -24,7 +24,7 @@ class OISnapshot:
     strike: float
     option_type: str  # "CE" or "PE"
     oi: int
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass
@@ -39,7 +39,7 @@ class OIAlert:
     current_oi: int
     previous_oi: int
     significance: str  # "HIGH", "MEDIUM", "LOW"
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class OITracker:

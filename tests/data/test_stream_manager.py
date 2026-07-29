@@ -22,7 +22,7 @@ class TestStreamManager:
         sm = StreamManager(event_bus=eb)
         task = asyncio.create_task(eb.start())
         await asyncio.sleep(0.05)
-        sm.disconnect()
+        await sm.disconnect()
         await eb.stop()
         await task
         assert True

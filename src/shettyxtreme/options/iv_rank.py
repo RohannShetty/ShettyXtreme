@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 IVClassification = Literal["LOW", "NORMAL", "HIGH"]
@@ -25,7 +25,7 @@ class IVSnapshot:
     strike: float = 0.0
     expiry: str = ""
     option_type: str = ""
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass

@@ -5,10 +5,11 @@ orders, and risk events flow through this bus.
 """
 import asyncio
 import logging
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Callable, Coroutine, Optional
+from datetime import UTC, datetime
 from enum import Enum
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +38,8 @@ class Event:
     topic: Topic
     data: Any
     source: str = "system"
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    metadata: Optional[dict] = None
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+    metadata: dict | None = None
 
 EventHandler = Callable[[Event], Coroutine[Any, Any, None]]
 

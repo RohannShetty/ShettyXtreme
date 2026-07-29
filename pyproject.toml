@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shettyxtreme"
-version = "0.1.0"
+version = "0.6.0"
 description = "Unified Indian-market trading intelligence and execution platform"
 requires-python = ">=3.11"
 authors = [{name = "Rohan Shetty", email = "shettyrohan2@gmail.com"}]
@@ -46,3 +46,10 @@ include = ["shettyxtreme*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+
+[tool.pyright]
+typeCheckingMode = "basic"
+include = ["src"]
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"

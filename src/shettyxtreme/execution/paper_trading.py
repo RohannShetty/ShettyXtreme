@@ -8,11 +8,12 @@ Tick event arrives. No real broker or exchange is contacted.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
-from shettyxtreme.core.data_models.orders import Order, OrderResult, Fill, Position
-from shettyxtreme.core.event_bus import EventBus, Event, Topic
+from shettyxtreme.core.data_models.orders import Fill, Order, OrderResult, Position
+from shettyxtreme.core.event_bus import Event, EventBus, Topic
+
 
 class PaperTradingEngine:
     """In-memory paper trading engine that simulates order execution.
@@ -50,7 +51,7 @@ class PaperTradingEngine:
             await self._emit_order_rejected(result, symbol)
             return result
         order_id = self._next_order_id()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         order = Order(
             order_id=order_id, symbol=symbol.upper(), exchange=exchange.upper(),
             side=side.upper(), order_type=order_type.upper(), quantity=quantity,
@@ -136,14 +137,10 @@ class PaperTradingEngine:
             if order.symbol != symbol:
                 continue
             if order.order_type == "LIMIT":
-                if order.side == "BUY" and ltp <= order.price:
-                    to_fill.append(oid)
-                elif order.side == "SELL" and ltp >= order.price:
+                if order.side == "BUY" and ltp <= order.price or order.side == "SELL" and ltp >= order.price:
                     to_fill.append(oid)
             elif order.order_type == "SL" and order.trigger_price is not None:
-                if order.side == "BUY" and ltp >= order.trigger_price:
-                    to_fill.append(oid)
-                elif order.side == "SELL" and ltp <= order.trigger_price:
+                if order.side == "BUY" and ltp >= order.trigger_price or order.side == "SELL" and ltp <= order.trigger_price:
                     to_fill.append(oid)
         for oid in to_fill:
             order = self._pending_orders.pop(oid, None)
@@ -156,7 +153,7 @@ class PaperTradingEngine:
         order.status = "FILLED"
         order.filled_quantity = order.quantity
         order.average_price = order.price
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self._trade_seq += 1
         fill = Fill(
             trade_id=f"TRADE{self._trade_seq:06d}",

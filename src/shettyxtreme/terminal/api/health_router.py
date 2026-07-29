@@ -1,7 +1,7 @@
 """Health router — component health check and market session status."""
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Request
 
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/health", tags=["health"])
 
 def _get_ist_time() -> tuple[datetime, str]:
     """Return current IST time and ISO string."""
-    utc_now = datetime.now(timezone.utc)
+    utc_now = datetime.now(UTC)
     ist = utc_now + timedelta(hours=5, minutes=30)
     return ist, ist.isoformat()
 

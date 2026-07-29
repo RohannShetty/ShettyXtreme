@@ -1,11 +1,11 @@
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from datetime import UTC, datetime
 from enum import Enum
-from datetime import datetime, timezone
 
-from shettyxtreme.core.data_models.market_data import Tick
 from shettyxtreme.intelligence.features.feature_engine import FeatureEngine
+
 
 class SignalDirection(Enum):
     UP = "up"
@@ -23,8 +23,8 @@ class Vote:
 class Signal:
     direction: SignalDirection
     conviction: float
-    voters: List[Vote]
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    voters: list[Vote]
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 class VoterRegistry:
     def register(self, name, fn, weight=1.0): pass
@@ -41,10 +41,10 @@ def get_registry(): return VoterRegistry()
 class SignalEngine:
     def __init__(self, feature_engine: FeatureEngine, **kwargs) -> None:
         self.feature_engine = feature_engine
-        self.voters: Dict[str, Callable[[Dict[str, float]], Vote]] = {}
-        self.voter_weights: Dict[str, float] = {}
+        self.voters: dict[str, Callable[[dict[str, float]], Vote]] = {}
+        self.voter_weights: dict[str, float] = {}
 
-    def register_voter(self, name: str, voter: Callable[[Dict[str, float]], Vote], weight: float = 1.0) -> None:
+    def register_voter(self, name: str, voter: Callable[[dict[str, float]], Vote], weight: float = 1.0) -> None:
         self.voters[name] = voter
         self.voter_weights[name] = weight
 
