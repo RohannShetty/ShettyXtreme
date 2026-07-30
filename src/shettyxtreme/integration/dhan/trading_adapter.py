@@ -14,6 +14,9 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import asyncio
+from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
+
 from dhanhq import DhanContext
 from dhanhq import dhanhq as DhanHQClient
 
@@ -129,12 +132,14 @@ class DhanTradingAdapter:
 
     broker_name: str = "dhan-trading"
 
-    def __init__(self, client_id: str, access_token: str) -> None:
+    def __init__(self, client_id: str, access_token: str, event_bus: EventBus | None = None) -> None:
         self._client_id: str = client_id
         self._access_token: str = access_token
         self._session: SessionHealth = SessionHealth(client_id, access_token)
         self._dhan: DhanHQClient | None = None
         self._connected: bool = False
+        self._event_bus: EventBus | None = event_bus
+        self._position_poll_task: asyncio.Task | None = None
         self._init_client()
 
     def _init_client(self) -> None:
@@ -175,6 +180,53 @@ class DhanTradingAdapter:
         """Force a session refresh (re-authenticate)."""
         self._session.refresh()
         self._init_client()
+
+    # ---- Position polling ----
+
+    async def start_position_poll(self, every_seconds: float = 5.0) -> None:
+        """Start periodic position polling and publish POSITION_CHANGED events."""
+        if self._position_poll_task is not None and not self._position_poll_task.done():
+            # Already polling
+            return
+
+        async def _poll_positions() -> None:
+            while True:
+                try:
+                    positions = await self.get_positions()
+                    for pos in positions:
+                        # Map Dhan fields to generic position update dict
+                        pos_dict = {
+                            "symbol": pos.symbol,
+                            "exchange": pos.exchange,
+                            "quantity": pos.net_quantity,
+                            "buy_avg": pos.buy_avg,
+                            "net_quantity": pos.net_quantity,
+                            "m2m": pos.m2m,
+                            "pnl": pos.pnl,
+                            "product": pos.product,
+                        }
+                        if self._event_bus:
+                            try:
+                                await self._event_bus.publish(
+                                    Event(Topic.POSITION_CHANGED, pos_dict, source="trading_adapter")
+                                )
+                            except Exception:
+                                pass
+                except Exception as e:
+                    logger.error("Position poll error: %s", e)
+                await asyncio.sleep(every_seconds)
+
+        self._position_poll_task = asyncio.create_task(_poll_positions())
+
+    async def stop_position_poll(self) -> None:
+        """Stop the periodic position polling."""
+        if self._position_poll_task is not None:
+            self._position_poll_task.cancel()
+            try:
+                await self._position_poll_task
+            except asyncio.CancelledError:
+                pass
+            self._position_poll_task = None
 
     # ---- OrderExecutor protocol ----
 

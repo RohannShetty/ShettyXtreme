@@ -31,7 +31,12 @@ from shettyxtreme.terminal.api.auth_router import router as auth_router
 from shettyxtreme.terminal.api.execution_router import router as execution_router
 from shettyxtreme.terminal.api.health_router import router as health_router
 from shettyxtreme.terminal.api.intelligence_router import router as intelligence_router
-from shettyxtreme.terminal.api.postback_router import router as postback_router
+from shettyxtreme.intelligence.regime.bus_bridge import RegimeBusBridge
+from shettyxtreme.intelligence.risk.bus_bridge import RiskBusBridge
+from shettyxtreme.terminal.api import postback_router
+from shettyxtreme.terminal.api import ws_bridge
+from shettyxtreme.terminal.api.scanner_data import GapDetector, LogCollector, ClusterDetector
+from shettyxtreme.terminal.api.scanner_router import init_scanner_data
 from shettyxtreme.terminal.api.scanner_router import router as scanner_router
 from shettyxtreme.terminal.api.settings_router import init_settings
 from shettyxtreme.terminal.api.settings_router import router as settings_router
@@ -49,6 +54,7 @@ from shettyxtreme.terminal.projections import (
 logger = logging.getLogger(__name__)
 
 ws_manager = WebSocketManager()
+ws_bridge.configure(ws_manager)
 _event_bus: EventBus | None = None
 _event_bus_task: asyncio.Task | None = None
 _health_monitor: TokenHealthMonitor | None = None
@@ -71,6 +77,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     _event_bus = EventBus()
     _event_bus_task = asyncio.create_task(_event_bus.start())
+    postback_router.set_event_bus(_event_bus)
     _health_monitor = TokenHealthMonitor(store, _event_bus)
     await _health_monitor.start()
 
@@ -87,6 +94,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     risk_proj.subscribe(_event_bus)
     alert_proj.subscribe(_event_bus)
     intel_proj.subscribe(_event_bus)
+    health_proj.subscribe(_event_bus)
+
+    # ── Scanner data pipeline ────────────────────────────────────────────────
+    gap_det = GapDetector()
+    log_col = LogCollector()
+    cluster_det = ClusterDetector()
+    gap_det.subscribe(_event_bus)
+    log_col.subscribe(_event_bus)
+    cluster_det.subscribe(_event_bus)
+    init_scanner_data(gap_det, log_col, cluster_det)
+
+    # ── Regime & Risk EventBus bridges ──────────────────────────────────────
+    regime_bridge = RegimeBusBridge(_event_bus)
+    risk_bridge = RiskBusBridge(_event_bus)
+    await regime_bridge.start()
+    await risk_bridge.start()
 
     # Store adapters and pipeline on app.state for router access
     app.state.trading_adapter = None
@@ -102,7 +125,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.intelligence_projection = intel_proj
     app.state.health_projection = health_proj
 
-    # Only proceed with Dhan adapters if credentials are valid
+    # ── Seed watchlist from YAML FIRST (before pipeline needs it) ───────────
+    watchlist_path = Path(__file__).resolve().parent.parent.parent.parent.parent / "configs" / "default_watchlist.yaml"
+    if watchlist_path.exists():
+        import yaml
+        with open(watchlist_path, "r") as f:
+            watchlist_data = yaml.safe_load(f)
+        for idx in watchlist_data.get("default_watchlist", {}).get("indices", []):
+            sec_id = idx["security_id"]
+            exchange = idx.get("exchange", "NSE_FNO")
+            watchlist_proj.add(str(sec_id), exchange)
+        logger.info(
+            "Default watchlist seeded with %d instruments",
+            len(watchlist_data.get("default_watchlist", {}).get("indices", [])),
+        )
+    else:
+        logger.warning("Default watchlist not found at %s", watchlist_path)
+
+    # ── Initialize Dhan adapters and start data pipeline ─────────────────────
     if store.is_token_valid():
         try:
             _trading_adapter = DhanTradingAdapter(
@@ -122,40 +162,36 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             app.state.data_adapter = _data_adapter
             logger.info("DhanDataAdapter initialized")
 
-            ts_store = TimeSeriesStore()
-            _ingestion_pipeline = IngestionPipeline(
-                event_bus=_event_bus,
-                ts_store=ts_store,
-                dhan_client_id=store.client_id,
-                dhan_access_token=store.access_token,
-                exchange="NSE",
-            )
-            app.state.ingestion_pipeline = _ingestion_pipeline
-
+            # Group watchlist symbols by exchange for correct MarketFeed subscription
             watchlist_data_proj = watchlist_proj.get()
             if watchlist_data_proj:
-                symbols = list(watchlist_data_proj.keys())
-                await _ingestion_pipeline.start(symbols)
-                logger.info("IngestionPipeline started with symbols: %s", symbols)
+                # Group symbols by their exchange segment
+                exchange_groups: dict[str, list[str]] = {}
+                for sym, info in watchlist_data_proj.items():
+                    exch = info.get("exchange", "NSE_FNO")
+                    # Map exchange names to Dhan feed segments
+                    feed_segment = {"NSE_FNO": "NSE_FNO", "NSE": "NSE_EQ", "BSE": "BSE_EQ"}.get(exch, exch)
+                    exchange_groups.setdefault(feed_segment, []).append(sym)
+
+                ts_store = TimeSeriesStore()
+                # Start one pipeline per exchange segment
+                for feed_segment, symbols in exchange_groups.items():
+                    # Map feed segment back to exchange name for IngestionPipeline
+                    pipeline_exchange = {"NSE_FNO": "NFO", "NSE_EQ": "NSE", "BSE_EQ": "BSE"}.get(feed_segment, "NSE")
+                    _ingestion_pipeline = IngestionPipeline(
+                        event_bus=_event_bus,
+                        ts_store=ts_store,
+                        dhan_client_id=store.client_id,
+                        dhan_access_token=store.access_token,
+                        exchange=pipeline_exchange,
+                    )
+                    app.state.ingestion_pipeline = _ingestion_pipeline
+                    await _ingestion_pipeline.start(symbols)
+                    logger.info("IngestionPipeline started for %s with symbols: %s", feed_segment, symbols)
+            else:
+                logger.warning("Watchlist empty — pipeline not started")
         except Exception as exc:
             logger.error("Failed to initialize DhanDataAdapter or IngestionPipeline: %s", exc)
-
-    # Seed watchlist projection from default_watchlist.yaml regardless of credentials
-    watchlist_path = Path(__file__).resolve().parent.parent.parent.parent.parent / "configs" / "default_watchlist.yaml"
-    if watchlist_path.exists():
-        import yaml
-        with open(watchlist_path, "r") as f:
-            watchlist_data = yaml.safe_load(f)
-        for idx in watchlist_data.get("default_watchlist", {}).get("indices", []):
-            sec_id = idx["security_id"]
-            exchange = idx.get("exchange", "NSE_FNO")
-            watchlist_proj.add(str(sec_id), exchange)
-        logger.info(
-            "Default watchlist seeded with %d instruments",
-            len(watchlist_data.get("default_watchlist", {}).get("indices", [])),
-        )
-    else:
-        logger.warning("Default watchlist not found at %s", watchlist_path)
 
     # Configure HealthProjection with actual adapter references
     health_proj.configure(
@@ -167,6 +203,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
     logger.info("ShettyXtreme Terminal shutting down...")
+    await regime_bridge.stop()
+    await risk_bridge.stop()
     if _ingestion_pipeline:
         await _ingestion_pipeline.stop()
     if _data_adapter:
@@ -201,6 +239,11 @@ _static_dir = Path(__file__).resolve().parent.parent / "static"
 if _static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
+# ── Settings redirect (before settings_router include) ──────────────────────
+@app.get("/settings")
+async def settings_redirect():
+    return RedirectResponse(url="/static/settings.html")
+
 # ── Include routers ────────────────────────────────────────────────────────
 app.include_router(watchlist_router)
 app.include_router(intelligence_router)
@@ -208,7 +251,7 @@ app.include_router(execution_router)
 app.include_router(scanner_router)
 app.include_router(health_router)
 app.include_router(auth_router)
-app.include_router(postback_router)
+app.include_router(postback_router.router)
 app.include_router(settings_router)
 
 

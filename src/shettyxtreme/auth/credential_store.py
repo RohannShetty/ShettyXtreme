@@ -61,11 +61,30 @@ class CredentialStore:
             store.api_secret = data.get("trading_api_secret", "")
             store.access_token = data.get("trading_access_token")
             store.token_expiry = data.get("trading_token_expiry")
-            store.client_id = data.get("trading_client_id")
+            store.client_id = data.get("trading_client_id") or CredentialStore._extract_client_id_from_token(store.access_token)
             store.client_name = data.get("client_name")
             store.save()
             return store
-        return CredentialStore(**data)
+        store = CredentialStore(**data)
+        # Auto-extract client_id from JWT if missing
+        if not store.client_id and store.access_token:
+            store.client_id = CredentialStore._extract_client_id_from_token(store.access_token)
+        return store
+
+    @staticmethod
+    def _extract_client_id_from_token(access_token: str | None) -> str:
+        """Extract dhanClientId from JWT access token."""
+        if not access_token:
+            return ""
+        try:
+            parts = access_token.split(".")
+            if len(parts) < 2:
+                return ""
+            payload = parts[1] + "=="
+            decoded = json.loads(base64.urlsafe_b64decode(payload))
+            return decoded.get("dhanClientId", "")
+        except Exception:
+            return ""
 
     def is_complete(self) -> bool:
         """True when API key and secret are present."""

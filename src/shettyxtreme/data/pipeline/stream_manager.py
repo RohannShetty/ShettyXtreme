@@ -43,10 +43,11 @@ class StreamManager:
         self._client_id = dhan_client_id
         self._access_token = dhan_access_token
         self._exchange = exchange
-        self._instruments: dict[str, list[str | int]] = {}
+        self._instruments: list[tuple[str, str, int]] = []
         self._running = False
         self._connected = False
         self._ws_task: asyncio.Task[None] | None = None
+        self._dhan_context: Any = None
         self._dhanhq_instance: Any = None
 
     # ------------------------------------------------------------------
@@ -54,9 +55,13 @@ class StreamManager:
     # ------------------------------------------------------------------
 
     def set_instruments(self, symbols: list[str]) -> None:
-        """Set the list of instrument symbols to subscribe to."""
+        """Set the list of instrument symbols to subscribe to.
+
+        MarketFeed expects a list of (exchange_segment, security_id, feed_code) tuples.
+        Feed code 8 = full quote (LTP + OHLC + volume + bid/ask).
+        """
         segment = _EXCHANGE_MAP.get(self._exchange, self._exchange)
-        self._instruments = {segment: list(symbols)}
+        self._instruments = [(segment, sym, 17) for sym in symbols]
 
     async def connect(self) -> bool:
         """Start the WebSocket connection. Returns True if successful."""
@@ -130,26 +135,35 @@ class StreamManager:
         if self._dhanhq_instance is None:
             from dhanhq import DhanContext as DhanContext_
             from dhanhq.dhanhq import dhanhq as DhanHQClient
-            ctx = DhanContext_(client_id=self._client_id, access_token=self._access_token)
-            self._dhanhq_instance = DhanHQClient(ctx)
+            self._dhan_context = DhanContext_(client_id=self._client_id, access_token=self._access_token)
+            self._dhanhq_instance = DhanHQClient(self._dhan_context)
         return self._dhanhq_instance
 
     async def _connect_ws(self) -> None:
         """Create the DhanHQ MarketFeed instance (runs in executor)."""
+        logger.info("StreamManager: initializing DhanHQ client for exchange=%s", self._exchange)
         self._lazy_init_dhanhq()
+        logger.info("StreamManager: DhanHQ client initialized, instruments=%s", self._instruments)
 
     async def _ws_loop(self) -> None:
         """Run the blocking DhanHQ MarketFeed loop in a thread."""
         from dhanhq.marketfeed import MarketFeed as DhanWSFeed
         loop = asyncio.get_event_loop()
 
+        def _on_connect(mfeed: Any) -> None:
+            logger.info("StreamManager: MarketFeed connected, subscribed to %d instruments", len(self._instruments))
+
         def _run() -> None:
+            logger.info("StreamManager: starting MarketFeed.run_forever() for %s", self._instruments)
             feed = DhanWSFeed(
-                dhan_context=self._dhanhq_instance,
+                dhan_context=self._dhan_context,
                 instruments=self._instruments,
+                version="v2",
+                on_connect=_on_connect,
                 on_ticks=self._make_tick_callback(loop),
             )
             feed.run_forever()
+            logger.warning("StreamManager: MarketFeed.run_forever() returned unexpectedly")
 
         await loop.run_in_executor(None, _run)
 

@@ -11,18 +11,27 @@ from shettyxtreme.terminal.api.models import (
     GapResponse,
     LogResponse,
 )
+from shettyxtreme.terminal.api.scanner_data import GapDetector, LogCollector, ClusterDetector
 
 router = APIRouter(prefix="/api/scanner", tags=["scanner"])
 
-# ── In-memory store (gaps, clusters, logs not yet on EventBus) ──────────────
-_gaps: list[dict[str, Any]] = []
-_clusters: list[dict[str, Any]] = []
-_logs: list[dict[str, Any]] = []
+# ── Scanner data pipeline instances (set via init_scanner_data) ─────────────
+_gap_detector: GapDetector | None = None
+_log_collector: LogCollector | None = None
+_cluster_detector: ClusterDetector | None = None
+
+
+def init_scanner_data(gap_detector: GapDetector, log_collector: LogCollector, cluster_detector: ClusterDetector) -> None:
+    global _gap_detector, _log_collector, _cluster_detector
+    _gap_detector = gap_detector
+    _log_collector = log_collector
+    _cluster_detector = cluster_detector
 
 
 @router.get("/gaps", response_model=list[GapResponse])
 async def get_gaps() -> list[GapResponse]:
     """Return gap detection results (overnight gaps, gap-up/down)."""
+    data = _gap_detector.gaps if _gap_detector else []
     return [
         GapResponse(
             symbol=g.get("symbol", ""),
@@ -31,13 +40,14 @@ async def get_gaps() -> list[GapResponse]:
             direction=g.get("direction", "gap_up"),
             timestamp=g.get("timestamp"),
         )
-        for g in _gaps
+        for g in data
     ]
 
 
 @router.get("/clusters", response_model=list[ClusterResponse])
 async def get_clusters() -> list[ClusterResponse]:
     """Return opportunity clusters (convergence of signals)."""
+    data = _cluster_detector.clusters if _cluster_detector else []
     return [
         ClusterResponse(
             symbol=c.get("symbol", ""),
@@ -46,7 +56,7 @@ async def get_clusters() -> list[ClusterResponse]:
             source_count=c.get("source_count", 0),
             sources=c.get("sources", []),
         )
-        for c in _clusters
+        for c in data
     ]
 
 
@@ -68,7 +78,7 @@ async def get_alerts(request: Request) -> list[AlertResponse]:
 @router.get("/logs", response_model=list[LogResponse])
 async def get_logs(limit: int = Query(50, ge=1, le=500)) -> list[LogResponse]:
     """Return recent signal/execution logs (paginated)."""
-    recent = _logs[-limit:] if _logs else []
+    recent = _log_collector.logs[-limit:] if _log_collector else []
     return [
         LogResponse(
             log_type=entry.get("log_type", "system"),

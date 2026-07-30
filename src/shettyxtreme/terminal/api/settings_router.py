@@ -8,7 +8,7 @@ from shettyxtreme.auth.credential_store import CredentialStore
 from shettyxtreme.auth.dhan_oauth import DhanOAuthHelper
 from shettyxtreme.auth.validator import CredentialValidator
 
-router = APIRouter(prefix="/settings", tags=["settings"])
+router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 _store: CredentialStore | None = None
 _oauth: DhanOAuthHelper | None = None

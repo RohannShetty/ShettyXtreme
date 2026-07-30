@@ -1,9 +1,7 @@
 """Intelligence router — regime, signal, voters, options, strategy hints."""
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from shettyxtreme.terminal.api.models import (
     OptionsChainResponse,
@@ -77,21 +75,10 @@ async def get_options(
     expiry: str | None = None,
 ) -> OptionsChainResponse:
     """Return option chain for a given symbol and expiry."""
-    return OptionsChainResponse(
-        underlying=symbol,
-        expiry=expiry or "next_weekly",
-        timestamp=datetime.now(UTC),
-        contracts=[],
-    )
+    raise HTTPException(status_code=501, detail="Options chain not yet implemented")
 
 
 @router.get("/strategy-hint", response_model=StrategyHintResponse)
 async def get_strategy_hint() -> StrategyHintResponse:
     """Return a strategy hint with EV analysis."""
-    return StrategyHintResponse(
-        direction="NEUTRAL",
-        strike=None,
-        premium=None,
-        ev_after_cost=None,
-        rationale="Insufficient signal conviction for a trade recommendation.",
-    )
+    raise HTTPException(status_code=501, detail="Strategy engine not yet wired")

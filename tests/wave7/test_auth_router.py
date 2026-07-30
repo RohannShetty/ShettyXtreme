@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from shettyxtreme.auth.credential_store import CredentialStore
-from shettyxtreme.auth.dhan_oauth import ConsentResult, DhanOAuthHelper
+from shettyxtreme.auth.dhan_oauth import ConsentResult, ConsumeResult, DhanOAuthHelper
 from shettyxtreme.auth.validator import CredentialValidator, ValidationResult
 from shettyxtreme.terminal.api.auth_router import (
     init_auth,
@@ -33,12 +33,14 @@ def _make_mock_oauth() -> MagicMock:
         return_value="https://auth.dhan.co/login/consentApp-login?consentAppId=consent_abc123"
     )
     oauth.consume_consent = AsyncMock(
-        return_value=ConsentResult(
-            access_token="tok_abcdef123456",
-            expiry_time="2026-12-31T23:59:59",
-            client_id="DHAN123",
-            client_name="Test User",
-            ddpi_status=True,
+        return_value=ConsumeResult(
+            consent=ConsentResult(
+                access_token="tok_abcdef123456",
+                expiry_time="2026-12-31T23:59:59",
+                client_id="DHAN123",
+                client_name="Test User",
+                ddpi_status=True,
+            )
         )
     )
     return oauth

@@ -227,7 +227,7 @@ function showStatus(el, type, msg) {
 
 async function loadCredentials() {
   try {
-    const r = await fetch(API_BASE + '/settings/credentials');
+    const r = await fetch(API_BASE + '/api/settings/credentials');
     if (!r.ok) throw new Error(r.statusText);
     const d = await r.json();
     $('apiKey').textContent = d.api_key_masked || '••••••••';
@@ -252,7 +252,7 @@ async function reauth() {
   btn.disabled = true;
   btn.textContent = 'Redirecting...';
   try {
-    const r = await fetch(API_BASE + '/settings/reauth', { method: 'POST' });
+    const r = await fetch(API_BASE + '/api/settings/reauth', { method: 'POST' });
     if (!r.ok) throw new Error(r.statusText);
     const d = await r.json();
     if (d.login_url) {
@@ -274,7 +274,7 @@ async function testConnection() {
   btn.disabled = true;
   btn.textContent = 'Testing...';
   try {
-    const r = await fetch(API_BASE + '/settings/test', { method: 'POST' });
+    const r = await fetch(API_BASE + '/api/settings/test', { method: 'POST' });
     if (!r.ok) throw new Error(r.statusText);
     const d = await r.json();
     if (d.valid) {

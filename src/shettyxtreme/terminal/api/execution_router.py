@@ -16,7 +16,23 @@ from shettyxtreme.terminal.api.models import (
 
 router = APIRouter(prefix="/api/execution", tags=["execution"])
 
-_current_mode: str = "OBSERVER"
+_MODE_FILE = Path.home() / ".shettyxtreme_mode"
+
+def _load_mode() -> str:
+    try:
+        if _MODE_FILE.exists():
+            return _MODE_FILE.read_text().strip() or "OBSERVER"
+    except Exception:
+        pass
+    return "OBSERVER"
+
+def _save_mode(mode: str) -> None:
+    try:
+        _MODE_FILE.write_text(mode)
+    except Exception:
+        pass
+
+_current_mode: str = _load_mode()
 _kill_switch_path: str = ""
 
 
@@ -65,7 +81,7 @@ async def get_mode() -> ModeResponse:
 
 
 @router.post("/mode", response_model=ModeResponse)
-async def set_mode(mode: str) -> ModeResponse:
+async def set_mode(request: Request, mode: str) -> ModeResponse:
     """Switch execution mode.
 
     Valid modes: OBSERVER, LIVE, PAPER
@@ -74,6 +90,15 @@ async def set_mode(mode: str) -> ModeResponse:
     valid = {"OBSERVER", "LIVE", "PAPER"}
     if mode.upper() in valid:
         _current_mode = mode.upper()
+        _save_mode(_current_mode)
+        # Publish config changed event
+        try:
+            bus = request.app.state.event_bus
+            if bus:
+                from shettyxtreme.core.event_bus.event_bus import Event, Topic
+                await bus.publish(Event(Topic.CONFIG_CHANGED, {"mode": _current_mode}, source="execution_router"))
+        except Exception:
+            pass
     return ModeResponse(mode=_current_mode)
 
 

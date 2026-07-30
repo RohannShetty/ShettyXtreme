@@ -1,0 +1,65 @@
+"""Tests for mode persistence in execution_router."""
+from __future__ import annotations
+
+import importlib
+from pathlib import Path
+
+import pytest
+
+from shettyxtreme.terminal.api import execution_router
+
+
+def _patch_mode_file(tmp_path: Path):
+    """Return a monkeypatch that points _MODE_FILE at tmp_path."""
+    mode_file = tmp_path / "mode.txt"
+
+    import unittest.mock as mock
+
+    return mock.patch.object(execution_router, "_MODE_FILE", mode_file), mode_file
+
+
+@pytest.mark.asyncio
+async def test_default_mode_observer(tmp_path: Path):
+    patch, mode_file = _patch_mode_file(tmp_path)
+    patch.start()
+    try:
+        if mode_file.exists():
+            mode_file.unlink()
+        assert execution_router._load_mode() == "OBSERVER"
+    finally:
+        patch.stop()
+
+
+@pytest.mark.asyncio
+async def test_save_and_load(tmp_path: Path):
+    patch, mode_file = _patch_mode_file(tmp_path)
+    patch.start()
+    try:
+        execution_router._save_mode("LIVE")
+        assert execution_router._load_mode() == "LIVE"
+    finally:
+        patch.stop()
+
+
+@pytest.mark.asyncio
+async def test_load_missing_file(tmp_path: Path):
+    patch, mode_file = _patch_mode_file(tmp_path)
+    patch.start()
+    try:
+        if mode_file.exists():
+            mode_file.unlink()
+        assert execution_router._load_mode() == "OBSERVER"
+    finally:
+        patch.stop()
+
+
+@pytest.mark.asyncio
+async def test_save_persists(tmp_path: Path):
+    patch, mode_file = _patch_mode_file(tmp_path)
+    patch.start()
+    try:
+        execution_router._save_mode("PAPER")
+        assert mode_file.exists()
+        assert mode_file.read_text().strip() == "PAPER"
+    finally:
+        patch.stop()

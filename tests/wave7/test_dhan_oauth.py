@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from shettyxtreme.auth.dhan_oauth import DhanOAuthHelper
+from shettyxtreme.auth.dhan_oauth import ConsumeResult, DhanOAuthHelper
 
 
 @pytest.mark.asyncio
@@ -97,12 +97,12 @@ async def test_consume_consent_success() -> None:
             api_secret="secret456",
             token_id="token_xyz",
         )
-        assert result is not None
-        assert result.access_token == "tok_abc123"
-        assert result.expiry_time == "2026-12-31T23:59:59+00:00"
-        assert result.client_id == "C123"
-        assert result.client_name == "TestClient"
-        assert result.ddpi_status is True
+        assert result.ok
+        assert result.consent.access_token == "tok_abc123"
+        assert result.consent.expiry_time == "2026-12-31T23:59:59+00:00"
+        assert result.consent.client_id == "C123"
+        assert result.consent.client_name == "TestClient"
+        assert result.consent.ddpi_status is True
 
 
 @pytest.mark.asyncio
@@ -127,7 +127,9 @@ async def test_consume_consent_failure() -> None:
             api_secret="secret456",
             token_id="token_xyz",
         )
-        assert result is None
+        assert not result.ok
+        assert result.error is not None
+        assert "500" in result.error
 
 
 @pytest.mark.asyncio

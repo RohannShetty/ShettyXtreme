@@ -32,6 +32,9 @@ class Topic(Enum):
     CREDENTIAL_HEALTH_CHANGED = "credential.health.changed"
     CREDENTIAL_WARNING = "credential.warning"
     ORDER_UPDATED = "order.updated"
+    SCANNER_GAP = "scanner.gap"
+    SCANNER_CLUSTER = "scanner.cluster"
+    SCANNER_LOG = "scanner.log"
 
 @dataclass
 class Event:

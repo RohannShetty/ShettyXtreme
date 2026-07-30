@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
@@ -139,20 +140,23 @@ async def dhan_callback(tokenId: str) -> RedirectResponse:
             api_secret=store.api_secret,
             token_id=tokenId,
         )
-        if result:
+        if result.ok:
+            consent = result.consent
             store.update_token(
-                access_token=result.access_token,
-                expiry=result.expiry_time,
-                client_id=result.client_id,
+                access_token=consent.access_token,
+                expiry=consent.expiry_time,
+                client_id=consent.client_id,
             )
-            store.client_name = result.client_name
+            store.client_name = consent.client_name
             store.save()
             return RedirectResponse(url="/static/setup.html?connected=true")
-        return RedirectResponse(url="/static/setup.html?error=consent_failed")
+        error_msg = result.error or "Unknown error during consent exchange"
+        logger.error("OAuth callback failed: %s", error_msg)
+        return RedirectResponse(url=f"/static/setup.html?error={quote(error_msg)}")
 
     except Exception:
         logger.exception("OAuth callback failed")
-        return RedirectResponse(url="/static/setup.html?error=server_error")
+        return RedirectResponse(url="/static/setup.html?error=Server+error+during+OAuth+callback")
 
 
 @router.post("/test", response_model=ValidationResultResponse)

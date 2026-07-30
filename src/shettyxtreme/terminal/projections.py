@@ -9,7 +9,9 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from shettyxtreme.core.data_models import Tick
 from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
+from shettyxtreme.terminal.api import ws_bridge
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +24,20 @@ class WatchlistProjection:
     def __init__(self) -> None:
         self._data: dict[str, dict[str, Any]] = {}
 
-    def on_market_data(self, event: Event) -> None:
+    async def on_market_data(self, event: Event) -> None:
         d = event.data
+        if isinstance(d, Tick):
+            change_pct = 0.0
+            if d.close and d.close > 0:
+                change_pct = round(((d.ltp - d.close) / d.close) * 100, 2)
+            d = {
+                "symbol": d.symbol,
+                "exchange": d.exchange,
+                "ltp": d.ltp,
+                "volume": d.volume,
+                "change_pct": change_pct,
+                "timestamp": d.timestamp,
+            }
         symbol = d.get("symbol")
         if not symbol:
             return
@@ -36,6 +50,12 @@ class WatchlistProjection:
             "volume": d.get("volume", existing.get("volume", 0)),
             "timestamp": d.get("timestamp", event.timestamp),
         }
+        await ws_bridge.broadcast("tick", {
+            "symbol": symbol,
+            "ltp": self._data[symbol]["ltp"],
+            "change_pct": self._data[symbol]["change_pct"],
+            "volume": self._data[symbol]["volume"],
+        })
 
     def add(self, symbol: str, exchange: str = "NSE") -> dict[str, Any]:
         if symbol not in self._data:
@@ -71,7 +91,7 @@ class PositionProjection:
         self._positions: list[dict[str, Any]] = []
         self._index: dict[str, int] = {}  # symbol -> list index
 
-    def on_position_update(self, event: Event) -> None:
+    async def on_position_update(self, event: Event) -> None:
         d = event.data
         symbol = d.get("symbol", "")
         idx = self._index.get(symbol)
@@ -90,6 +110,12 @@ class PositionProjection:
         else:
             self._index[symbol] = len(self._positions)
             self._positions.append(pos)
+        await ws_bridge.broadcast("position", {
+            "symbol": symbol,
+            "net_quantity": pos["net_quantity"],
+            "m2m": pos["m2m"],
+            "pnl": pos["pnl"],
+        })
 
     def get(self) -> list[dict[str, Any]]:
         return list(self._positions)
@@ -113,17 +139,23 @@ class RiskProjection:
             "max_positions": 5,
         }
 
-    def on_risk_decision(self, event: Event) -> None:
+    async def on_risk_decision(self, event: Event) -> None:
         d = event.data
         for key in ("daily_pnl", "margin_used", "margin_available",
                      "loss_limit", "loss_limit_hit", "max_positions"):
             if key in d:
                 self._state[key] = d[key]
+        await ws_bridge.broadcast("risk", dict(self._state))
 
-    def on_risk_alert(self, event: Event) -> None:
+    async def on_risk_alert(self, event: Event) -> None:
         d = event.data
         if d.get("alert_type") == "loss_limit_breach":
             self._state["loss_limit_hit"] = True
+        await ws_bridge.broadcast("alert", {
+            "alert_type": d.get("alert_type", "system"),
+            "severity": d.get("severity", "LOW"),
+            "message": d.get("message", ""),
+        })
 
     def get(self) -> dict[str, Any]:
         return dict(self._state)
@@ -143,7 +175,7 @@ class AlertProjection:
     def __init__(self) -> None:
         self._alerts: list[dict[str, Any]] = []
 
-    def on_alert(self, event: Event) -> None:
+    async def on_alert(self, event: Event) -> None:
         d = event.data
         self._alerts.append({
             "alert_type": d.get("alert_type", "system"),
@@ -153,6 +185,11 @@ class AlertProjection:
         })
         if len(self._alerts) > self.MAX_ALERTS:
             self._alerts = self._alerts[-self.MAX_ALERTS:]
+        await ws_bridge.broadcast("alert", {
+            "alert_type": d.get("alert_type", "system"),
+            "severity": d.get("severity", "LOW"),
+            "message": d.get("message", ""),
+        })
 
     def get(self) -> list[dict[str, Any]]:
         return list(self._alerts)
@@ -186,17 +223,23 @@ class IntelligenceProjection:
             "timestamp": datetime.now(UTC),
         }
 
-    def on_regime_changed(self, event: Event) -> None:
+    async def on_regime_changed(self, event: Event) -> None:
         d = event.data
         for key in ("regime", "confidence", "transition", "adx", "di_plus", "di_minus"):
             if key in d:
                 self._regime[key] = d[key]
+        await ws_bridge.broadcast("regime", dict(self._regime))
 
-    def on_signal_v2(self, event: Event) -> None:
+    async def on_signal_v2(self, event: Event) -> None:
         d = event.data
         for key in ("direction", "conviction", "D", "P", "G", "voters", "timestamp"):
             if key in d:
                 self._signal[key] = d[key]
+        await ws_bridge.broadcast("signal", {
+            "direction": self._signal["direction"],
+            "conviction": self._signal["conviction"],
+            "voters": self._signal["voters"],
+        })
 
     def get_regime(self) -> dict[str, Any]:
         return dict(self._regime)
@@ -219,6 +262,9 @@ class HealthProjection:
         self._event_bus: EventBus | None = None
         self._data_adapter: Any = None
         self._trading_adapter: Any = None
+
+    def subscribe(self, event_bus: EventBus) -> None:
+        self._event_bus = event_bus
 
     def configure(
         self,

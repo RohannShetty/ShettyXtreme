@@ -42,7 +42,6 @@ class IngestionPipeline:
         )
         self._bar_builder = BarBuilder(event_bus=event_bus, ts_store=ts_store)
         self._running = False
-        self._event_bus_task: asyncio.Task[None] | None = None
 
     async def start(self, symbols: list[str]) -> None:
         """Start the full data pipeline.
@@ -56,9 +55,7 @@ class IngestionPipeline:
 
         self._running = True
 
-        # Start the event bus dispatcher
-        self._event_bus_task = asyncio.create_task(self._event_bus.start())
-
+        # EventBus is already started by the lifespan — do NOT start it again.
         # Start bar builder (subscribes to tick events)
         await self._bar_builder.start()
 
@@ -81,16 +78,7 @@ class IngestionPipeline:
         # Stop bar builder (flushes remaining bars)
         await self._bar_builder.stop()
 
-        # Stop event bus
-        await self._event_bus.stop()
-        if self._event_bus_task is not None:
-            self._event_bus_task.cancel()
-            try:
-                await self._event_bus_task
-            except asyncio.CancelledError:
-                pass
-            self._event_bus_task = None
-
+        # NOTE: Do NOT stop the EventBus here — it is shared and managed by the lifespan.
         logger.info("IngestionPipeline stopped")
 
     async def health(self) -> dict[str, Any]:

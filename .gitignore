@@ -59,6 +59,7 @@ _*.py
 # Knowledge graph tooling (generated indices)
 .codegraph/
 graphify-out/
+data/
 
 # Agent / tool configuration
 .opencode/

@@ -23,6 +23,17 @@ class ConsentResult:
     ddpi_status: bool
 
 
+@dataclass(frozen=True)
+class ConsumeResult:
+    """Result of consume_consent — either success or descriptive error."""
+    consent: ConsentResult | None = None
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.consent is not None
+
+
 class DhanOAuthHelper:
 
     AUTH_BASE_URL: str = "https://auth.dhan.co"
@@ -63,12 +74,20 @@ class DhanOAuthHelper:
 
     async def consume_consent(
         self, api_key: str, api_secret: str, token_id: str,
-    ) -> ConsentResult | None:
+    ) -> ConsumeResult:
         url = f"{self.AUTH_BASE_URL}/app/consumeApp-consent"
         headers = {"app_id": api_key, "app_secret": api_secret}
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(url, headers=headers, params={"tokenId": token_id})
+                if resp.status_code == 401:
+                    msg = "Dhan API 401: Invalid app_id or app_secret. Re-enter credentials in Step 1."
+                    logger.error("consume_consent: %s Response: %s", msg, resp.text[:200])
+                    return ConsumeResult(error=msg)
+                if resp.status_code == 400:
+                    msg = "Dhan API 400: Token expired or already consumed. Restart the consent flow."
+                    logger.error("consume_consent: %s Response: %s", msg, resp.text[:200])
+                    return ConsumeResult(error=msg)
                 resp.raise_for_status()
                 data = resp.json()
                 result = ConsentResult(
@@ -88,7 +107,12 @@ class DhanOAuthHelper:
                     masked_token,
                     result.client_id,
                 )
-                return result
-        except Exception:
+                return ConsumeResult(consent=result)
+        except httpx.HTTPStatusError as exc:
+            msg = f"Dhan API error {exc.response.status_code}: {exc.response.text[:200]}"
+            logger.error("consume_consent: %s", msg)
+            return ConsumeResult(error=msg)
+        except Exception as exc:
+            msg = f"Connection error: {exc}"
             logger.exception("consume_consent failed")
-            return None
+            return ConsumeResult(error=msg)
