@@ -1,5 +1,12 @@
 # ShettyXtreme Changelog
 
+## [2026-07-30] - OAuth Consent Flow Fix: `consentAppId` + HTTP Method
+
+### Fixed
+- **Dhan OAuth Callback**: Removed `consentAppId` flow check (`pop_consent_flow`) that always failed — Dhan's callback only sends `tokenId`, never `consentAppId`. The CSRF-like flow check blocked every OAuth consent with `error=unknown_flow`.
+- **consume_consent HTTP Method**: Changed `client.get()` → `client.post()` to match Dhan API spec (`POST https://auth.dhan.co/app/consumeApp-consent`).
+- **Tests**: Removed `test_dhan_callback_unknown_flow` (dead path); updated `test_dhan_callback_success` to omit `consentAppId`; fixed consume_consent tests to mock `client.post` instead of `client.get`.
+
 ## [2026-07-30] - Credential Consolidation: Dual → Single Dhan Credential
 
 ### Changed

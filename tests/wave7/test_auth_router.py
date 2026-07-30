@@ -1,8 +1,7 @@
 """Tests for AuthRouter (onboarding and OAuth callback)."""
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -42,7 +41,6 @@ def _make_mock_oauth() -> MagicMock:
             ddpi_status=True,
         )
     )
-    oauth.pop_consent_flow = MagicMock(return_value=True)
     return oauth
 
 
@@ -99,17 +97,6 @@ def test_start_consent() -> None:
     assert "consentAppId" in data["login_url"]
 
 
-def test_dhan_callback_unknown_flow() -> None:
-    from shettyxtreme.terminal.api.auth_router import _oauth
-    _oauth.pop_consent_flow = MagicMock(return_value=False)
-    app = _make_app()
-    client = TestClient(app, follow_redirects=False)
-    resp = client.get("/auth/dhan/callback?tokenId=test_token_999")
-    assert resp.status_code == 307
-    assert "setup.html" in resp.headers["location"]
-    assert "error=unknown_flow" in resp.headers["location"]
-
-
 def test_dhan_callback_success() -> None:
     app = _make_app()
     client = TestClient(app, follow_redirects=False)
@@ -119,7 +106,7 @@ def test_dhan_callback_success() -> None:
         json={"api_key": "trading_key", "api_secret": "trading_secret"},
     )
 
-    resp = client.get("/auth/dhan/callback?tokenId=tok_trade_123&consentAppId=consent_trading_id")
+    resp = client.get("/auth/dhan/callback?tokenId=tok_trade_123")
     assert resp.status_code == 307
     assert "connected=true" in resp.headers["location"]
 

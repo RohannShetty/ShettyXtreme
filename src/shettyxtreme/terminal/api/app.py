@@ -103,16 +103,42 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.health_projection = health_proj
 
     # Only proceed with Dhan adapters if credentials are valid
-    if store.is_trading_valid() and store.data_access_token:
+    if store.is_token_valid():
         try:
             _trading_adapter = DhanTradingAdapter(
-                client_id=store.trading_client_id,
-                access_token=store.trading_access_token,
+                client_id=store.client_id,
+                access_token=store.access_token,
             )
             app.state.trading_adapter = _trading_adapter
             logger.info("DhanTradingAdapter initialized")
         except Exception as exc:
             logger.error("Failed to initialize DhanTradingAdapter: %s", exc)
+
+        try:
+            _data_adapter = DhanDataAdapter(
+                client_id=store.client_id,
+                access_token=store.access_token,
+            )
+            app.state.data_adapter = _data_adapter
+            logger.info("DhanDataAdapter initialized")
+
+            ts_store = TimeSeriesStore()
+            _ingestion_pipeline = IngestionPipeline(
+                event_bus=_event_bus,
+                ts_store=ts_store,
+                dhan_client_id=store.client_id,
+                dhan_access_token=store.access_token,
+                exchange="NSE",
+            )
+            app.state.ingestion_pipeline = _ingestion_pipeline
+
+            watchlist_data_proj = watchlist_proj.get()
+            if watchlist_data_proj:
+                symbols = list(watchlist_data_proj.keys())
+                await _ingestion_pipeline.start(symbols)
+                logger.info("IngestionPipeline started with symbols: %s", symbols)
+        except Exception as exc:
+            logger.error("Failed to initialize DhanDataAdapter or IngestionPipeline: %s", exc)
 
     # Seed watchlist projection from default_watchlist.yaml regardless of credentials
     watchlist_path = Path(__file__).resolve().parent.parent.parent.parent.parent / "configs" / "default_watchlist.yaml"
@@ -130,35 +156,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     else:
         logger.warning("Default watchlist not found at %s", watchlist_path)
-
-    if store.is_data_valid() and store.data_access_token:
-        try:
-            _data_adapter = DhanDataAdapter(
-                client_id=store.data_client_id,
-                access_token=store.data_access_token,
-            )
-            app.state.data_adapter = _data_adapter
-            logger.info("DhanDataAdapter initialized")
-
-            # Start ingestion pipeline with default watchlist
-            ts_store = TimeSeriesStore()
-            _ingestion_pipeline = IngestionPipeline(
-                event_bus=_event_bus,
-                ts_store=ts_store,
-                dhan_client_id=store.data_client_id,
-                dhan_access_token=store.data_access_token,
-                exchange="NSE",
-            )
-            app.state.ingestion_pipeline = _ingestion_pipeline
-
-            # Start streaming existing watchlist
-            watchlist_data_proj = watchlist_proj.get()
-            if watchlist_data_proj:
-                symbols = list(watchlist_data_proj.keys())
-                await _ingestion_pipeline.start(symbols)
-                logger.info("IngestionPipeline started with symbols: %s", symbols)
-        except Exception as exc:
-            logger.error("Failed to initialize DhanDataAdapter or IngestionPipeline: %s", exc)
 
     # Configure HealthProjection with actual adapter references
     health_proj.configure(

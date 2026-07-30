@@ -17,10 +17,8 @@ def main() -> None:
     store = CredentialStore.load()
 
     if store is not None:
-        if not store.is_trading_valid():
-            print("WARNING: Trading token expired — re-authenticate at /settings")
-        if not store.is_data_valid():
-            print("WARNING: Data token expired — re-authenticate at /settings")
+        if not store.is_token_valid():
+            print("WARNING: Token expired — re-authenticate at /settings")
 
     # Always open the setup wizard; it auto-redirects to the terminal once
     # the connection is complete (see setup.html checkStatus).

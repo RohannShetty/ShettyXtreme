@@ -68,7 +68,7 @@ class DhanOAuthHelper:
         headers = {"app_id": api_key, "app_secret": api_secret}
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(url, headers=headers, params={"tokenId": token_id})
+                resp = await client.post(url, headers=headers, params={"tokenId": token_id})
                 resp.raise_for_status()
                 data = resp.json()
                 result = ConsentResult(

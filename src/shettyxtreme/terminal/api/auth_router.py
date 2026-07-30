@@ -131,13 +131,8 @@ async def start_consent() -> ConsentStartResponse:
 
 
 @router.get("/dhan/callback", response_model=None)
-async def dhan_callback(tokenId: str, consentAppId: str = "") -> RedirectResponse:
+async def dhan_callback(tokenId: str) -> RedirectResponse:
     try:
-        known = _oauth.pop_consent_flow(consentAppId)
-        if not known:
-            logger.warning("Unknown consent flow for %s", consentAppId)
-            return RedirectResponse(url="/static/setup.html?error=unknown_flow")
-
         store = _get_store()
         result = await _oauth.consume_consent(
             api_key=store.api_key,
