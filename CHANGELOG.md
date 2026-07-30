@@ -1,5 +1,21 @@
 # ShettyXtreme Changelog
 
+## [2026-07-30] — Dashboard Fix, Tick↔dict Crash, Module Wiring
+
+### Fixed
+- **WatchlistProjection / GapDetector**: Both subscribed to `Topic.MARKET_DATA_TICK` but expected dict data while `StreamManager` publishes `Tick` dataclass objects. Added `isinstance(d, Tick)` guard at entry — converts attributes to dict. `change_pct` now derived from `(ltp - close) / close`.
+- **Dashboard staleness (`—` placeholders)**: `fetchJSON` added `AbortController` 5s timeout so hanging fetches don't block the page. `refreshAll()` changed from `Promise.all` to `Promise.allSettled` — one render failure no longer blocks the other 9. Added console diagnostics for every refresh cycle.
+- **`.gitignore`**: Added `data/` to prevent accidental commit of runtime SQLite databases.
+
+### Added
+- **Terminal test suite**: 46 tests across `test_projections.py`, `test_scanner_data.py`, `test_ws_bridge.py`, `test_mode_persistence.py`, `test_integration.py` — includes Tick dataclass coverage for both `WatchlistProjection` and `GapDetector`.
+
+### Changed
+- **EventBus**: Logging improvements for handler exceptions.
+- **StreamManager**: Improved tick subscription and broadcasting.
+- **Module wiring**: `bus_bridge.py` (regime + risk), `ws_bridge.py`, `scanner_data.py` — wired into FastAPI lifespan.
+- **Router consolidation**: auth, intelligence, execution, scanner, settings routers updated.
+
 ## [2026-07-30] - OAuth Consent Flow Fix: `consentAppId` + HTTP Method
 
 ### Fixed
