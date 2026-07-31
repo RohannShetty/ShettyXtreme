@@ -1,6 +1,20 @@
 # ShettyXtreme Changelog
 
-## [2026-07-30] — Dashboard Fix, Tick↔dict Crash, Module Wiring
+## [2026-07-31] — Graphify Knowledge-Graph Integration
+
+### Added
+- **graphify codebase graph**: AST-based knowledge graph at `graphify-out/` (2441 nodes / 4617 edges / 154 communities) with god-nodes, community structure, and cross-file relationship queries. No LLM dependency (Tasks 4-5 semantic extraction skipped: the `openai` backend requires an API key that the free/auth-free options can't satisfy).
+- **Post-commit freshness hook**: automatically rebuilds the graph after every commit (verified live).
+- **Impact-analysis workflow**: `graphify affected` / `query --dfs` / `path` / `explain` + `save-result`/`reflect` feedback loop, documented in `AGENTS.md`.
+- **Export artifacts**: wiki (`graphify-out/wiki/`, 153 articles), D3 tree (`GRAPH_TREE.html`), call-flow Mermaid HTML, `graph.svg`. Benchmark: 27.7x token reduction vs naive full-corpus reads.
+- **opencode integration**: tracked MCP entry + bash-prompt hook via `.opencode/plugins/graphify.js`.
+
+### Changed
+- **AGENTS.md**: documents the graphify rules + impact workflow for agent sessions.
+
+### Known (pre-existing, not introduced here)
+- 3 pytest failures unrelated to this upgrade (`test_execution_mode_default` expects OBSERVER vs LIVE default; `test_get_options`/`test_get_strategy_hint` hit 501 Not Implemented) — identical at baseline `dd3ef59`.
+
 
 ### Fixed
 - **WatchlistProjection / GapDetector**: Both subscribed to `Topic.MARKET_DATA_TICK` but expected dict data while `StreamManager` publishes `Tick` dataclass objects. Added `isinstance(d, Tick)` guard at entry — converts attributes to dict. `change_pct` now derived from `(ltp - close) / close`.
