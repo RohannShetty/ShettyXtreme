@@ -1410,3 +1410,4 @@ The existing Phase 1+2 code in the repo needs significant refactoring:
 - `find src -name "*.py" -exec wc -l {} + | awk '$1 > 500'` → ZERO matches
 - `grep -r "import dhanhq\|import httpx" src/shettyxtreme/core/` → ZERO matches (core has no external deps)
 - `PYTHONPATH="" python -m pytest tests/ -v --tb=short` → ALL PASS
+
