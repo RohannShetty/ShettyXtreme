@@ -178,6 +178,40 @@ async def test_unknown_tool_raises() -> None:
 
 
 @pytest.mark.asyncio
+async def test_retry_after_mid_loop_failure_resets_messages(tmp_path) -> None:
+    # A ProviderError mid-tool-loop triggers the retry; the retry must
+    # start a fresh conversation, not reuse the failed attempt's messages.
+    from shettyxtreme.research.provider import ProviderError
+
+    class FlakyToolProvider(SimulatedProvider):
+        def __init__(self) -> None:
+            super().__init__(
+                script=[_valid_brief()],
+                simulate_tool_calls=[
+                    ToolCall(name="regime_snapshot", arguments={}),
+                    ToolCall(name="regime_snapshot", arguments={}),
+                ],
+            )
+            self._calls = 0
+
+        async def generate(self, **kwargs):
+            self._calls += 1
+            if self._calls == 2:
+                raise ProviderError("simulated mid-loop failure")
+            return await super().generate(**kwargs)
+
+    p = FlakyToolProvider()
+    results, store = await _run(
+        lenses=["oi_iv_flow"], provider=p, db_path=str(tmp_path / "r.db")
+    )
+    assert results[0].error is None and results[0].brief is not None
+    assert len(p.calls) == 3  # the failed call raises before recording
+    assert p.calls[1]["history"] is None  # retry starts a fresh conversation
+    assert len(p.calls[2]["history"]) == 4  # only this attempt's messages
+    store.close()
+
+
+@pytest.mark.asyncio
 async def test_on_brief_callback_invoked(tmp_path) -> None:
     seen: list = []
     store = ResearchStore(str(tmp_path / "r.db"))

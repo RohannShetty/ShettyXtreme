@@ -101,13 +101,13 @@ class ResearchOrchestrator:
         brief_id = str(uuid4())
         as_of = datetime.now(UTC).isoformat()
         prompt = lens.build_prompt(digest_text)
-        messages: list[dict] = [
-            {"role": "system", "content": lens.system_prompt},
-            {"role": "user", "content": prompt},
-        ]
         last_error: str | None = None
         for attempt in range(MAX_RETRIES + 1):
             try:
+                messages: list[dict] = [
+                    {"role": "system", "content": lens.system_prompt},
+                    {"role": "user", "content": prompt},
+                ]
                 tool_calls_used = 0
                 while True:
                     resp = await asyncio.wait_for(
