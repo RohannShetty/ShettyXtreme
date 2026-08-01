@@ -87,6 +87,17 @@ async def test_scheduler_exception_loop_continues(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_scheduler_rejects_non_positive_interval(tmp_path) -> None:
+    store = ResearchStore(str(tmp_path / "r.db"))
+    orch = ResearchOrchestrator(provider=SimulatedProvider(), store=store)
+    with pytest.raises(ValueError, match="interval_minutes"):
+        ResearchScheduler(orchestrator=orch, interval_minutes=0)
+    with pytest.raises(ValueError, match="interval_minutes"):
+        ResearchScheduler(orchestrator=orch, interval_minutes=-5)
+    store.close()
+
+
+@pytest.mark.asyncio
 async def test_scheduler_start_stop_idempotent(tmp_path) -> None:
     store = ResearchStore(str(tmp_path / "r.db"))
     orch = ResearchOrchestrator(provider=SimulatedProvider(), store=store)

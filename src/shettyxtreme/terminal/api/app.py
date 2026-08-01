@@ -152,11 +152,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     raw = os.environ.get(name, "")
                     return [x.strip() for x in raw.split(",") if x.strip()] or None
 
+                try:
+                    interval = float(
+                        os.environ.get("RESEARCH_SCHEDULE_INTERVAL_MINUTES", "60")
+                    )
+                except ValueError:
+                    interval = 60.0
+                if interval <= 0:
+                    interval = 60.0
+
                 research_scheduler = ResearchScheduler(
                     orchestrator=orch,
-                    interval_minutes=float(
-                        os.environ.get("RESEARCH_SCHEDULE_INTERVAL_MINUTES", "60")
-                    ),
+                    interval_minutes=interval,
                     lenses=_csv_env("RESEARCH_SCHEDULE_LENSES"),
                     tools=_csv_env("RESEARCH_SCHEDULE_TOOLS"),
                 )

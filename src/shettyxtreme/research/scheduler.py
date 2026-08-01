@@ -26,6 +26,8 @@ class ResearchScheduler:
         lenses: list[str] | None = None,
         tools: list[str] | None = None,
     ) -> None:
+        if interval_minutes <= 0:
+            raise ValueError("interval_minutes must be positive")
         self._orchestrator = orchestrator
         self.interval_minutes = interval_minutes
         self.lenses = list(lenses) if lenses else None
