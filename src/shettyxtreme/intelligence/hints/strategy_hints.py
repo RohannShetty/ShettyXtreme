@@ -19,6 +19,14 @@ _PARTICIPATION_GATE: float = 0.5
 _DEFAULT_DTE: int = 7
 
 
+def _safe_float(value: Any, default: float) -> float:
+    """Coerce to float; fall back to the default on junk (never 500s)."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass
 class StrategyHint:
     direction: str  # bullish / bearish / neutral
@@ -116,13 +124,26 @@ class StrategyHints:
     ) -> dict[str, Any] | None:
         if self._current_price is None:
             return None
+
+        def _usable(row: dict[str, Any]) -> bool:
+            """Drop rows whose numeric fields are junk (would break coercion)."""
+            for key in ("strike", "premium", "iv"):
+                if row.get(key) is not None:
+                    try:
+                        float(row[key])
+                    except (TypeError, ValueError):
+                        return False
+            return True
+
         strikes = [
             s for s in self._chain
-            if str(s.get("option_type", "")).upper() == option_type
+            if isinstance(s, dict)
+            and str(s.get("option_type", "")).upper() == option_type
+            and _usable(s)
         ]
         if not strikes:
             return None
-        iv = float(strikes[0].get("iv", 15.0))
+        iv = _safe_float(strikes[0].get("iv"), 15.0)
         best = select_strike_by_ev(
             strikes=strikes,
             direction=1.0 if bullish else -1.0,
@@ -135,19 +156,17 @@ class StrategyHints:
         )
         if best is None:
             return None
+        strike = _safe_float(best.get("strike"), 0.0)
+        premium = _safe_float(best.get("premium"), 0.0)
         ev = compute_signal_drift_ev(
             direction=1.0 if bullish else -1.0,
             conviction=conviction,
             current_price=self._current_price,
-            strike=best.get("strike", 0.0),
-            premium=best.get("premium", 0.0),
+            strike=strike,
+            premium=premium,
             slippage=self._slippage,
             brokerage=self._brokerage,
-            iv=float(best.get("iv", iv)),
+            iv=_safe_float(best.get("iv"), iv),
             days_to_expiry=self._dte,
         )
-        return {
-            "strike": float(best.get("strike", 0.0)),
-            "premium": float(best.get("premium", 0.0)),
-            "ev": ev,
-        }
+        return {"strike": strike, "premium": premium, "ev": ev}
