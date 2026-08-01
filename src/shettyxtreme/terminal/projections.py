@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from enum import Enum
 from typing import Any
 
 from shettyxtreme.core.data_models import Tick
@@ -240,7 +241,10 @@ class IntelligenceProjection:
             return
         for key in ("direction", "conviction", "D", "P", "G", "voters", "timestamp"):
             if key in values:
-                self._signal[key] = values[key]
+                value = values[key]
+                if isinstance(value, Enum):
+                    value = value.name
+                self._signal[key] = value
         await ws_bridge.broadcast("signal", {
             "direction": self._signal["direction"],
             "conviction": self._signal["conviction"],

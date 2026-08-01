@@ -209,6 +209,21 @@ async def test_signal_v2_accepts_signal_dataclass(mock_broadcast) -> None:
     assert mock_broadcast.await_count == 1
 
 
+@pytest.mark.asyncio
+async def test_signal_v2_with_dpg_updates_projection() -> None:
+    proj = IntelligenceProjection()
+    from shettyxtreme.core.event_bus.event_bus import Event, Topic
+    from shettyxtreme.intelligence.signals.signal_engine import Signal, SignalDirection, Vote
+    sig = Signal(direction=SignalDirection.UP, conviction=0.6, D=0.55, P=0.8, G="unanimous",
+                 voters=[Vote(1.0, 0.6, 1.0, "v")])
+    await proj.on_signal_v2(Event(topic=Topic.SIGNAL_V2, data=sig, source="test"))
+    state = proj.get_signal()
+    assert state["direction"] == "UP"
+    assert state["D"] == 0.55
+    assert state["P"] == 0.8
+    assert state["G"] == "unanimous"
+
+
 def test_health_reports_entitlement_down() -> None:
     """dhan_data component goes down with the 806 entitlement message."""
     proj = HealthProjection()
