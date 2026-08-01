@@ -25,6 +25,7 @@ Multi-broker and backtest depth are decided by tickets as they surface; the dest
 - (2026-08-01 chart) v1 ingest surface: **auto-ingest research outputs only** (no operator-notes folder in v1).
 - (2026-08-01 chart) v1 extractor scope: **symbols + regimes + risk themes**, heuristic only.
 - (2026-08-01 chart) v1 dashboards: **scorecard core** (sessions logged, net EV/session, win rate by regime, calibration curve), **zero-new-deps** Svelte rendering.
+- (2026-08-01) [Doc-store backend: sqlite3 + FTS5](issues/01-knowledge-docstore-backend.md) — stdlib FTS5 (verified compiled in: sqlite 3.50.4), content= tables + triggers, bm25/snippet, tag filtering via joined columns; zero new deps; extends the ResearchStore append-only pattern. Findings: `docs/references/BRIEF-knowledge-docstore.md`. → unblocks tickets 02 and 03.
 
 ## Not yet specified
 
