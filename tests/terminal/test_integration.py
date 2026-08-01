@@ -6,9 +6,12 @@ lifespan, so state-dependent endpoints are skipped gracefully.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
+from shettyxtreme.terminal.api import execution_router
 from shettyxtreme.terminal.api.app import app
 
 
@@ -23,19 +26,27 @@ def client() -> TestClient:
 def test_root_redirects(client: TestClient) -> None:
     resp = client.get("/", follow_redirects=False)
     assert resp.status_code == 307
-    assert resp.headers["location"] == "/static/index.html"
+    assert resp.headers["location"] == "/static/"
 
 
 def test_setup_redirects(client: TestClient) -> None:
     resp = client.get("/setup", follow_redirects=False)
     assert resp.status_code == 307
-    assert resp.headers["location"] == "/static/setup.html"
+    assert resp.headers["location"] == "/static/#/setup"
 
 
 def test_settings_redirects(client: TestClient) -> None:
     resp = client.get("/settings", follow_redirects=False)
     assert resp.status_code == 307
-    assert resp.headers["location"] == "/static/settings.html"
+    assert resp.headers["location"] == "/static/#/settings"
+
+
+def test_oauth_callback_redirects_to_spa(client: TestClient) -> None:
+    resp = client.get("/auth/dhan/callback?tokenId=bogus", follow_redirects=False)
+    assert resp.status_code == 307
+    location = resp.headers["location"]
+    assert location.startswith("/static/")
+    assert "setup.html" not in location
 
 
 # ── Health endpoints ──────────────────────────────────────────────────────
@@ -63,24 +74,14 @@ def test_health_session(client: TestClient) -> None:
 # ── Execution endpoints ───────────────────────────────────────────────────
 
 
-def test_execution_mode_default(client: TestClient) -> None:
+def test_execution_mode_default(client: TestClient, tmp_path: Path, monkeypatch) -> None:
+    mode_file = tmp_path / "mode.txt"
+    monkeypatch.setattr(execution_router, "_MODE_FILE", mode_file)
+    execution_router._current_mode = execution_router._load_mode()
     resp = client.get("/api/execution/mode")
     assert resp.status_code == 200
     body = resp.json()
     assert body["mode"] == "OBSERVER"
-
-
-# ── Intelligence endpoints (501 stubs) ────────────────────────────────────
-
-
-def test_intelligence_options_501(client: TestClient) -> None:
-    resp = client.get("/api/intelligence/options")
-    assert resp.status_code == 501
-
-
-def test_intelligence_strategy_hint_501(client: TestClient) -> None:
-    resp = client.get("/api/intelligence/strategy-hint")
-    assert resp.status_code == 501
 
 
 # ── Watchlist endpoint ────────────────────────────────────────────────────

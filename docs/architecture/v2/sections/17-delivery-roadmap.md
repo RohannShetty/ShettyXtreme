@@ -6,7 +6,7 @@ The roadmap is re-anchored on the verified repo state in [Section 02 — Current
 |---|---|---|---|
 | 0 | References + vendoring | **DONE (2026-08-01)** | All 8 references cloned/briefed; vendor pipeline green |
 | 1 | Blueprint + design contract | **CURRENT** | Blueprint approved; DESIGN.md + ADRs committed |
-| 2 | Usable MVP — pipeline completion | Next | 495+ tests green; terminal renders per DESIGN.md; option chain + strategy hints live |
+| 2 | Usable MVP — pipeline completion | **DONE (2026-08-01)** | 527 tests green (0 failures); terminal renders per DESIGN.md; option chain + strategy hints live |
 | 3 | Advanced intelligence | After Phase 2 | Shadow voter activated on ≥20 sessions; calibration live; research workspace draft briefs |
 | 4 | Maturity | After Phase 3 | Knowledge flow end-to-end (human-gated); analytics dashboards; optional multi-broker |
 

@@ -1,9 +1,12 @@
 """ShettyXtreme Terminal entry point.
 
-Loads credentials, starts the server, and opens the browser.
+Loads credentials, sets the execution mode (OBSERVER default; LIVE requires
+explicit per-session confirmation per D10), starts the server, opens the
+browser.
 """
 from __future__ import annotations
 
+import argparse
 import sys
 import webbrowser
 
@@ -14,23 +17,40 @@ from shettyxtreme.auth.credential_store import CredentialStore
 
 def main() -> None:
     """Start the ShettyXtreme Terminal."""
+    parser = argparse.ArgumentParser(description="ShettyXtreme Terminal")
+    parser.add_argument(
+        "--mode",
+        choices=["OBSERVER", "PAPER", "LIVE"],
+        default="OBSERVER",
+        help="Execution mode (default: OBSERVER; LIVE requires confirmation)",
+    )
+    parser.add_argument("--no-browser", action="store_true", help="Do not open a browser")
+    parser.add_argument("--port", type=int, default=8000, help="Uvicorn port (default: 8000)")
+    args = parser.parse_args()
+
+    if args.mode == "LIVE":
+        answer = input("LIVE mode places real orders. Type 'LIVE' to confirm: ").strip().upper()
+        if answer != "LIVE":
+            print("Aborted: LIVE mode not confirmed.")
+            sys.exit(1)
+
+    from shettyxtreme.terminal.api import execution_router
+    execution_router._current_mode = args.mode
+    execution_router._save_mode(args.mode)
+
     store = CredentialStore.load()
 
     if store is not None:
         if not store.is_token_valid():
             print("WARNING: Token expired — re-authenticate at /settings")
 
-    # Always open the setup wizard; it auto-redirects to the terminal once
-    # the connection is complete (see setup.html checkStatus).
-    print("Setup wizard: open http://127.0.0.1:8000/static/setup.html in your browser")
-    startup_url = "http://127.0.0.1:8000/static/setup.html"
-
-    webbrowser.open(startup_url)
+    if not args.no_browser:
+        webbrowser.open(f"http://127.0.0.1:{args.port}/")
 
     uvicorn.run(
         "shettyxtreme.terminal.api.app:app",
         host="127.0.0.1",
-        port=8000,
+        port=args.port,
         log_level="info",
     )
 

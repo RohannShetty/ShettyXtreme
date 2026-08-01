@@ -41,6 +41,9 @@ runs/
 # Jupyter
 .ipynb_checkpoints/
 
+# Node
+node_modules/
+
 # Type checking
 .mypy_cache/
 .dmypy.json

@@ -19,9 +19,13 @@ router = APIRouter(prefix="/api/execution", tags=["execution"])
 _MODE_FILE = Path.home() / ".shettyxtreme_mode"
 
 def _load_mode() -> str:
+    """Restore the persisted mode. LIVE never auto-restores: it is an
+    explicit per-session action with confirmation (D10)."""
     try:
         if _MODE_FILE.exists():
-            return _MODE_FILE.read_text().strip() or "OBSERVER"
+            saved = _MODE_FILE.read_text().strip()
+            if saved in ("OBSERVER", "PAPER"):
+                return saved
     except Exception:
         pass
     return "OBSERVER"
@@ -81,24 +85,28 @@ async def get_mode() -> ModeResponse:
 
 
 @router.post("/mode", response_model=ModeResponse)
-async def set_mode(request: Request, mode: str) -> ModeResponse:
-    """Switch execution mode.
+async def set_mode(request: Request, mode: str, confirm: bool = False) -> ModeResponse:
+    """Switch execution mode. Valid modes: OBSERVER, LIVE, PAPER.
 
-    Valid modes: OBSERVER, LIVE, PAPER
+    LIVE requires explicit per-session confirmation (confirm=true, D10).
     """
     global _current_mode
     valid = {"OBSERVER", "LIVE", "PAPER"}
-    if mode.upper() in valid:
-        _current_mode = mode.upper()
-        _save_mode(_current_mode)
-        # Publish config changed event
-        try:
-            bus = request.app.state.event_bus
-            if bus:
-                from shettyxtreme.core.event_bus.event_bus import Event, Topic
-                await bus.publish(Event(Topic.CONFIG_CHANGED, {"mode": _current_mode}, source="execution_router"))
-        except Exception:
-            pass
+    requested = mode.upper()
+    if requested not in valid:
+        return ModeResponse(mode=_current_mode)
+    if requested == "LIVE" and not confirm:
+        return ModeResponse(mode=_current_mode)
+    _current_mode = requested
+    _save_mode(_current_mode)
+    # Publish config changed event
+    try:
+        bus = request.app.state.event_bus
+        if bus:
+            from shettyxtreme.core.event_bus.event_bus import Event, Topic
+            await bus.publish(Event(Topic.CONFIG_CHANGED, {"mode": _current_mode}, source="execution_router"))
+    except Exception:
+        pass
     return ModeResponse(mode=_current_mode)
 
 

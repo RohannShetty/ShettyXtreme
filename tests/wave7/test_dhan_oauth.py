@@ -148,3 +148,101 @@ async def test_generate_consent_handles_network_error() -> None:
             client_id="C123",
         )
         assert result is None
+
+
+@pytest.mark.asyncio
+async def test_generate_access_token_success() -> None:
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "accessToken": "token_abc",
+        "expiryTime": "2026-12-31T23:59:59+00:00",
+        "clientId": "C123",
+        "clientName": "TestClient",
+        "ddpiStatus": True,
+    }
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        helper = DhanOAuthHelper()
+        result = await helper.generate_access_token("client1", "1234", "123456")
+        assert result.ok
+        assert result.consent.access_token == "token_abc"
+
+
+@pytest.mark.asyncio
+async def test_generate_access_token_error() -> None:
+    mock_response = MagicMock()
+    mock_response.status_code = 500
+    mock_response.json.return_value = {"status": "error"}
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "HTTP error", request=MagicMock(), response=mock_response,
+    )
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        helper = DhanOAuthHelper()
+        result = await helper.generate_access_token("client1", "1234", "000000")
+        assert not result.ok
+        assert result.error is not None
+
+
+@pytest.mark.asyncio
+async def test_generate_access_token_401_describes_invalid_credentials() -> None:
+    """401 → descriptive error naming invalid/expired credentials."""
+    mock_response = MagicMock()
+    mock_response.status_code = 401
+    mock_response.text = "unauthorized"
+    mock_response.json.return_value = {"status": "error"}
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "HTTP error", request=MagicMock(), response=mock_response,
+    )
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        helper = DhanOAuthHelper()
+        result = await helper.generate_access_token("client1", "1234", "123456")
+        assert not result.ok
+        assert result.error is not None
+        assert "invalid" in result.error.lower() or "expired" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_generate_access_token_400_describes_input() -> None:
+    """400 → descriptive error naming the input (PIN or TOTP)."""
+    mock_response = MagicMock()
+    mock_response.status_code = 400
+    mock_response.text = "bad request"
+    mock_response.json.return_value = {"status": "error"}
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "HTTP error", request=MagicMock(), response=mock_response,
+    )
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        helper = DhanOAuthHelper()
+        result = await helper.generate_access_token("client1", "1234", "000000")
+        assert not result.ok
+        assert result.error is not None
+        assert "PIN" in result.error or "TOTP" in result.error

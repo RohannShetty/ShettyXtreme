@@ -225,16 +225,22 @@ class IntelligenceProjection:
 
     async def on_regime_changed(self, event: Event) -> None:
         d = event.data
+        values = getattr(d, "__dict__", d) if not isinstance(d, dict) else d
+        if values is None:
+            return
         for key in ("regime", "confidence", "transition", "adx", "di_plus", "di_minus"):
-            if key in d:
-                self._regime[key] = d[key]
+            if key in values:
+                self._regime[key] = values[key]
         await ws_bridge.broadcast("regime", dict(self._regime))
 
     async def on_signal_v2(self, event: Event) -> None:
         d = event.data
+        values = getattr(d, "__dict__", d) if not isinstance(d, dict) else d
+        if values is None:
+            return
         for key in ("direction", "conviction", "D", "P", "G", "voters", "timestamp"):
-            if key in d:
-                self._signal[key] = d[key]
+            if key in values:
+                self._signal[key] = values[key]
         await ws_bridge.broadcast("signal", {
             "direction": self._signal["direction"],
             "conviction": self._signal["conviction"],
@@ -310,6 +316,9 @@ class HealthProjection:
         if self._data_adapter is None:
             da_status = "down"
             da_msg = "Not initialized (no credentials)"
+        elif getattr(self._data_adapter, "entitlement_error", False):
+            da_status = "down"
+            da_msg = "Data API entitlement missing (806) — subscribe to Data APIs"
         elif not getattr(self._data_adapter, "_connected", False):
             da_status = "degraded"
             da_msg = "WebSocket not connected"

@@ -30,6 +30,8 @@ class CredentialStore:
     token_expiry: str | None = None
     client_id: str | None = None
     client_name: str | None = None
+    data_access_token: str | None = None
+    data_access_token_expiry: str | None = None
 
     @staticmethod
     def _fernet() -> Fernet:
@@ -105,6 +107,11 @@ class CredentialStore:
         self.token_expiry = expiry
         self.client_id = client_id
 
+    def update_data_token(self, token: str, expiry: str | None) -> None:
+        """Update the data-access token (fallback used by the Dhan data adapter)."""
+        self.data_access_token = token
+        self.data_access_token_expiry = expiry
+
     def get_masked(self) -> dict:
         """Return credentials with secrets masked (last 4 chars visible)."""
         def _mask(val: str | None) -> str:
@@ -121,4 +128,5 @@ class CredentialStore:
             "token_expiry": self.token_expiry or "",
             "client_id": self.client_id or "",
             "client_name": self.client_name or "",
+            "data_access_token": _mask(self.data_access_token),
         }

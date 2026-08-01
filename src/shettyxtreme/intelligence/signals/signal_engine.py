@@ -27,16 +27,44 @@ class Signal:
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 class VoterRegistry:
-    def register(self, name, fn, weight=1.0): pass
-    def names(self): return []
-    def count(self): return 0
-    def get(self, name): return None
+    """Registry of named voter callables with weights."""
 
-def voter(name, weight=1.0):
-    def decorator(fn): return fn
+    def __init__(self) -> None:
+        self._voters: dict[str, Callable[[dict[str, float]], Vote]] = {}
+        self._weights: dict[str, float] = {}
+
+    def register(self, name: str, fn: Callable[[dict[str, float]], Vote], weight: float = 1.0) -> None:
+        if not name:
+            raise ValueError("voter name must be non-empty")
+        if not callable(fn):
+            raise ValueError("voter must be callable")
+        self._voters[name] = fn
+        self._weights[name] = weight
+
+    def names(self) -> list[str]:
+        return list(self._voters)
+
+    def count(self) -> int:
+        return len(self._voters)
+
+    def get(self, name: str) -> Callable[[dict[str, float]], Vote] | None:
+        return self._voters.get(name)
+
+
+_DEFAULT_REGISTRY = VoterRegistry()
+
+
+def voter(name: str, weight: float = 1.0):
+    """Decorator registering a voter function into the default registry."""
+    def decorator(fn):
+        _DEFAULT_REGISTRY.register(name, fn, weight)
+        return fn
     return decorator
 
-def get_registry(): return VoterRegistry()
+
+def get_registry() -> VoterRegistry:
+    """Return the module-level default registry."""
+    return _DEFAULT_REGISTRY
 
 class SignalEngine:
     def __init__(self, feature_engine: FeatureEngine, **kwargs) -> None:

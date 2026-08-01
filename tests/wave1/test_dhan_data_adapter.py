@@ -266,3 +266,143 @@ class TestLTP:
         data_adapter._last_tick_time = 0.0
         await data_adapter.get_ltp({"NSE_EQ": ["11536"]})
         assert data_adapter._last_tick_time > 0.0
+
+
+class TestFeedRequestCodes:
+    """Dhan WS v2 accepts only request codes 15/17/21 (corrected fact 2)."""
+
+    @pytest.mark.asyncio
+    async def test_subscribe_ticks_uses_v2_request_code(self) -> None:
+        with patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanContext"
+        ) as mock_ctx_cls, patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanHQClient"
+        ) as mock_client_cls, patch(
+            "shettyxtreme.integration.dhan.data_adapter.MarketFeed"
+        ) as mock_feed_cls:
+            mock_ctx_cls.return_value = MagicMock()
+            mock_client_cls.return_value = _make_mock_dhanhq()
+            adapter = DhanDataAdapter(client_id=MOCK_CLIENT_ID, access_token=MOCK_API_KEY)
+            adapter._dhan = mock_client_cls.return_value
+
+            ok = await adapter.subscribe_ticks(["11536"], lambda t: None)
+
+            assert ok is True
+            _, kwargs = mock_feed_cls.call_args
+            instruments = kwargs["instruments"]
+            assert ("NSE_EQ", "11536", 15) in instruments
+
+    @pytest.mark.asyncio
+    async def test_subscribe_bars_uses_v2_request_code(self) -> None:
+        with patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanContext"
+        ) as mock_ctx_cls, patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanHQClient"
+        ) as mock_client_cls, patch(
+            "shettyxtreme.integration.dhan.data_adapter.MarketFeed"
+        ) as mock_feed_cls:
+            mock_ctx_cls.return_value = MagicMock()
+            mock_client_cls.return_value = _make_mock_dhanhq()
+            adapter = DhanDataAdapter(client_id=MOCK_CLIENT_ID, access_token=MOCK_API_KEY)
+            adapter._dhan = mock_client_cls.return_value
+
+            ok = await adapter.subscribe_bars(["11536"], "1", lambda b: None)
+
+            assert ok is True
+            _, kwargs = mock_feed_cls.call_args
+            instruments = kwargs["instruments"]
+            assert ("NSE_EQ", "11536", 21) in instruments
+
+
+class TestDataAccessTokenFallback:
+    """Data API token fallback slot and 806 entitlement surfacing."""
+
+    @pytest.mark.asyncio
+    async def test_data_token_preferred_over_primary(self) -> None:
+        with patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanContext"
+        ) as mock_ctx_cls, patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanHQClient"
+        ) as mock_client_cls:
+            mock_ctx_cls.return_value = MagicMock()
+            mock_client_cls.return_value = _make_mock_dhanhq()
+            DhanDataAdapter(
+                client_id=MOCK_CLIENT_ID,
+                access_token="primary_token",
+                data_access_token="data_token",
+            )
+            _, kwargs = mock_ctx_cls.call_args
+            assert kwargs["access_token"] == "data_token"
+
+    @pytest.mark.asyncio
+    async def test_806_returns_entitlement_error_dict(self, data_adapter) -> None:
+        """The raising path still classifies 806 (transport exceptions)."""
+        dhan = data_adapter._dhan
+        dhan.option_chain.side_effect = RuntimeError("806: token rejected")
+        result = await data_adapter.get_option_chain(
+            underlying_scrip="13", exchange_segment="NSE_FNO", expiry="",
+        )
+        assert result["status"] == "error"
+        assert result.get("entitlement") is True
+        assert "subscribe to Data APIs" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_806_failure_dict_returns_entitlement_error(self, data_adapter) -> None:
+        """dhanhq never raises on HTTP errors — model its failure-dict contract."""
+        dhan = data_adapter._dhan
+        dhan.option_chain.return_value = {
+            "status": "failure",
+            "remarks": {
+                "error_code": 806,
+                "error_type": "HTTP 806",
+                "error_message": "Subscribe to Data APIs to continue",
+            },
+            "data": "",
+        }
+        result = await data_adapter.get_option_chain(
+            underlying_scrip="13", exchange_segment="NSE_FNO", expiry="",
+        )
+        assert result["status"] == "error"
+        assert result.get("entitlement") is True
+        assert "subscribe to Data APIs" in result["message"]
+        assert data_adapter.entitlement_error is True
+
+    @pytest.mark.asyncio
+    async def test_failure_dict_non_entitlement_returns_remarks_message(self, data_adapter) -> None:
+        """Non-806 failures surface the remarks message as an error dict."""
+        dhan = data_adapter._dhan
+        dhan.option_chain.return_value = {
+            "status": "failure",
+            "remarks": {
+                "error_code": 429,
+                "error_type": "HTTP 429",
+                "error_message": "Rate limit exceeded",
+            },
+            "data": "",
+        }
+        result = await data_adapter.get_option_chain(
+            underlying_scrip="13", exchange_segment="NSE_FNO", expiry="",
+        )
+        assert result["status"] == "error"
+        assert result.get("entitlement") is not True
+        assert "Rate limit exceeded" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_failure_dict_string_remarks(self, data_adapter) -> None:
+        """Transport-exception remarks arrive as a plain string, not a dict."""
+        dhan = data_adapter._dhan
+        dhan.ticker_data.return_value = {
+            "status": "failure",
+            "remarks": "Subscribe to Data APIs to continue",
+            "data": "",
+        }
+        result = await data_adapter.get_ltp({"NSE_EQ": ["11536"]})
+        assert result["status"] == "error"
+        assert result.get("entitlement") is True
+
+    def test_806_marks_entitlement_flag(self, data_adapter) -> None:
+        data_adapter._mark_ws_error(
+            RuntimeError("Disconnected: Subscribe to Data APIs to continue")
+        )
+        assert data_adapter.entitlement_error is True
+        assert data_adapter.last_error == "subscribe to Data APIs"

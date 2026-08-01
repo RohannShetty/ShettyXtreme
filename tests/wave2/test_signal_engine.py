@@ -9,7 +9,7 @@ import pytest
 from shettyxtreme.intelligence.regime import Regime
 from shettyxtreme.intelligence.signals.signal_engine import (
     SignalEngine, SignalDirection, Signal, Vote,
-    VoterRegistry,
+    VoterRegistry, voter, get_registry,
 )
 
 
@@ -134,3 +134,32 @@ class TestVoteBounds:
     def test_confidence_clamped(self) -> None:
         v = Vote(direction=0.5, confidence=2.0, weight=1.0, name='test')
         assert v.confidence == 2.0
+
+
+# ---------------------------------------------------------------------------
+# VoterRegistry
+# ---------------------------------------------------------------------------
+class TestVoterRegistry:
+    def test_register_and_get(self) -> None:
+        reg = VoterRegistry()
+        fn = lambda fe: Vote(direction=1.0, confidence=0.5, weight=1.0, name="r")
+        reg.register("r", fn, weight=2.0)
+        assert reg.count() == 1
+        assert reg.names() == ["r"]
+        assert reg.get("r") is fn
+        assert reg.get("missing") is None
+
+    def test_register_requires_name_and_callable(self) -> None:
+        reg = VoterRegistry()
+        with pytest.raises(ValueError):
+            reg.register("", lambda fe: None)
+        with pytest.raises(ValueError):
+            reg.register("x", None)
+
+    def test_decorator_registers_into_default_registry(self) -> None:
+        @voter("decorated_test", weight=0.5)
+        def decorated(features: dict[str, float]) -> Vote:
+            return Vote(direction=-1.0, confidence=0.7, weight=0.5, name="decorated_test")
+
+        reg = get_registry()
+        assert reg.get("decorated_test") is decorated

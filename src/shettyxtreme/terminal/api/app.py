@@ -158,6 +158,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             _data_adapter = DhanDataAdapter(
                 client_id=store.client_id,
                 access_token=store.access_token,
+                data_access_token=store.data_access_token,
             )
             app.state.data_adapter = _data_adapter
             logger.info("DhanDataAdapter initialized")
@@ -237,12 +238,16 @@ app.add_middleware(
 # ── Static files (frontend) ────────────────────────────────────────────────
 _static_dir = Path(__file__).resolve().parent.parent / "static"
 if _static_dir.exists():
-    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+    app.mount(
+        "/static",
+        StaticFiles(directory=str(_static_dir), html=True),
+        name="static",
+    )
 
 # ── Settings redirect (before settings_router include) ──────────────────────
 @app.get("/settings")
 async def settings_redirect():
-    return RedirectResponse(url="/static/settings.html")
+    return RedirectResponse(url="/static/#/settings")
 
 # ── Include routers ────────────────────────────────────────────────────────
 app.include_router(watchlist_router)
@@ -255,17 +260,17 @@ app.include_router(postback_router.router)
 app.include_router(settings_router)
 
 
-# ── Root: redirect to terminal HTML ─────────────────────────────────────────
+# ── Root: redirect to the Svelte SPA ────────────────────────────────────────
 @app.get("/")
 async def root() -> RedirectResponse:
-    """Root endpoint — redirect to terminal HTML."""
-    return RedirectResponse(url="/static/index.html")
+    """Root endpoint — redirect to the Svelte SPA."""
+    return RedirectResponse(url="/static/")
 
 
 @app.get("/setup")
 async def setup_redirect() -> RedirectResponse:
-    """Setup endpoint — redirect to setup wizard."""
-    return RedirectResponse(url="/static/setup.html")
+    """Setup endpoint — redirect to the Svelte setup view."""
+    return RedirectResponse(url="/static/#/setup")
 
 
 # ── WebSocket endpoint ─────────────────────────────────────────────────────

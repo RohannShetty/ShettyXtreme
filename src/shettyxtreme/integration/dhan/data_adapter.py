@@ -6,9 +6,12 @@ core.interfaces.market_data_stream.MarketDataStream protocols.
 Uses SEPARATE credentials from Trading adapter (Dhan error 806 if mixed).
 Includes staleness detection for data feed.
 
-Dhan WS binary protocol feed codes:
-  2 = ticker, 4 = quote, 5 = order data,
-  8 = full quote, 41 = OHLC, 51 = market depth
+Dhan WS binary protocol — two distinct code sets:
+  Subscription REQUEST codes (v2 JSON, validated to 15/17/21):
+    Ticker=15, Quote=17, Full=21; unsubscribe = request code + 1.
+  Response feed codes (parsing):
+    2 = ticker, 4 = quote, 5 = order data,
+    8 = full quote, 41 = OHLC, 51 = market depth
 """
 from __future__ import annotations
 
@@ -38,6 +41,11 @@ EXCHANGE_MAP: dict[str, str] = {
     "BFO": "BSE_FNO", "MCX": "MCX", "IDX": "IDX_I",
 }
 
+# Subscription REQUEST codes — v2 accepts only 15/17/21 (corrected fact 2)
+REQUEST_CODE_TICKER: int = 15
+REQUEST_CODE_QUOTE: int = 17
+REQUEST_CODE_FULL: int = 21
+# Response feed codes (used by _process_ws_tick parsing)
 FEED_CODE_TICKER: int = 2
 FEED_CODE_QUOTE: int = 4
 FEED_CODE_ORDER: int = 5
@@ -57,9 +65,13 @@ class DhanDataAdapter:
     name: str = "dhan-data"
     description: str = "Dhan market data: live WS feed, historical OHLC, OI"
 
-    def __init__(self, client_id: str, access_token: str) -> None:
+    def __init__(
+        self, client_id: str, access_token: str,
+        data_access_token: str | None = None,
+    ) -> None:
         self._client_id: str = client_id
         self._access_token: str = access_token
+        self._data_access_token: str | None = data_access_token
         self._context: DhanContext | None = None
         self._dhan: DhanHQClient | None = None
         self._feed: MarketFeed | None = None
@@ -68,15 +80,73 @@ class DhanDataAdapter:
         self._tick_callbacks: dict[str, TickCallback] = {}
         self._bar_callbacks: dict[str, tuple[str, BarCallback]] = {}
         self._last_tick_time: float = 0.0
+        self.last_error: str | None = None
+        self.entitlement_error: bool = False
         self._init_context()
 
     def _init_context(self) -> None:
         """Initialize DhanContext with DATA credentials (not trading)."""
         self._context = DhanContext(
-            client_id=self._client_id, access_token=self._access_token,
+            client_id=self._client_id,
+            access_token=self._data_access_token or self._access_token,
         )
         self._dhan = DhanHQClient(self._context)
         self._connected = True
+
+    @staticmethod
+    def _is_entitlement_text(text: str) -> bool:
+        """True when an error text means the Data-API entitlement is missing (806)."""
+        return "806" in text or "Subscribe to Data APIs" in text
+
+    @staticmethod
+    def _is_entitlement_error(exc: Exception) -> bool:
+        """True when the error means the Data-API entitlement is missing (806)."""
+        return DhanDataAdapter._is_entitlement_text(str(exc))
+
+    def _mark_ws_error(self, exc: Exception) -> None:
+        """Record a WS error; flag entitlement problems (806) for the reconnect cap."""
+        if self._is_entitlement_error(exc):
+            self.entitlement_error = True
+            self.last_error = "subscribe to Data APIs"
+
+    def _error_dict(self, exc: Exception) -> dict[str, Any]:
+        """Build the REST error dict, surfacing 806 as a Data-API entitlement problem."""
+        if self._is_entitlement_error(exc):
+            return {
+                "status": "error",
+                "entitlement": True,
+                "message": "subscribe to Data APIs — Dhan error 806",
+            }
+        return {"status": "error", "message": str(exc)}
+
+    def _failure_dict(self, result: dict[str, Any]) -> dict[str, Any]:
+        """Convert a dhanhq-style failure dict to this adapter's error contract.
+
+        dhanhq 2.2.0 never raises on HTTP errors: DhanHTTP._send_request
+        returns {"status": "failure", "remarks": ..., "data": ""} instead
+        (installed dhanhq/dhan_http.py:53-70). On HTTP errors ``remarks`` is
+        a dict with error_code/error_type/error_message; on transport
+        exceptions it is a plain string. Surface 806 as the Data-API
+        entitlement problem; other failures carry the remarks message.
+        """
+        remarks: Any = result.get("remarks", "")
+        if isinstance(remarks, dict):
+            text = " ".join(
+                str(remarks.get(k) or "")
+                for k in ("error_message", "error_type", "error_code")
+            )
+        else:
+            text = str(remarks)
+        if self._is_entitlement_text(text):
+            self.entitlement_error = True
+            self.last_error = "subscribe to Data APIs"
+            return {
+                "status": "error",
+                "entitlement": True,
+                "message": "subscribe to Data APIs — Dhan error 806",
+            }
+        self.last_error = text or "Dhan API failure"
+        return {"status": "error", "message": self.last_error}
 
     # ---- DataProvider protocol ----
 
@@ -120,7 +190,7 @@ class DhanDataAdapter:
         for sym in symbols:
             self._tick_callbacks[sym] = callback
         instruments: list[tuple[str, str, int]] = [
-            ("NSE_EQ", sym, FEED_CODE_TICKER) for sym in symbols
+            ("NSE_EQ", sym, REQUEST_CODE_TICKER) for sym in symbols
         ]
         return await self._start_ws_feed(instruments)
 
@@ -129,7 +199,7 @@ class DhanDataAdapter:
         for sym in symbols:
             self._bar_callbacks[sym] = (tf, callback)
         instruments: list[tuple[str, str, int]] = [
-            ("NSE_EQ", sym, FEED_CODE_FULL_QUOTE) for sym in symbols
+            ("NSE_EQ", sym, REQUEST_CODE_FULL) for sym in symbols
         ]
         return await self._start_ws_feed(instruments)
 
@@ -148,6 +218,11 @@ class DhanDataAdapter:
 
     async def _start_ws_feed(self, instruments: list[tuple[str, str, int]]) -> bool:
         """Start the Dhan WebSocket feed in a background thread."""
+        if self.entitlement_error:
+            logger.error(
+                "Dhan WS feed not started: subscribe to Data APIs to continue"
+            )
+            return False
         if self._context is None:
             self._init_context()
 
@@ -160,9 +235,11 @@ class DhanDataAdapter:
 
         def _on_close() -> None:
             self._ws_connected = False
+            self._mark_ws_error(Exception("Dhan WS feed closed"))
             logger.warning("Dhan WS feed closed.")
 
         def _on_error(err: Any) -> None:
+            self._mark_ws_error(Exception(str(err)))
             logger.error("Dhan WS feed error: %s", err)
 
         try:
@@ -313,10 +390,12 @@ class DhanDataAdapter:
                 interval=interval, oi=oi,
             )
             self._last_tick_time = time.time()
+            if result.get("status") == "failure":
+                return self._failure_dict(result)
             return result
         except Exception as exc:
             logger.error("Dhan get_intraday_bars failed: %s", exc)
-            return {"status": "error", "message": str(exc)}
+            return self._error_dict(exc)
 
     async def get_daily_bars(
         self, security_id: str, exchange_segment: str,
@@ -347,10 +426,12 @@ class DhanDataAdapter:
                 from_date=from_date, to_date=to_date, oi=oi,
             )
             self._last_tick_time = time.time()
+            if result.get("status") == "failure":
+                return self._failure_dict(result)
             return result
         except Exception as exc:
             logger.error("Dhan get_daily_bars failed: %s", exc)
-            return {"status": "error", "message": str(exc)}
+            return self._error_dict(exc)
 
     async def get_ohlc(self, securities: dict[str, list[str]]) -> dict[str, Any]:
         """Get OHLC + LTP for instruments via dhanhq.ohlc_data.
@@ -368,10 +449,12 @@ class DhanDataAdapter:
         try:
             result: dict[str, Any] = self._dhan.ohlc_data(securities)
             self._last_tick_time = time.time()
+            if result.get("status") == "failure":
+                return self._failure_dict(result)
             return result
         except Exception as exc:
             logger.error("Dhan get_ohlc failed: %s", exc)
-            return {"status": "error", "message": str(exc)}
+            return self._error_dict(exc)
 
     async def get_ltp(self, securities: dict[str, list[str]]) -> dict[str, Any]:
         """Get latest traded prices via dhanhq.ticker_data.
@@ -389,10 +472,12 @@ class DhanDataAdapter:
         try:
             result: dict[str, Any] = self._dhan.ticker_data(securities)
             self._last_tick_time = time.time()
+            if result.get("status") == "failure":
+                return self._failure_dict(result)
             return result
         except Exception as exc:
             logger.error("Dhan get_ltp failed: %s", exc)
-            return {"status": "error", "message": str(exc)}
+            return self._error_dict(exc)
 
     async def get_option_chain(
         self, underlying_scrip: str, exchange_segment: str = "NSE_FNO",
@@ -418,7 +503,9 @@ class DhanDataAdapter:
                 expiry=expiry,
             )
             self._last_tick_time = time.time()
+            if result.get("status") == "failure":
+                return self._failure_dict(result)
             return result
         except Exception as exc:
             logger.error("Dhan get_option_chain failed: %s", exc)
-            return {"status": "error", "message": str(exc)}
+            return self._error_dict(exc)

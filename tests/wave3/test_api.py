@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import AsyncIterator
 
 import pytest
@@ -9,6 +10,7 @@ import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 
 from shettyxtreme.core.event_bus.event_bus import EventBus
+from shettyxtreme.terminal.api import execution_router
 from shettyxtreme.terminal.api.app import app
 from shettyxtreme.terminal.projections import (
     AlertProjection,
@@ -21,10 +23,14 @@ from shettyxtreme.terminal.projections import (
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def setup_projections() -> AsyncIterator[None]:
+async def setup_projections(tmp_path: Path, monkeypatch) -> AsyncIterator[None]:
     """Initialize projections on app.state for test endpoints."""
     bus = EventBus()
     bus_task = asyncio.create_task(bus.start())
+
+    mode_file = tmp_path / "mode.txt"
+    monkeypatch.setattr(execution_router, "_MODE_FILE", mode_file)
+    execution_router._current_mode = execution_router._load_mode()
 
     app.state.event_bus = bus
     app.state.trading_adapter = None
@@ -71,14 +77,14 @@ async def client() -> AsyncIterator[AsyncClient]:
 async def test_root_redirects_to_terminal(client: AsyncClient) -> None:
     resp = await client.get("/", follow_redirects=False)
     assert resp.status_code == 307
-    assert resp.headers["location"] == "/static/index.html"
+    assert resp.headers["location"] == "/static/"
 
 
 @pytest.mark.asyncio
 async def test_setup_redirects_to_wizard(client: AsyncClient) -> None:
     resp = await client.get("/setup", follow_redirects=False)
     assert resp.status_code == 307
-    assert resp.headers["location"] == "/static/setup.html"
+    assert resp.headers["location"] == "/static/#/setup"
 
 
 # ── Watchlist ───────────────────────────────────────────────────
@@ -160,6 +166,34 @@ async def test_get_strategy_hint(client: AsyncClient) -> None:
     assert "rationale" in data
 
 
+@pytest.mark.asyncio
+async def test_get_options_with_adapter(client: AsyncClient) -> None:
+    """Options endpoint enriches a real adapter chain response."""
+    class FakeAdapter:
+        async def get_option_chain(self, underlying_scrip: str, exchange_segment: str, expiry: str) -> dict:
+            return {
+                "status": "success",
+                "data": {
+                    "option_chain": [
+                        {"strike": 19000, "option_type": "CE", "ltp": 150.0},
+                        {"strike": 19000, "option_type": "PE", "ltp": 120.0},
+                    ],
+                },
+            }
+
+    app.state.data_adapter = FakeAdapter()
+    try:
+        resp = await client.get("/api/intelligence/options?symbol=NIFTY")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["underlying"] == "NIFTY"
+        assert len(data["contracts"]) == 2
+        assert data["contracts"][0]["strike"] == 19000.0
+        assert data["contracts"][0]["option_type"] == "CE"
+    finally:
+        app.state.data_adapter = None
+
+
 # ── Execution ──────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_positions(client: AsyncClient) -> None:
@@ -186,8 +220,15 @@ async def test_get_mode(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_mode(client: AsyncClient) -> None:
+async def test_set_mode_requires_confirmation_for_live(client: AsyncClient) -> None:
     resp = await client.post("/api/execution/mode?mode=LIVE")
+    assert resp.status_code == 200
+    assert resp.json()["mode"] != "LIVE"
+
+
+@pytest.mark.asyncio
+async def test_set_mode_live_with_confirmation(client: AsyncClient) -> None:
+    resp = await client.post("/api/execution/mode?mode=LIVE&confirm=true")
     assert resp.status_code == 200
     data = resp.json()
     assert data["mode"] == "LIVE"
