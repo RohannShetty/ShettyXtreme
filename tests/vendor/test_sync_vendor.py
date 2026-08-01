@@ -92,6 +92,20 @@ def test_sync_preserves_trailing_newline_and_leading_blank_line(layout):
     assert out[marker_end:] == "\nVALID_ACTIONS = ['BUY']\n"
 
 
+def test_destamp_stale_meta_preserves_leading_comments(layout):
+    mirror, vendor, files_yaml, meta = layout
+    meta_a = {**meta, "commit": "oldhash"}
+    meta_b = {**meta, "commit": "newhash"}
+    source = "# Copyright banner (real content)\n# second comment line\nREAL = 1\n"
+    (mirror / "src" / "order.py").write_text(sync_vendor.stamp(source, meta_a), encoding="utf-8")
+    sync_vendor.sync(files_yaml, mirror, vendor, meta_b, apply=True)
+    out = (vendor / "order_validator.py").read_text(encoding="utf-8")
+    assert out.count("=== ORIGIN ===") == 1
+    marker_end = out.index("# === END ORIGIN ===\n") + len("# === END ORIGIN ===\n")
+    assert out[marker_end:].startswith("# Copyright banner (real content)\n# second comment line\n")
+    assert "REAL = 1" in out
+
+
 def test_sync_no_marker_for_json(layout):
     mirror, vendor, files_yaml, meta = layout
     (mirror / "src" / "plugin.json").write_text('{"name": "dhan"}\n', encoding="utf-8")

@@ -72,16 +72,15 @@ def destamp(content: str, meta: dict) -> str:
     """Strip a previously written origin marker, byte-exact when possible.
 
     The happy path strips the exact runtime-formatted marker; a file stamped
-    with an older commit/date falls back to dropping leading comment lines.
+    with an older commit/date falls back to anchoring on the stable END
+    marker line, so leading real-content comment lines are preserved. Files
+    without the END marker in the first six lines are left untouched.
     """
     expected = MARKER.format(**meta)
     if content.startswith(expected):
         return content[len(expected):]
-    lines = content.splitlines()
-    if "=== ORIGIN ===" in lines[:6]:
-        first = next((i for i, line in enumerate(lines) if not line.startswith("#")), None)
-        if first is not None:
-            return "\n".join(lines[first:])
+    if "# === END ORIGIN ===\n" in content.splitlines(keepends=True)[:6]:
+        return content.split("# === END ORIGIN ===\n", 1)[1]
     return content
 
 
