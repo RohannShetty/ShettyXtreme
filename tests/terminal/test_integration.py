@@ -41,6 +41,14 @@ def test_settings_redirects(client: TestClient) -> None:
     assert resp.headers["location"] == "/static/#/settings"
 
 
+def test_oauth_callback_redirects_to_spa(client: TestClient) -> None:
+    resp = client.get("/auth/dhan/callback?tokenId=bogus", follow_redirects=False)
+    assert resp.status_code == 307
+    location = resp.headers["location"]
+    assert location.startswith("/static/")
+    assert "setup.html" not in location
+
+
 # ── Health endpoints ──────────────────────────────────────────────────────
 
 
