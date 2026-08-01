@@ -67,6 +67,10 @@ class ShadowManager:
         if "session_date" not in cols:
             cur.execute("ALTER TABLE shadow_sessions ADD COLUMN session_date TEXT")
         cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_shadow_sessions_name "
+            "ON shadow_sessions(shadow_name)"
+        )
+        cur.execute(
             """
             CREATE TABLE IF NOT EXISTS shadow_graduates (
                 shadow_name TEXT PRIMARY KEY,
@@ -202,43 +206,50 @@ class ShadowManager:
                 self._conn.commit()
             except sqlite3.Error:
                 logger.exception("Failed to persist graduation for shadow %r", name)
+                self._conn.rollback()
                 return None
         get_registry().register(name, fn, weight=1.0)
         return fn
 
     def graduation_status(self) -> list[dict]:
-        """Per-shadow: sessions, evaluated, hit_rate, graduated, registered."""
+        """Per-shadow: sessions, evaluated, hit_rate, graduated, registered.
+
+        Enumerates in-memory shadows plus any shadow persisted in the DB, so
+        persisted-but-unregistered shadows (e.g. from another process) also
+        show up. Runs 2 queries total regardless of shadow count.
+        """
         if self._conn is None:
             return []
+        cur = self._conn.cursor()
+        aggregates = {
+            str(row["shadow_name"]): row
+            for row in cur.execute(
+                "SELECT shadow_name, "
+                "COUNT(DISTINCT session_date) AS sessions, "
+                "COUNT(was_correct) AS evaluated, "
+                "COALESCE(SUM(was_correct), 0) AS hits "
+                "FROM shadow_sessions GROUP BY shadow_name"
+            ).fetchall()
+        }
+        graduated_names = {
+            str(row[0])
+            for row in cur.execute("SELECT shadow_name FROM shadow_graduates").fetchall()
+        }
         registered_names = set(get_registry().names())
+        names = list(self._shadows) + sorted(set(aggregates) - set(self._shadows))
         statuses: list[dict] = []
-        for name in self._shadows:
-            cur = self._conn.cursor()
-            sessions = cur.execute(
-                "SELECT COUNT(DISTINCT session_date) FROM shadow_sessions "
-                "WHERE shadow_name = ? AND session_date IS NOT NULL",
-                (name,),
-            ).fetchone()[0]
-            evaluated = cur.execute(
-                "SELECT COUNT(*) FROM shadow_sessions "
-                "WHERE shadow_name = ? AND was_correct IS NOT NULL",
-                (name,),
-            ).fetchone()[0]
-            hits = cur.execute(
-                "SELECT COUNT(*) FROM shadow_sessions "
-                "WHERE shadow_name = ? AND was_correct = 1",
-                (name,),
-            ).fetchone()[0]
-            graduated = cur.execute(
-                "SELECT 1 FROM shadow_graduates WHERE shadow_name = ?", (name,)
-            ).fetchone() is not None
+        for name in names:
+            agg = aggregates.get(name)
+            sessions = agg["sessions"] if agg is not None else 0
+            evaluated = agg["evaluated"] if agg is not None else 0
+            hits = agg["hits"] if agg is not None else 0
             statuses.append(
                 {
                     "name": name,
                     "sessions": sessions,
                     "evaluated": evaluated,
                     "hit_rate": hits / evaluated if evaluated else 0.0,
-                    "graduated": graduated,
+                    "graduated": name in graduated_names,
                     "registered": name in registered_names,
                 }
             )

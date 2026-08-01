@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter
 
@@ -63,28 +62,12 @@ def _fit_calibration(db_path: str) -> tuple[bool, list[CalibrationPointResponse]
 
 
 def _shadow_status(db_path: str) -> list[ShadowStatusItem]:
-    """Per-shadow graduation status from the shadow database.
-
-    graduation_status() only knows shadows registered in-memory, so register
-    a no-op voter per distinct shadow name persisted in the DB first.
-    """
+    """Per-shadow graduation status from the shadow database."""
     if not Path(db_path).exists():
         return []
     try:
-        conn = sqlite3.connect(db_path)
-        try:
-            names = [
-                str(row[0])
-                for row in conn.execute(
-                    "SELECT DISTINCT shadow_name FROM shadow_sessions"
-                )
-            ]
-        finally:
-            conn.close()
         mgr = ShadowManager(db_path=db_path)
         try:
-            for name in names:
-                mgr.register_shadow(name, _noop_shadow)
             return [
                 ShadowStatusItem(
                     name=item["name"],
@@ -98,14 +81,9 @@ def _shadow_status(db_path: str) -> list[ShadowStatusItem]:
             ]
         finally:
             mgr.close()
-    except (FileNotFoundError, sqlite3.Error, Exception) as exc:
+    except Exception as exc:
         logger.warning("Shadow status read failed for %s: %s", db_path, exc)
         return []
-
-
-def _noop_shadow(features: dict, regime: Any, options_context: dict) -> Any:
-    """Stand-in voter so graduation_status() can enumerate persisted names."""
-    return None
 
 
 @router.get("/calibration", response_model=CalibrationResponse)
