@@ -15,6 +15,9 @@ from shettyxtreme.learning.outcome_tracker import OutcomeLabel
 
 ShadowFn = Callable[[dict[str, float], Regime, dict], Vote]
 
+MIN_SESSIONS = 20
+PROMOTION_HIT_RATE = 0.55
+
 
 @dataclass
 class ShadowComparison:
@@ -50,10 +53,14 @@ class ShadowManager:
                 vote_direction REAL,
                 vote_confidence REAL,
                 outcome TEXT,
-                was_correct INTEGER
+                was_correct INTEGER,
+                session_date TEXT
             )
             """
         )
+        cols = [row["name"] for row in cur.execute("PRAGMA table_info(shadow_sessions)")]
+        if "session_date" not in cols:
+            cur.execute("ALTER TABLE shadow_sessions ADD COLUMN session_date TEXT")
         self._conn.commit()
 
     def register_shadow(self, name: str, voter: ShadowFn) -> None:
@@ -73,7 +80,10 @@ class ShadowManager:
         return results
 
     def log_shadow_results(
-        self, signal_id: str, shadow_votes: dict[str, Vote]
+        self,
+        signal_id: str,
+        shadow_votes: dict[str, Vote],
+        session_date: str | None = None,
     ) -> None:
         """Persist each shadow vote for a signal (outcome not yet known)."""
         if self._conn is None:
@@ -82,8 +92,9 @@ class ShadowManager:
         for name, vote in shadow_votes.items():
             cur.execute(
                 "INSERT INTO shadow_sessions "
-                "(shadow_name, signal_id, vote_direction, vote_confidence, outcome, was_correct) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(shadow_name, signal_id, vote_direction, vote_confidence, "
+                "outcome, was_correct, session_date) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     name,
                     signal_id,
@@ -91,12 +102,16 @@ class ShadowManager:
                     float(vote.confidence),
                     None,
                     None,
+                    session_date,
                 ),
             )
         self._conn.commit()
 
     def compare_shadow_vs_live(
-        self, signal_id: str, live_outcome: OutcomeLabel
+        self,
+        signal_id: str,
+        live_outcome: OutcomeLabel,
+        live_direction: float = 1.0,
     ) -> dict[str, ShadowComparison]:
         """Build ShadowComparison for each logged shadow vote of a signal."""
         comparisons: dict[str, ShadowComparison] = {}
@@ -109,7 +124,7 @@ class ShadowManager:
         for row in rows:
             direction = float(row["vote_direction"])
             confidence = float(row["vote_confidence"])
-            was_correct = self._is_correct(direction, live_outcome)
+            was_correct = self._is_correct(direction, live_direction)
             cur.execute(
                 "UPDATE shadow_sessions SET outcome = ?, was_correct = ? "
                 "WHERE signal_id = ? AND shadow_name = ?",
@@ -131,28 +146,31 @@ class ShadowManager:
         return comparisons
 
     def should_promote(self, name: str) -> bool:
-        """True if shadow has >20 sessions and hit rate > 0.55."""
+        """True if >= MIN_SESSIONS distinct sessions and hit rate > threshold."""
         if self._conn is None:
             return False
         cur = self._conn.cursor()
+        sessions = cur.execute(
+            "SELECT COUNT(DISTINCT session_date) FROM shadow_sessions "
+            "WHERE shadow_name = ? AND session_date IS NOT NULL",
+            (name,),
+        ).fetchone()[0]
+        if sessions < MIN_SESSIONS:
+            return False
         rows = cur.execute(
             "SELECT * FROM shadow_sessions WHERE shadow_name = ?", (name,)
         ).fetchall()
-        if len(rows) <= 20:
-            return False
         known = [r for r in rows if r["was_correct"] is not None]
         if not known:
             return False
         hits = sum(1 for r in known if r["was_correct"] == 1)
-        return (hits / len(known)) > 0.55
+        return (hits / len(known)) > PROMOTION_HIT_RATE
 
     @staticmethod
-    def _is_correct(vote_direction: float, outcome: OutcomeLabel) -> bool:
-        if vote_direction > 0:
-            return outcome == OutcomeLabel.WIN
-        if vote_direction < 0:
-            return outcome == OutcomeLabel.WIN
-        return False
+    def _is_correct(vote_direction: float, live_direction: float) -> bool:
+        if vote_direction == 0.0 or live_direction == 0.0:
+            return False
+        return (vote_direction > 0) == (live_direction > 0)
 
     def close(self) -> None:
         """Close the underlying database connection if open."""

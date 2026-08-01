@@ -72,7 +72,7 @@ def test_compare_shadow_vs_live_was_correct(tmp_data_dir) -> None:
     votes = mgr.run_shadow({}, Regime.TRENDING_UP, {})
     mgr.log_shadow_results("sig2", votes)
 
-    comps = mgr.compare_shadow_vs_live("sig2", OutcomeLabel.WIN)
+    comps = mgr.compare_shadow_vs_live("sig2", OutcomeLabel.WIN, live_direction=1.0)
     assert "dummy_shadow" in comps
     c = comps["dummy_shadow"]
     assert isinstance(c, ShadowComparison)
@@ -91,8 +91,8 @@ def test_should_promote_false_under_20_sessions(tmp_data_dir) -> None:
     mgr.register_shadow("candidate", up)
     for i in range(15):
         v = mgr.run_shadow({}, Regime.TRENDING_UP, {})
-        mgr.log_shadow_results(f"s{i}", v)
-        mgr.compare_shadow_vs_live(f"s{i}", OutcomeLabel.WIN)
+        mgr.log_shadow_results(f"s{i}", v, session_date=f"2026-01-{i+1:02d}")
+        mgr.compare_shadow_vs_live(f"s{i}", OutcomeLabel.WIN, live_direction=1.0)
     assert mgr.should_promote("candidate") is False
 
 
@@ -104,9 +104,63 @@ def test_should_promote_true_over_20_with_high_hitrate(tmp_data_dir) -> None:
         return Vote(direction=1.0, confidence=0.6, weight=1.0, name="candidate")
 
     mgr.register_shadow("candidate", up)
-    # 25 sessions, all correct (vote up, outcome WIN)
+    # 25 sessions, all correct (vote up, outcome WIN, live direction up)
     for i in range(25):
         v = mgr.run_shadow({}, Regime.TRENDING_UP, {})
-        mgr.log_shadow_results(f"s{i}", v)
-        mgr.compare_shadow_vs_live(f"s{i}", OutcomeLabel.WIN)
+        mgr.log_shadow_results(f"s{i}", v, session_date=f"2026-01-{i+1:02d}")
+        mgr.compare_shadow_vs_live(f"s{i}", OutcomeLabel.WIN, live_direction=1.0)
     assert mgr.should_promote("candidate") is True
+
+
+class TestSessionGate:
+    def test_promote_requires_twenty_distinct_sessions(self, tmp_path) -> None:
+        mgr = ShadowManager(db_path=str(tmp_path / "s.db"))
+        mgr.register_shadow("s1", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "s1"))
+        for i in range(19):  # 19 distinct sessions
+            votes = mgr.run_shadow({}, None, {})
+            mgr.log_shadow_results(f"sig-{i}", votes, session_date=f"2026-01-{i % 28 + 1:02d}")
+        # 19 distinct dates: some dates repeat across the 19 signals
+        mgr.compare_shadow_vs_live("sig-0", OutcomeLabel.WIN, live_direction=1.0)
+        assert mgr.should_promote("s1") is False
+        mgr.close()
+
+    def test_promote_after_twenty_sessions_with_hit_rate(self, tmp_path) -> None:
+        mgr = ShadowManager(db_path=str(tmp_path / "s.db"))
+        mgr.register_shadow("s2", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "s2"))
+        for i in range(21):
+            votes = mgr.run_shadow({}, None, {})
+            mgr.log_shadow_results(f"sig-{i}", votes, session_date=f"2026-01-{i+1:02d}")
+            mgr.compare_shadow_vs_live(f"sig-{i}", OutcomeLabel.WIN, live_direction=1.0)
+        assert mgr.should_promote("s2") is True
+        mgr.close()
+
+    def test_low_hit_rate_blocks_promotion(self, tmp_path) -> None:
+        mgr = ShadowManager(db_path=str(tmp_path / "s.db"))
+        mgr.register_shadow("s3", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "s3"))
+        for i in range(21):
+            votes = mgr.run_shadow({}, None, {})
+            mgr.log_shadow_results(f"sig-{i}", votes, session_date=f"2026-01-{i+1:02d}")
+            outcome = OutcomeLabel.LOSS if i % 2 == 0 else OutcomeLabel.WIN  # ~50% hit
+            live_direction = 1.0 if i % 2 == 1 else -1.0
+            mgr.compare_shadow_vs_live(f"sig-{i}", outcome, live_direction=live_direction)
+        assert mgr.should_promote("s3") is False
+        mgr.close()
+
+    def test_direction_aware_correctness(self, tmp_path) -> None:
+        mgr = ShadowManager(db_path=str(tmp_path / "s.db"))
+        mgr.register_shadow("s4", lambda fe, rg, oc: Vote(-1.0, 0.6, 1.0, "s4"))
+        votes = mgr.run_shadow({}, None, {})
+        mgr.log_shadow_results("sig-x", votes, session_date="2026-01-01")
+        comps = mgr.compare_shadow_vs_live("sig-x", OutcomeLabel.WIN, live_direction=1.0)
+        assert comps["s4"].was_correct is False  # bearish vote, long trade won
+        mgr.close()
+
+    def test_legacy_rows_without_session_never_graduate(self, tmp_path) -> None:
+        mgr = ShadowManager(db_path=str(tmp_path / "s.db"))
+        mgr.register_shadow("s5", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "s5"))
+        for i in range(25):
+            votes = mgr.run_shadow({}, None, {})
+            mgr.log_shadow_results(f"sig-{i}", votes)  # no session_date
+            mgr.compare_shadow_vs_live(f"sig-{i}", OutcomeLabel.WIN, live_direction=1.0)
+        assert mgr.should_promote("s5") is False
+        mgr.close()
