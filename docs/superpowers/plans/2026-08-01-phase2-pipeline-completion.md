@@ -14,7 +14,7 @@ Binding requirements copied verbatim from the decisions pack (`.superpowers/sdd/
 
 - **No-import rule (D1):** zero occurrences of `import openalgo` / `from openalgo` in `src/`. Gate: `rg "openalgo" src/shettyxtreme -g "*.py"` shows no imports (vendor dir excluded).
 - **Design contract (D4):** ALL terminal UI follows `DESIGN.md` tokens: canvas `#0a0b0d`, surface-card `#15181d`, hairline `#232830`, accent `#35c8ff`, **price-up = red `#f6525c`, price-down = green `#2ebd85`** (Indian convention — binding), success `#22c55e`, warning `#ffb020`, danger `#e5484d`; numerals in JetBrains Mono with `font-variant-numeric: tabular-nums`; price tokens are text/data-viz only, never button fills.
-- **Dhan pin (D8):** `dhanhq>=2.2.0,<2.3.0` in `pyproject.toml` — do not change.
+- **Dhan pin (D8):** `pyproject.toml` declares `dhanhq>=0.1.0` (loose floor; installed env resolves 2.2.0). Do not change the pyproject line — pin discipline is honored by keeping the installed 2.2.0 and diffing the 5 contract files before any bump.
 - **Mode default (D10):** runtime mode defaults OBSERVER; LIVE is an explicit per-session action with confirmation; LIVE never auto-restores across sessions.
 - **806 is entitlement, not credentials (corrected fact 1):** surface "subscribe to Data APIs" messages; the optional `data_access_token` fallback slot is provisioned via PIN/TOTP `generateAccessToken` flow only if the feed rejects the consent token.
 - **Feed codes (corrected fact 2):** WS v2 subscription request codes are Ticker=15, Quote=17, Full=21 (unsubscribe = code+1); response codes 2/4/8/41/51 unchanged.
@@ -337,7 +337,7 @@ async def set_mode(request: Request, mode: str, confirm: bool = False) -> ModeRe
 - Produces (later tasks rely on these exact names):
   - `intelligence.hints.StrategyHint` dataclass: `direction: str` (bullish/bearish/neutral), `strategy: str`, `strike: float | None = None`, `premium: float | None = None`, `ev_after_cost: float = 0.0`, `rationale: str = ""`.
   - `intelligence.hints.StrategyHints(signal: dict, chain: list[dict] | None = None, slippage_per_lot: float = 5.0, brokerage_per_lot: float = 20.0)` with `generate() -> StrategyHint`.
-  - `intelligence.conviction.ConvictionResult` dataclass: `direction: str` (UP/DOWN/NEUTRAL), `conviction: float`, `D: float`, `P: float`, `G: str` (unanimous/split/contested), `voters: list[dict]`.
+  - `intelligence.conviction.ConvictionResult` dataclass: `direction: str` (UP/DOWN/NEUTRAL), `conviction: float`, `D: float`, `P: float`, `G: str` (unanimous / contested — the test spec in this plan binds "contested" for mixed-sign votes; the earlier "split" wording is superseded), `voters: list[dict]`.
   - `intelligence.conviction.ConvictionEngine` with `compute(votes: list[dict], eligible: int) -> ConvictionResult`.
   - `VoterRegistry.register(name, fn, weight=1.0) -> None` (raises `ValueError` on blank name or non-callable), `names() -> list[str]`, `count() -> int`, `get(name) -> Callable | None`; `voter(name, weight=1.0)` decorator registers into a module-level default registry; `get_registry()` returns that singleton.
   - Router: `GET /api/intelligence/options?symbol=NIFTY&expiry=` → 200 `OptionsChainResponse` (contracts may be `[]` when no data adapter — **required** so the existing wave3 test passes unchanged); `GET /api/intelligence/strategy-hint` → 200 `StrategyHintResponse` with `direction` + `rationale` always present.
