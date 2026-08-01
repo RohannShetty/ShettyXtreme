@@ -186,8 +186,15 @@ async def test_get_mode(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_mode(client: AsyncClient) -> None:
+async def test_set_mode_requires_confirmation_for_live(client: AsyncClient) -> None:
     resp = await client.post("/api/execution/mode?mode=LIVE")
+    assert resp.status_code == 200
+    assert resp.json()["mode"] != "LIVE"
+
+
+@pytest.mark.asyncio
+async def test_set_mode_live_with_confirmation(client: AsyncClient) -> None:
+    resp = await client.post("/api/execution/mode?mode=LIVE&confirm=true")
     assert resp.status_code == 200
     data = resp.json()
     assert data["mode"] == "LIVE"

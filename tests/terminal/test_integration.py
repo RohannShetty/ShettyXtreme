@@ -6,9 +6,12 @@ lifespan, so state-dependent endpoints are skipped gracefully.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
+from shettyxtreme.terminal.api import execution_router
 from shettyxtreme.terminal.api.app import app
 
 
@@ -63,7 +66,10 @@ def test_health_session(client: TestClient) -> None:
 # ── Execution endpoints ───────────────────────────────────────────────────
 
 
-def test_execution_mode_default(client: TestClient) -> None:
+def test_execution_mode_default(client: TestClient, tmp_path: Path, monkeypatch) -> None:
+    mode_file = tmp_path / "mode.txt"
+    monkeypatch.setattr(execution_router, "_MODE_FILE", mode_file)
+    execution_router._current_mode = execution_router._load_mode()
     resp = client.get("/api/execution/mode")
     assert resp.status_code == 200
     body = resp.json()

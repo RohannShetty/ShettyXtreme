@@ -30,15 +30,15 @@ async def test_default_mode_observer(tmp_path: Path):
         patch.stop()
 
 
-@pytest.mark.asyncio
-async def test_save_and_load(tmp_path: Path):
+def test_live_mode_not_restored_across_sessions(tmp_path: Path) -> None:
+    """LIVE is an explicit per-session action (D10): a saved LIVE mode
+    must not auto-restore on the next load."""
     patch, mode_file = _patch_mode_file(tmp_path)
-    patch.start()
-    try:
+    with patch:
+        if mode_file.exists():
+            mode_file.unlink()
         execution_router._save_mode("LIVE")
-        assert execution_router._load_mode() == "LIVE"
-    finally:
-        patch.stop()
+        assert execution_router._load_mode() == "OBSERVER"
 
 
 @pytest.mark.asyncio
