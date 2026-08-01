@@ -1,6 +1,7 @@
 """Tests for the research provider abstraction (spec §3.1, §3.2 v2)."""
 from __future__ import annotations
 
+import httpx
 import pytest
 
 from shettyxtreme.research.provider import (
@@ -86,15 +87,36 @@ async def test_deepseek_provider_no_key(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_deepseek_reads_env_at_call_time(monkeypatch) -> None:
+    # Without an explicit key, generate() reads the env var at call time:
+    # absent env -> no-key error; present env -> proceeds past the guard
+    # (transport stubbed — no test ever calls the real DeepSeek API).
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     p = DeepSeekProvider()
     with pytest.raises(ProviderError, match="DEEPSEEK_API_KEY"):
         await p.generate(system="s", prompt="p", max_output_tokens=10)
+
+    class _BlockedClient:
+        """AsyncClient double whose post() always raises ConnectError."""
+
+        async def __aenter__(self) -> "_BlockedClient":
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def post(self, *args: object, **kwargs: object) -> object:
+            raise httpx.ConnectError("blocked", request=None)
+
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    monkeypatch.setattr(
+        "shettyxtreme.research.provider.httpx.AsyncClient",
+        lambda **_kwargs: _BlockedClient(),
+    )
     try:
         await p.generate(system="s", prompt="p", max_output_tokens=10)
     except ProviderError as exc:
         assert "DEEPSEEK_API_KEY is not set" not in str(exc)
+        assert "blocked" in str(exc)
 
 
 def test_deepseek_parses_tool_calls() -> None:
