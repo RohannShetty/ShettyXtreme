@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import AsyncIterator
 
 import pytest
@@ -9,6 +10,7 @@ import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 
 from shettyxtreme.core.event_bus.event_bus import EventBus
+from shettyxtreme.terminal.api import execution_router
 from shettyxtreme.terminal.api.app import app
 from shettyxtreme.terminal.projections import (
     AlertProjection,
@@ -21,10 +23,14 @@ from shettyxtreme.terminal.projections import (
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def setup_projections() -> AsyncIterator[None]:
+async def setup_projections(tmp_path: Path, monkeypatch) -> AsyncIterator[None]:
     """Initialize projections on app.state for test endpoints."""
     bus = EventBus()
     bus_task = asyncio.create_task(bus.start())
+
+    mode_file = tmp_path / "mode.txt"
+    monkeypatch.setattr(execution_router, "_MODE_FILE", mode_file)
+    execution_router._current_mode = execution_router._load_mode()
 
     app.state.event_bus = bus
     app.state.trading_adapter = None

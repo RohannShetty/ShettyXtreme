@@ -196,3 +196,53 @@ async def test_generate_access_token_error() -> None:
         result = await helper.generate_access_token("client1", "1234", "000000")
         assert not result.ok
         assert result.error is not None
+
+
+@pytest.mark.asyncio
+async def test_generate_access_token_401_describes_invalid_credentials() -> None:
+    """401 → descriptive error naming invalid/expired credentials."""
+    mock_response = MagicMock()
+    mock_response.status_code = 401
+    mock_response.text = "unauthorized"
+    mock_response.json.return_value = {"status": "error"}
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "HTTP error", request=MagicMock(), response=mock_response,
+    )
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        helper = DhanOAuthHelper()
+        result = await helper.generate_access_token("client1", "1234", "123456")
+        assert not result.ok
+        assert result.error is not None
+        assert "invalid" in result.error.lower() or "expired" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_generate_access_token_400_describes_input() -> None:
+    """400 → descriptive error naming the input (PIN or TOTP)."""
+    mock_response = MagicMock()
+    mock_response.status_code = 400
+    mock_response.text = "bad request"
+    mock_response.json.return_value = {"status": "error"}
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "HTTP error", request=MagicMock(), response=mock_response,
+    )
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        helper = DhanOAuthHelper()
+        result = await helper.generate_access_token("client1", "1234", "000000")
+        assert not result.ok
+        assert result.error is not None
+        assert "PIN" in result.error or "TOTP" in result.error

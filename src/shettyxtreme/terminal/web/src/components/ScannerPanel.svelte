@@ -4,7 +4,7 @@
 
   type Gap = { symbol: string; gap_type: string; gap_percent: number; direction: string };
   type Cluster = { symbol: string; cluster_type: string; strength: number; source_count: number };
-  type Alert = { alert_type: string; severity: string; message: string };
+  type Alert = { alert_type: string; severity: string; message: string; timestamp: string };
 
   let gaps: Gap[] = [];
   let clusters: Cluster[] = [];
