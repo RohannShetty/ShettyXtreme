@@ -53,3 +53,20 @@ class ProjectionDataSource:
     def options_summary(self) -> str | None:
         # No options-posture renderer exists yet — honest best-effort.
         return None
+
+    def knowledge_summary(self, query: str) -> str | None:
+        """Top activated knowledge docs for a query (best-effort)."""
+        store = getattr(self._state, "knowledge_store", None)
+        if store is None:
+            return None
+        try:
+            hits = store.search(query, status="activated", limit=5)
+        except Exception:
+            return None
+        if not hits:
+            return None
+        lines = []
+        for h in hits:
+            tags = ",".join(t["tag"] for t in h.tags[:4]) or "untagged"
+            lines.append(f"- {h.title} [{tags}] ({h.source_ref})")
+        return "\n".join(lines)

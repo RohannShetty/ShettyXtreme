@@ -1,5 +1,31 @@
 # ShettyXtreme Changelog
 
+## [2026-08-01] — v0.10.0: Phase 4 Knowledge Layer (D12) + Analytics Dashboards
+
+Suite: **703 passed / 0 failed / 0 skipped** (was 655). D12 knowledge layer v1 — FTS5 document store for decided research briefs, heuristic tagger, human-gated activation wired to a `knowledge_search` research tool — plus scorecard-core dashboards with a recording track (SessionLog + regime-at-decision). All decisions from the Phase 4 wayfinder map (`.scratch/phase4-knowledge-dashboards/`); multi-broker and backtest depth DECIDED-DEFER.
+
+### Added
+- **Knowledge store** (`knowledge/store.py`): sqlite3 + FTS5 (stdlib, verified compiled in) — `docs`/`tags`/FTS5 external-content tables with sync triggers, `bm25` ranking + `snippet()`, tag/status filters, idempotent ingest by `source_ref`, idempotent activation. Zero new deps.
+- **Lexicons** (`core/knowledge/lexicons.py`): curated NSE symbols + regime terms (mapped to lowercase `Regime` enum values) + risk-theme lexicon + symbol stopwords; pure data, no shettyxtreme imports.
+- **Heuristic tagger** (`knowledge/tagger.py`): symbols/regimes/risk themes at word boundaries, phrase-first matching, dedup, 50-tag cap. No LLM anywhere in knowledge/ (D3).
+- **Ingest contract** (`knowledge/ingest.py`): decided briefs only (approved/rejected with `decided_at`), protocol-decoupled (`ResearchBriefLike` — knowledge/ never imports research/), duplicate counting.
+- **Knowledge API** (`/api/knowledge/*`): `search` (FTS5), `docs`, `status`, `sync` (the only research↔knowledge meeting point), `docs/{id}/activate`; WS topic `knowledge` (`activated` event); `KnowledgePanel.svelte` (search → review → activate → sync).
+- **Research tool wiring**: `knowledge_search` tool + `DataSource.knowledge_summary` — activated knowledge becomes a mid-run research source (`[UNSOURCED]` fallback intact).
+- **Recording track**: `learning/sessions.py` `SessionLog` (sessions written at lifespan start/stop); `ResearchBrief.regime_at_decision` (harness-owned, recorded at decide time from the intelligence projection, surfaced on responses).
+- **Analytics API** (`/api/analytics/*`): `scorecard` (sessions/decisions/win-rate/avg-confidence + per-regime rows + calibration passthrough; `available:false` + honest notes; never 500) and `sessions`; `AnalyticsPanel.svelte` — scorecard cards, plain-SVG calibration step-chart (zero charting deps, XSS-safe numeric interpolation), per-regime bars.
+- **api.ts**: knowledge + analytics types, `postBody` reuse; both panels mounted in the terminal.
+
+### Security
+- D12 import gate enforced + tested: `knowledge/` imports core ONLY (verified by review); FTS5 MATCH queries quoted (no injection surface); SVG interpolates numbers only; no LLM output in the knowledge/analytics path.
+
+### Known
+- `chain_snapshot`/`options_posture` tools still render `[UNSOURCED]` (Phase-4 renderers pending — knowledge_search now covers the archive path).
+- Read endpoints auto-create their DB files on first read (consistent with the ResearchStore pattern; `_fit_calibration` keeps its exists() guard).
+- Scorecard metrics other than calibration stay `available: false` until real sessions/outcomes accumulate; net-EV-per-session + cost analysis deferred (no trades ledger exists — ticket 06 recorded).
+- Calibration chart renders as a polyline (documented deviation from "step chart" — reads better with few points).
+- Regime strings stored verbatim at decide time (runtime path already lowercase enum values; future normalization noted).
+- Wayfinder map fully resolved (8/8 tickets); multi-broker + backtest depth deferred with triggers recorded.
+
 ## [2026-08-01] — v0.9.0: Phase 3C Research Workspace Full Surface
 
 Suite: **655 passed / 0 failed / 0 skipped** (was 612). Read-only data tools with mid-run function calling, env-config scheduler, richer terminal research panel with WS live updates, brief outcome scoring + `decided_at`. Also shipped: the hygiene wave (3 recurring skips fixed — suite is now permanently 0-skipped; registry→engine shadow wiring; 3A deferred minors).

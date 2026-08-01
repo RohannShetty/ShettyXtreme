@@ -95,6 +95,7 @@ export type ResearchBrief = {
   status: string;
   outcome: string | null;
   decided_at: string | null;
+  regime_at_decision: string | null;
   expired: boolean;
 };
 export type ResearchRunRequest = {
@@ -127,3 +128,83 @@ export type ResearchScoringItem = {
   win_rate: number;
   avg_confidence: number;
 };
+
+// --- Knowledge layer (Phase 4) ---
+
+export type KnowledgeTag = { tag: string; kind: string };
+export type KnowledgeDoc = {
+  doc_id: string;
+  kind: string;
+  source_ref: string;
+  payload: Record<string, unknown>;
+  status: string;
+  created_at: string | null;
+  activated_at: string | null;
+  tags: KnowledgeTag[];
+};
+export type KnowledgeSearchHit = {
+  doc_id: string;
+  kind: string;
+  source_ref: string;
+  status: string;
+  title: string;
+  snippet: string;
+  tags: KnowledgeTag[];
+  bm25_score: number;
+};
+export type KnowledgeSearchResponse = { hits: KnowledgeSearchHit[] };
+export type KnowledgeListResponse = { docs: KnowledgeDoc[] };
+export type KnowledgeStatusResponse = {
+  docs: number;
+  proposed: number;
+  activated: number;
+  tags: number;
+};
+export type KnowledgeSyncResponse = {
+  ingested: number;
+  skipped_undecided: number;
+  skipped_duplicate: number;
+  error: string | null;
+};
+
+// --- Analytics (Phase 4) ---
+
+export type CalibrationPoint = {
+  conviction_bin: [number, number];
+  actual_win_rate: number;
+  sample_size: number;
+  confidence_interval: [number, number];
+};
+export type ScorecardMetric = {
+  key: string;
+  label: string;
+  value: number | boolean | string | null;
+  unit: string | null;
+  available: boolean;
+  note: string | null;
+};
+export type RegimeRow = {
+  regime: string;
+  decided: number;
+  with_outcome: number;
+  win_rate: number;
+};
+export type ScorecardResponse = {
+  reliable_calibration: boolean;
+  metrics: ScorecardMetric[];
+  by_regime: RegimeRow[];
+  calibration: CalibrationPoint[];
+};
+export type SessionRecord = {
+  session_id: string;
+  started_at: string;
+  ended_at: string | null;
+  mode: string;
+};
+export type SessionCounts = {
+  total: number;
+  open: number;
+  live: number;
+  observer: number;
+};
+export type SessionsResponse = { sessions: SessionRecord[]; counts: SessionCounts };

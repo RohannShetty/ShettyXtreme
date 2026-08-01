@@ -11,7 +11,7 @@ import logging
 import os
 from collections.abc import Callable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from shettyxtreme.research.briefs import ResearchBrief
 from shettyxtreme.research.lenses import list_lenses
@@ -219,18 +219,31 @@ async def get_brief(brief_id: str) -> ResearchBriefResponse:
 
 
 @router.post("/briefs/{brief_id}/approve", response_model=ResearchDecisionResponse)
-async def approve(brief_id: str) -> ResearchDecisionResponse:
+async def approve(brief_id: str, request: Request) -> ResearchDecisionResponse:
     """Approve a proposed brief (immutable decision)."""
-    return _decide(brief_id, "approved")
+    return _decide(request, brief_id, "approved")
 
 
 @router.post("/briefs/{brief_id}/reject", response_model=ResearchDecisionResponse)
-async def reject(brief_id: str) -> ResearchDecisionResponse:
+async def reject(brief_id: str, request: Request) -> ResearchDecisionResponse:
     """Reject a proposed brief (immutable decision)."""
-    return _decide(brief_id, "rejected")
+    return _decide(request, brief_id, "rejected")
 
 
-def _decide(brief_id: str, decision: str) -> ResearchDecisionResponse:
+def _current_regime(request: Request) -> str | None:
+    """Best-effort current regime from the intelligence projection."""
+    proj = getattr(request.app.state, "intelligence_projection", None)
+    if proj is None:
+        return None
+    try:
+        regime = proj.get_regime() or {}
+    except Exception:
+        return None
+    value = regime.get("regime")
+    return str(value) if value else None
+
+
+def _decide(request: Request, brief_id: str, decision: str) -> ResearchDecisionResponse:
     try:
         store = _open_store()
     except Exception as exc:
@@ -238,7 +251,7 @@ def _decide(brief_id: str, decision: str) -> ResearchDecisionResponse:
         raise HTTPException(status_code=404, detail="brief not found") from exc
     try:
         try:
-            brief = store.decide(brief_id, decision)
+            brief = store.decide(brief_id, decision, regime=_current_regime(request))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="brief not found") from exc
         except AlreadyDecidedError as exc:

@@ -46,6 +46,7 @@ class ResearchBrief(BaseModel):
     status: BriefStatus = "proposed"
     outcome: str | None = None
     decided_at: str | None = None
+    regime_at_decision: str | None = None
 
     def with_status(self, status: str) -> "ResearchBrief":
         """Return a copy with a new status (used only for decisions)."""

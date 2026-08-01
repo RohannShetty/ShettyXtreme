@@ -23,6 +23,8 @@ class DataSource(Protocol):
 
     def options_summary(self) -> str | None: ...
 
+    def knowledge_summary(self, query: str) -> str | None: ...
+
 
 UNSOURCED = "[UNSOURCED] — no data"
 
@@ -76,6 +78,16 @@ def _options_invoke(params: dict[str, Any]) -> str:
     return text if text else UNSOURCED
 
 
+def _knowledge_invoke(params: dict[str, Any]) -> str:
+    query = params.get("query")
+    if not query:
+        return "TOOL ERROR: missing required parameter 'query'"
+    if _source is None:
+        return UNSOURCED
+    text = _source.knowledge_summary(str(query))
+    return text if text else UNSOURCED
+
+
 _TOOL_DEFS: list[ResearchTool] = [
     ResearchTool(
         name="chain_snapshot",
@@ -104,6 +116,16 @@ _TOOL_DEFS: list[ResearchTool] = [
         description="IV rank, PCR, and OI buildup summary.",
         params_schema={"type": "object", "properties": {}, "required": []},
         invoke=_options_invoke,
+    ),
+    ResearchTool(
+        name="knowledge_search",
+        description="Search activated knowledge documents (research briefs archive).",
+        params_schema={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+        invoke=_knowledge_invoke,
     ),
 ]
 

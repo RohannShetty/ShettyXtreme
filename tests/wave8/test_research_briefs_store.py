@@ -203,3 +203,26 @@ def test_scoring_empty_db(tmp_path) -> None:
     store = ResearchStore(str(tmp_path / "r.db"))
     assert store.scoring() == []
     store.close()
+
+
+def test_regime_at_decision_not_model_authorable() -> None:
+    assert "regime_at_decision" not in MODEL_AUTHORED_FIELDS
+
+
+def test_decide_records_regime(tmp_path) -> None:
+    store = ResearchStore(str(tmp_path / "r.db"))
+    brief = _make_brief("lens_a")
+    store.insert(brief)
+    decided = store.decide(brief.brief_id, "approved", regime="TRENDING_UP")
+    assert decided.regime_at_decision == "TRENDING_UP"
+    assert store.get(brief.brief_id).regime_at_decision == "TRENDING_UP"
+    store.close()
+
+
+def test_decide_without_regime_keeps_none(tmp_path) -> None:
+    store = ResearchStore(str(tmp_path / "r.db"))
+    brief = _make_brief("lens_a")
+    store.insert(brief)
+    decided = store.decide(brief.brief_id, "approved")
+    assert decided.regime_at_decision is None
+    store.close()

@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import AnalyticsPanel from "./components/AnalyticsPanel.svelte";
   import ChainGrid from "./components/ChainGrid.svelte";
   import Header from "./components/Header.svelte";
   import HintsPanel from "./components/HintsPanel.svelte";
+  import KnowledgePanel from "./components/KnowledgePanel.svelte";
   import LogDrawer from "./components/LogDrawer.svelte";
   import PositionsRiskStrip from "./components/PositionsRiskStrip.svelte";
   import ResearchPanel from "./components/ResearchPanel.svelte";
@@ -57,9 +59,11 @@
       <div class="center">
         <ChainGrid />
         <HintsPanel />
+        <AnalyticsPanel />
       </div>
       <div class="right-col">
         <ResearchPanel />
+        <KnowledgePanel />
         <ScannerPanel />
         <LogDrawer bind:open={drawerOpen} />
       </div>
