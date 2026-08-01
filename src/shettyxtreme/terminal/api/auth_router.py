@@ -149,14 +149,14 @@ async def dhan_callback(tokenId: str) -> RedirectResponse:
             )
             store.client_name = consent.client_name
             store.save()
-            return RedirectResponse(url="/static/setup.html?connected=true")
+            return RedirectResponse(url="/static/?connected=true#/setup")
         error_msg = result.error or "Unknown error during consent exchange"
         logger.error("OAuth callback failed: %s", error_msg)
-        return RedirectResponse(url=f"/static/setup.html?error={quote(error_msg)}")
+        return RedirectResponse(url=f"/static/?error={quote(error_msg)}#/setup")
 
     except Exception:
         logger.exception("OAuth callback failed")
-        return RedirectResponse(url="/static/setup.html?error=Server+error+during+OAuth+callback")
+        return RedirectResponse(url="/static/?error=Server+error+during+OAuth+callback#/setup")
 
 
 @router.post("/test", response_model=ValidationResultResponse)

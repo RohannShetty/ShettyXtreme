@@ -10,6 +10,7 @@
   import { connect, stop } from "./lib/ws";
 
   let route = currentRoute();
+  let query: URLSearchParams | null = null;
   let drawerOpen = false;
 
   function currentRoute(): string {
@@ -17,12 +18,18 @@
     return hash.startsWith("#/") ? hash.slice(1) : "/";
   }
 
+  function readQuery(): void {
+    query = new URLSearchParams(window.location.search);
+  }
+
   function onHashChange(): void {
     route = currentRoute();
+    readQuery();
   }
 
   onMount(() => {
     window.addEventListener("hashchange", onHashChange);
+    readQuery();
     connect();
     return () => {
       window.removeEventListener("hashchange", onHashChange);
@@ -66,7 +73,15 @@
 {:else if route === "/setup"}
   <div class="simple-view">
     <h1>Setup</h1>
-    <p>Configure your Dhan credentials, exchange segments, and watchlist through the setup endpoints (<code class="mono">/api/settings</code>).</p>
+    {#if query && query.get("connected") === "true"}
+      <div class="banner banner-ok" role="status">Connected — credentials saved. Close this tab and return to the terminal.</div>
+    {:else if query && query.get("error")}
+      <div class="banner banner-err" role="alert">
+        {query.get("error")} <a href="#/settings">Retry</a>
+      </div>
+    {:else}
+      <p>Configure your Dhan credentials, exchange segments, and watchlist through the setup endpoints (<code class="mono">/api/settings</code>).</p>
+    {/if}
     <a href="#/">← Back to terminal</a>
   </div>
 {:else}
@@ -145,6 +160,27 @@
   }
   .simple-view a:hover {
     text-decoration: underline;
+  }
+  .banner {
+    max-width: 560px;
+    font-size: 13px;
+    line-height: 1.6;
+    border-radius: 4px;
+    padding: 10px 14px;
+  }
+  .banner a {
+    margin-left: 8px;
+    white-space: nowrap;
+  }
+  .banner-ok {
+    background: color-mix(in srgb, var(--success) 14%, transparent);
+    border: 1px solid var(--success);
+    color: var(--success);
+  }
+  .banner-err {
+    background: color-mix(in srgb, var(--danger) 14%, transparent);
+    border: 1px solid var(--danger);
+    color: var(--danger);
   }
 
   @media (max-width: 1439px) {
