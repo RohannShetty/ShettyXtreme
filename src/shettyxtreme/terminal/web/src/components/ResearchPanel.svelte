@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { get, post, postBody } from "../lib/api";
   import { onMessage } from "../lib/ws";
+  import ResearchBriefDetail from "./ResearchBriefDetail.svelte";
   import type {
     ResearchBrief,
     ResearchBriefListResponse,
@@ -16,6 +17,7 @@
   let briefs: ResearchBrief[] = [];
   let selected: ResearchBrief | null = null;
   let selectedId = "";
+  let selectedLenses: string[] = [];
   let selectedTools: string[] = [];
   let contextText = "";
   let running = false;
@@ -58,6 +60,7 @@
         get<ResearchBriefListResponse>("/api/research/briefs"),
       ]);
       lenses = l.lenses;
+      if (selectedLenses.length === 0) selectedLenses = l.lenses.map((x) => x.name);
       tools = t.tools;
       briefs = b.briefs;
       if (!selectedId && briefs.length > 0) {
@@ -76,7 +79,7 @@
     error = "";
     try {
       const resp = await postBody<ResearchRunResponse>("/api/research/run", {
-        lenses: lenses.map((l) => l.name),
+        lenses: selectedLenses,
         tools: selectedTools.length > 0 ? selectedTools : null,
         context: contextText ? { operator: contextText } : null,
       });
@@ -104,7 +107,7 @@
       : [...selectedTools, name];
   }
 
-  async function decide(status: "approved" | "rejected"): Promise<void> {
+  async function onDecide(status: "approved" | "rejected"): Promise<void> {
     if (!selected || deciding || selected.status !== "proposed" || selected.expired) return;
     deciding = true;
     error = "";
@@ -158,7 +161,7 @@
     <div class="lens-row">
       {#each lenses as l}
         <label class="check">
-          <input type="checkbox" checked disabled={running} />
+          <input type="checkbox" value={l.name} bind:group={selectedLenses} disabled={running} />
           <span>{l.name}</span>
         </label>
       {/each}
@@ -179,7 +182,7 @@
       disabled={running}
     ></textarea>
     <div class="run-row">
-      <button class="run-btn" on:click={run} disabled={running || lenses.length === 0}>
+      <button class="run-btn" on:click={run} disabled={running || selectedLenses.length === 0}>
         {running ? "Running…" : "Run"}
       </button>
       <div class="chips">
@@ -223,51 +226,7 @@
 
     <div class="col detail-col">
       {#if selected}
-        <div class="detail">
-          <div class="detail-head">
-            <span class="tag">{selected.lens}</span>
-            <span class="num {dirBadgeClass(selected.direction)}">{dirLabel(selected.direction)}</span>
-            <span class="conf mono">{(selected.confidence * 100).toFixed(0)}% confidence</span>
-            <span class="tag {statusClass(selected.status)}">{selected.status}</span>
-          </div>
-          <p class="thesis">{selected.thesis}</p>
-          <p class="rationale">{selected.rationale}</p>
-          <h4>Evidence</h4>
-          <table class="evidence mono">
-            <tbody>
-              {#each selected.evidence as e (e.item + e.source)}
-                <tr>
-                  <td>{e.item}</td>
-                  <td class="src">{e.unsourced ? "[UNSOURCED]" : e.source}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-          {#if selected.risks.length > 0}
-            <h4>Risks</h4>
-            <ul class="risks">
-              {#each selected.risks as r (r)}
-                <li>{r}</li>
-              {/each}
-            </ul>
-          {/if}
-          <div class="meta mono">
-            <span>valid {selected.validity_window_minutes}m</span>
-            <span>{selected.expired ? "expired" : "live"}</span>
-            {#if selected.outcome}
-              <span>outcome: {selected.outcome}</span>
-            {/if}
-            {#if selected.decided_at}
-              <span>decided {selected.decided_at.slice(0, 19)}</span>
-            {/if}
-          </div>
-          {#if selected.status === "proposed" && !selected.expired}
-            <div class="decision">
-              <button class="approve" on:click={() => decide("approved")} disabled={deciding}>Approve</button>
-              <button class="reject" on:click={() => decide("rejected")} disabled={deciding}>Reject</button>
-            </div>
-          {/if}
-        </div>
+        <ResearchBriefDetail brief={selected} busy={deciding} onDecide={onDecide} />
       {:else}
         <p class="empty">Select a brief to see details.</p>
       {/if}
@@ -487,85 +446,5 @@
     font-size: 11px;
     padding: 8px 10px;
     margin: 0;
-  }
-  .detail-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-bottom: 6px;
-  }
-  .detail .thesis {
-    white-space: normal;
-    color: var(--ink);
-    font-weight: 600;
-    margin: 0 0 6px;
-  }
-  .rationale {
-    color: var(--body);
-    font-size: 11px;
-    line-height: 1.5;
-    margin: 0 0 8px;
-  }
-  .detail h4 {
-    margin: 8px 0 4px;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.07em;
-    color: var(--faint);
-    text-transform: uppercase;
-  }
-  .evidence {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 10px;
-  }
-  .evidence td {
-    padding: 2px 4px;
-    border-bottom: 1px solid var(--hairline);
-    vertical-align: top;
-  }
-  .evidence .src {
-    color: var(--faint);
-  }
-  .risks {
-    list-style: disc;
-    padding-left: 16px;
-    font-size: 11px;
-    color: var(--warning);
-  }
-  .meta {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-    color: var(--faint);
-    font-size: 10px;
-    margin-top: 8px;
-  }
-  .decision {
-    display: flex;
-    gap: 8px;
-    margin-top: 10px;
-  }
-  .decision button {
-    flex: 1;
-    border-radius: 4px;
-    border: 1px solid var(--hairline-strong);
-    background: none;
-    padding: 5px 0;
-    font-size: 11px;
-    cursor: pointer;
-  }
-  .decision button:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-  .approve {
-    color: var(--success);
-    border-color: var(--success) !important;
-  }
-  .reject {
-    color: var(--danger);
-    border-color: var(--danger) !important;
   }
 </style>
