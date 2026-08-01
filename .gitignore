@@ -66,5 +66,5 @@ data/
 .serena/
 
 # Reference repo clones (scratch — durable briefs live in docs/references/)
-references/
+/references/
 
