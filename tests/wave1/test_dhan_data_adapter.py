@@ -266,3 +266,49 @@ class TestLTP:
         data_adapter._last_tick_time = 0.0
         await data_adapter.get_ltp({"NSE_EQ": ["11536"]})
         assert data_adapter._last_tick_time > 0.0
+
+
+class TestFeedRequestCodes:
+    """Dhan WS v2 accepts only request codes 15/17/21 (corrected fact 2)."""
+
+    @pytest.mark.asyncio
+    async def test_subscribe_ticks_uses_v2_request_code(self) -> None:
+        with patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanContext"
+        ) as mock_ctx_cls, patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanHQClient"
+        ) as mock_client_cls, patch(
+            "shettyxtreme.integration.dhan.data_adapter.MarketFeed"
+        ) as mock_feed_cls:
+            mock_ctx_cls.return_value = MagicMock()
+            mock_client_cls.return_value = _make_mock_dhanhq()
+            adapter = DhanDataAdapter(client_id=MOCK_CLIENT_ID, access_token=MOCK_API_KEY)
+            adapter._dhan = mock_client_cls.return_value
+
+            ok = await adapter.subscribe_ticks(["11536"], lambda t: None)
+
+            assert ok is True
+            _, kwargs = mock_feed_cls.call_args
+            instruments = kwargs["instruments"]
+            assert ("NSE_EQ", "11536", 15) in instruments
+
+    @pytest.mark.asyncio
+    async def test_subscribe_bars_uses_v2_request_code(self) -> None:
+        with patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanContext"
+        ) as mock_ctx_cls, patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanHQClient"
+        ) as mock_client_cls, patch(
+            "shettyxtreme.integration.dhan.data_adapter.MarketFeed"
+        ) as mock_feed_cls:
+            mock_ctx_cls.return_value = MagicMock()
+            mock_client_cls.return_value = _make_mock_dhanhq()
+            adapter = DhanDataAdapter(client_id=MOCK_CLIENT_ID, access_token=MOCK_API_KEY)
+            adapter._dhan = mock_client_cls.return_value
+
+            ok = await adapter.subscribe_bars(["11536"], "1", lambda b: None)
+
+            assert ok is True
+            _, kwargs = mock_feed_cls.call_args
+            instruments = kwargs["instruments"]
+            assert ("NSE_EQ", "11536", 21) in instruments

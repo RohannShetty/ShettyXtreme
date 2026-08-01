@@ -6,9 +6,12 @@ core.interfaces.market_data_stream.MarketDataStream protocols.
 Uses SEPARATE credentials from Trading adapter (Dhan error 806 if mixed).
 Includes staleness detection for data feed.
 
-Dhan WS binary protocol feed codes:
-  2 = ticker, 4 = quote, 5 = order data,
-  8 = full quote, 41 = OHLC, 51 = market depth
+Dhan WS binary protocol — two distinct code sets:
+  Subscription REQUEST codes (v2 JSON, validated to 15/17/21):
+    Ticker=15, Quote=17, Full=21; unsubscribe = request code + 1.
+  Response feed codes (parsing):
+    2 = ticker, 4 = quote, 5 = order data,
+    8 = full quote, 41 = OHLC, 51 = market depth
 """
 from __future__ import annotations
 
@@ -38,6 +41,11 @@ EXCHANGE_MAP: dict[str, str] = {
     "BFO": "BSE_FNO", "MCX": "MCX", "IDX": "IDX_I",
 }
 
+# Subscription REQUEST codes — v2 accepts only 15/17/21 (corrected fact 2)
+REQUEST_CODE_TICKER: int = 15
+REQUEST_CODE_QUOTE: int = 17
+REQUEST_CODE_FULL: int = 21
+# Response feed codes (used by _process_ws_tick parsing)
 FEED_CODE_TICKER: int = 2
 FEED_CODE_QUOTE: int = 4
 FEED_CODE_ORDER: int = 5
@@ -120,7 +128,7 @@ class DhanDataAdapter:
         for sym in symbols:
             self._tick_callbacks[sym] = callback
         instruments: list[tuple[str, str, int]] = [
-            ("NSE_EQ", sym, FEED_CODE_TICKER) for sym in symbols
+            ("NSE_EQ", sym, REQUEST_CODE_TICKER) for sym in symbols
         ]
         return await self._start_ws_feed(instruments)
 
@@ -129,7 +137,7 @@ class DhanDataAdapter:
         for sym in symbols:
             self._bar_callbacks[sym] = (tf, callback)
         instruments: list[tuple[str, str, int]] = [
-            ("NSE_EQ", sym, FEED_CODE_FULL_QUOTE) for sym in symbols
+            ("NSE_EQ", sym, REQUEST_CODE_FULL) for sym in symbols
         ]
         return await self._start_ws_feed(instruments)
 
