@@ -48,3 +48,17 @@ Every wave must pass:
 
 ## Python
 Python 3.11+. Use `PYTHONPATH=""` prefix for non-hermes Python commands.
+
+## Agent skills
+
+### Issue tracker
+
+Local markdown — issues live as files under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix` — recorded as a `Status:` line in each issue file. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context. Blueprint `docs/architecture/v2/ARCHITECTURE_V2.md` (decisions D1–D12), ADRs in `docs/decisions/`, `DESIGN.md` binding for UI. See `docs/agents/domain.md`.
