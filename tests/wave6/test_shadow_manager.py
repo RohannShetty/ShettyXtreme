@@ -164,3 +164,54 @@ class TestSessionGate:
             mgr.compare_shadow_vs_live(f"sig-{i}", OutcomeLabel.WIN, live_direction=1.0)
         assert mgr.should_promote("s5") is False
         mgr.close()
+
+
+class TestGraduation:
+    def test_graduate_registers_into_default_registry(self, tmp_path) -> None:
+        from shettyxtreme.intelligence.signals.signal_engine import get_registry
+        mgr = ShadowManager(db_path=str(tmp_path / "s.db"))
+        mgr.register_shadow("grad1", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "grad1"))
+        for i in range(21):
+            votes = mgr.run_shadow({}, None, {})
+            mgr.log_shadow_results(f"sig-{i}", votes, session_date=f"2026-01-{i+1:02d}")
+            mgr.compare_shadow_vs_live(f"sig-{i}", OutcomeLabel.WIN, live_direction=1.0)
+        fn = mgr.graduate("grad1")
+        assert fn is not None
+        assert get_registry().get("grad1") is fn
+        mgr.close()
+
+    def test_graduate_gate_not_met_returns_none(self, tmp_path) -> None:
+        mgr = ShadowManager(db_path=str(tmp_path / "s.db"))
+        mgr.register_shadow("grad2", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "grad2"))
+        assert mgr.graduate("grad2") is None  # no sessions at all
+        mgr.close()
+
+    def test_graduation_is_idempotent(self, tmp_path) -> None:
+        from shettyxtreme.intelligence.signals.signal_engine import get_registry
+        mgr = ShadowManager(db_path=str(tmp_path / "s.db"))
+        mgr.register_shadow("grad3", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "grad3"))
+        for i in range(21):
+            votes = mgr.run_shadow({}, None, {})
+            mgr.log_shadow_results(f"sig-{i}", votes, session_date=f"2026-01-{i+1:02d}")
+            mgr.compare_shadow_vs_live(f"sig-{i}", OutcomeLabel.WIN, live_direction=1.0)
+        first = mgr.graduate("grad3")
+        second = mgr.graduate("grad3")
+        assert first is second
+        mgr.close()
+
+    def test_graduation_status_shape(self, tmp_path) -> None:
+        mgr = ShadowManager(db_path=str(tmp_path / "s.db"))
+        mgr.register_shadow("grad4", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "grad4"))
+        for i in range(21):
+            votes = mgr.run_shadow({}, None, {})
+            mgr.log_shadow_results(f"sig-{i}", votes, session_date=f"2026-01-{i+1:02d}")
+            mgr.compare_shadow_vs_live(f"sig-{i}", OutcomeLabel.WIN, live_direction=1.0)
+        mgr.graduate("grad4")
+        status = {s["name"]: s for s in mgr.graduation_status()}
+        row = status["grad4"]
+        assert row["sessions"] == 21
+        assert row["evaluated"] == 21
+        assert row["hit_rate"] > 0.55
+        assert row["graduated"] is True
+        assert row["registered"] is True
+        mgr.close()

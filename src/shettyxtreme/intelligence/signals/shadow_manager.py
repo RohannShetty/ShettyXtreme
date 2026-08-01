@@ -8,9 +8,10 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from shettyxtreme.intelligence.regime import Regime
-from shettyxtreme.intelligence.signals.signal_engine import Vote
+from shettyxtreme.intelligence.signals.signal_engine import Vote, get_registry
 from shettyxtreme.learning.outcome_tracker import OutcomeLabel
 
 ShadowFn = Callable[[dict[str, float], Regime, dict], Vote]
@@ -61,6 +62,14 @@ class ShadowManager:
         cols = [row["name"] for row in cur.execute("PRAGMA table_info(shadow_sessions)")]
         if "session_date" not in cols:
             cur.execute("ALTER TABLE shadow_sessions ADD COLUMN session_date TEXT")
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS shadow_graduates (
+                shadow_name TEXT PRIMARY KEY,
+                graduated_at TEXT
+            )
+            """
+        )
         self._conn.commit()
 
     def register_shadow(self, name: str, voter: ShadowFn) -> None:
@@ -165,6 +174,65 @@ class ShadowManager:
             return False
         hits = sum(1 for r in known if r["was_correct"] == 1)
         return (hits / len(known)) > PROMOTION_HIT_RATE
+
+    def graduate(self, name: str) -> ShadowFn | None:
+        """Promote a shadow into the default registry once the gate passes.
+
+        Idempotent: re-graduating returns the same fn and replaces the
+        persisted row (PRIMARY KEY + INSERT OR REPLACE).
+        """
+        if not self.should_promote(name):
+            return None
+        fn = self._shadows.get(name)
+        if fn is None:
+            return None
+        get_registry().register(name, fn, weight=1.0)
+        if self._conn is not None:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO shadow_graduates (shadow_name, graduated_at) "
+                "VALUES (?, ?)",
+                (name, datetime.now(UTC).isoformat()),
+            )
+            self._conn.commit()
+        return fn
+
+    def graduation_status(self) -> list[dict]:
+        """Per-shadow: sessions, evaluated, hit_rate, graduated, registered."""
+        if self._conn is None:
+            return []
+        registered_names = set(get_registry().names())
+        statuses: list[dict] = []
+        for name in self._shadows:
+            cur = self._conn.cursor()
+            sessions = cur.execute(
+                "SELECT COUNT(DISTINCT session_date) FROM shadow_sessions "
+                "WHERE shadow_name = ? AND session_date IS NOT NULL",
+                (name,),
+            ).fetchone()[0]
+            evaluated = cur.execute(
+                "SELECT COUNT(*) FROM shadow_sessions "
+                "WHERE shadow_name = ? AND was_correct IS NOT NULL",
+                (name,),
+            ).fetchone()[0]
+            hits = cur.execute(
+                "SELECT COUNT(*) FROM shadow_sessions "
+                "WHERE shadow_name = ? AND was_correct = 1",
+                (name,),
+            ).fetchone()[0]
+            graduated = cur.execute(
+                "SELECT 1 FROM shadow_graduates WHERE shadow_name = ?", (name,)
+            ).fetchone() is not None
+            statuses.append(
+                {
+                    "name": name,
+                    "sessions": sessions,
+                    "evaluated": evaluated,
+                    "hit_rate": hits / evaluated if evaluated else 0.0,
+                    "graduated": graduated,
+                    "registered": name in registered_names,
+                }
+            )
+        return statuses
 
     @staticmethod
     def _is_correct(vote_direction: float, live_direction: float) -> bool:
