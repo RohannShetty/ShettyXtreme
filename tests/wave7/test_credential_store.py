@@ -115,3 +115,21 @@ def test_migration_from_dual_format(tmp_path: Path) -> None:
         assert loaded.client_name == "Old User"
     finally:
         monkeypatch.undo()
+
+
+def test_data_token_roundtrip(tmp_path: Path) -> None:
+    monkeypatch_dir = tmp_path / "creds"
+    monkeypatch_dir.mkdir()
+    creds_file = monkeypatch_dir / "credentials.enc"
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(_cred_mod, "_CRED_PATH", creds_file)
+    try:
+        store = CredentialStore(api_key="key", api_secret="secret")
+        store.update_data_token("data_abc", "2026-12-31T00:00:00Z")
+        store.save()
+        reloaded = CredentialStore.load()
+        assert reloaded is not None
+        assert reloaded.data_access_token == "data_abc"
+        assert reloaded.data_access_token_expiry == "2026-12-31T00:00:00Z"
+    finally:
+        monkeypatch.undo()

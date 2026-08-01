@@ -312,3 +312,42 @@ class TestFeedRequestCodes:
             _, kwargs = mock_feed_cls.call_args
             instruments = kwargs["instruments"]
             assert ("NSE_EQ", "11536", 21) in instruments
+
+
+class TestDataAccessTokenFallback:
+    """Data API token fallback slot and 806 entitlement surfacing."""
+
+    @pytest.mark.asyncio
+    async def test_data_token_preferred_over_primary(self) -> None:
+        with patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanContext"
+        ) as mock_ctx_cls, patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanHQClient"
+        ) as mock_client_cls:
+            mock_ctx_cls.return_value = MagicMock()
+            mock_client_cls.return_value = _make_mock_dhanhq()
+            DhanDataAdapter(
+                client_id=MOCK_CLIENT_ID,
+                access_token="primary_token",
+                data_access_token="data_token",
+            )
+            _, kwargs = mock_ctx_cls.call_args
+            assert kwargs["access_token"] == "data_token"
+
+    @pytest.mark.asyncio
+    async def test_806_returns_entitlement_error_dict(self, data_adapter) -> None:
+        dhan = data_adapter._dhan
+        dhan.option_chain.side_effect = RuntimeError("806: token rejected")
+        result = await data_adapter.get_option_chain(
+            underlying_scrip="13", exchange_segment="NSE_FNO", expiry="",
+        )
+        assert result["status"] == "error"
+        assert result.get("entitlement") is True
+        assert "subscribe to Data APIs" in result["message"]
+
+    def test_806_marks_entitlement_flag(self, data_adapter) -> None:
+        data_adapter._mark_ws_error(
+            RuntimeError("Disconnected: Subscribe to Data APIs to continue")
+        )
+        assert data_adapter.entitlement_error is True
+        assert data_adapter.last_error == "subscribe to Data APIs"

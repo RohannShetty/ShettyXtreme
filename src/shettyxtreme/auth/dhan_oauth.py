@@ -25,7 +25,7 @@ class ConsentResult:
 
 @dataclass(frozen=True)
 class ConsumeResult:
-    """Result of consume_consent — either success or descriptive error."""
+    """Result of consume_consent / generate_access_token — either success or descriptive error."""
     consent: ConsentResult | None = None
     error: str | None = None
 
@@ -115,4 +115,49 @@ class DhanOAuthHelper:
         except Exception as exc:
             msg = f"Connection error: {exc}"
             logger.exception("consume_consent failed")
+            return ConsumeResult(error=msg)
+
+    async def generate_access_token(
+        self, client_id: str, pin: str, totp: str,
+    ) -> ConsumeResult:
+        """Generate an access token via PIN + TOTP (used for the data-API fallback)."""
+        url = f"{self.AUTH_BASE_URL}/app/generateAccessToken"
+        params = {"dhanClientId": client_id, "pin": pin, "totp": totp}
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(url, params=params)
+                if resp.status_code == 401:
+                    msg = "Dhan API 401: Invalid client id. Re-enter credentials in Step 1."
+                    logger.error("generate_access_token: %s Response: %s", msg, resp.text[:200])
+                    return ConsumeResult(error=msg)
+                if resp.status_code == 400:
+                    msg = "Dhan API 400: Invalid PIN or TOTP. Re-check the values entered."
+                    logger.error("generate_access_token: %s Response: %s", msg, resp.text[:200])
+                    return ConsumeResult(error=msg)
+                resp.raise_for_status()
+                data = resp.json()
+                result = ConsentResult(
+                    access_token=data.get("accessToken", ""),
+                    expiry_time=data.get("expiryTime", ""),
+                    client_id=data.get("clientId", ""),
+                    client_name=data.get("clientName", ""),
+                    ddpi_status=data.get("ddpiStatus", False),
+                )
+                masked_token = (
+                    result.access_token[:4] + "****"
+                    if len(result.access_token) > 4
+                    else result.access_token
+                )
+                logger.info(
+                    "Access token generated, accessToken=%s",
+                    masked_token,
+                )
+                return ConsumeResult(consent=result)
+        except httpx.HTTPStatusError as exc:
+            msg = f"Dhan API error {exc.response.status_code}: {exc.response.text[:200]}"
+            logger.error("generate_access_token: %s", msg)
+            return ConsumeResult(error=msg)
+        except Exception as exc:
+            msg = f"Connection error: {exc}"
+            logger.exception("generate_access_token failed")
             return ConsumeResult(error=msg)

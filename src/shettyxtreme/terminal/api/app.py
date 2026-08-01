@@ -158,6 +158,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             _data_adapter = DhanDataAdapter(
                 client_id=store.client_id,
                 access_token=store.access_token,
+                data_access_token=store.data_access_token,
             )
             app.state.data_adapter = _data_adapter
             logger.info("DhanDataAdapter initialized")
