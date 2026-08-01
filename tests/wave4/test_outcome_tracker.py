@@ -96,6 +96,24 @@ def test_outcome_immutability(tmp_data_dir: str) -> None:
     tracker.close()
 
 
+def test_get_all_decisions_returns_recorded_with_outcomes(tmp_data_dir: str) -> None:
+    db = os.path.join(tmp_data_dir, "ot.db")
+    tracker = OutcomeTracker(db)
+    d1 = tracker.record_signal_decision(_make_signal(0.6))
+    d2 = tracker.record_signal_decision(_make_signal(0.8))
+    tracker.record_outcome(d1, OutcomeLabel.WIN)
+    tracker.record_outcome(d2, OutcomeLabel.LOSS)
+    tracker.close()
+
+    tracker2 = OutcomeTracker(db)
+    all_decisions = tracker2.get_all_decisions()
+    tracker2.close()
+    by_id = {d.id: d for d in all_decisions}
+    assert len(all_decisions) == 2
+    assert by_id[d1].outcome == OutcomeLabel.WIN
+    assert by_id[d2].outcome == OutcomeLabel.LOSS
+
+
 def test_get_decisions_by_date(tmp_data_dir: str) -> None:
     db = os.path.join(tmp_data_dir, "ot.db")
     tracker = OutcomeTracker(db)

@@ -31,6 +31,7 @@ from shettyxtreme.terminal.api.auth_router import router as auth_router
 from shettyxtreme.terminal.api.execution_router import router as execution_router
 from shettyxtreme.terminal.api.health_router import router as health_router
 from shettyxtreme.terminal.api.intelligence_router import router as intelligence_router
+from shettyxtreme.terminal.api.learning_router import router as learning_router
 from shettyxtreme.intelligence.regime.bus_bridge import RegimeBusBridge
 from shettyxtreme.intelligence.risk.bus_bridge import RiskBusBridge
 from shettyxtreme.terminal.api import postback_router
@@ -258,6 +259,7 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(postback_router.router)
 app.include_router(settings_router)
+app.include_router(learning_router)
 
 
 # ── Root: redirect to the Svelte SPA ────────────────────────────────────────
