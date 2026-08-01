@@ -1,5 +1,27 @@
 # ShettyXtreme Changelog
 
+## [2026-08-01] — v0.9.0: Phase 3C Research Workspace Full Surface
+
+Suite: **655 passed / 0 failed / 0 skipped** (was 612). Read-only data tools with mid-run function calling, env-config scheduler, richer terminal research panel with WS live updates, brief outcome scoring + `decided_at`. Also shipped: the hygiene wave (3 recurring skips fixed — suite is now permanently 0-skipped; registry→engine shadow wiring; 3A deferred minors).
+
+### Added
+- **Read-only tool registry** (`research/tools.py`): 4 tools (`chain_snapshot`, `regime_snapshot`, `scanner_alerts`, `options_posture`) — single source for both function-calling and `GET /api/research/tools`; injectable `DataSource` protocol (research/ never imports terminal/); missing data renders `[UNSOURCED]`, never fabricated.
+- **Provider v2** (`research/provider.py`): `generate()` returns `ProviderResponse {content, tool_calls}` and accepts `tools` + `history`; DeepSeek parses OpenAI-format `tool_calls`; `SimulatedProvider` gains scriptable tool-call flows. Deliberate interface bump — all wave8 provider tests migrated.
+- **Bounded tool loop** (`research/orchestrator.py`): ≤3 tool calls per lens (`MAX_TOOL_CALLS`), budget exceeded → per-lens error (never auto-advance), tool failures recover as `TOOL ERROR:` results, retries rebuild a fresh conversation; `on_brief` callback enables WS broadcast; no-tools path byte-identical to 3B.
+- **Scheduler** (`research/scheduler.py`): env-config only (`RESEARCH_SCHEDULE_ENABLED`/`INTERVAL_MINUTES`/`LENSES`/`TOOLS`), default off, not started without `DEEPSEEK_API_KEY`, tick failures logged and never crash the app; `GET /api/research/scheduler` status.
+- **Scoring + decided_at**: `ResearchBrief.decided_at` (harness-owned, not model-authorable) surfaced on every response; `POST /api/research/briefs/{id}/outcome` (`WIN`|`LOSS`; 400 invalid, 404 unknown, 409 on undecided); `GET /api/research/scoring` per-lens aggregates (total/decided/with_outcome/win_rate/avg_confidence, empty DB → `[]`).
+- **Terminal panel + WS**: `ResearchPanel.svelte` + `ResearchBriefDetail.svelte` (run bar with lens/tool selection, filterable brief list, detail view with evidence + `[UNSOURCED]` flags, approve/reject card); WS topic `research` (`new_brief`/`decision`) via `init_research(broadcast_fn)`; `ProjectionDataSource` wires live regime/alerts into tools.
+- **api.ts**: `postBody<T>` + typed research models.
+
+### Security
+- No test calls the real DeepSeek API (transport stubbed where the call-time key path is exercised); key env-only, read at call time, never logged; tools are read-only — no order tool exists in the registry.
+
+### Known
+- `chain_snapshot`/`options_posture` render `[UNSOURCED]` in real runs until Phase-4 renderers exist (honest best-effort per spec).
+- Two sqlite connections to `data/research.db` (scheduled tick + manual run) can contend — degrades to per-lens `persist failed`, never a crash; a `timeout=` on connect is a future hardening.
+- Live smoke validated: 3-lens run + `/run` with tools + real function-calling contract (`chain_snapshot(NIFTY)` parsed). DeepSeek `json_object` mode requires the word "json" in the prompt — all lens prompts satisfy this; ad-hoc prompts must too.
+- Critic model pass deferred until order intents exist (unchanged).
+
 ## [2026-08-01] — v0.8.0: Phase 3B Research Workspace (AI Research Layer)
 
 Suite: **599 passed / 0 failed / 3 skipped** (was 563). DeepSeek-backed briefer harness, per D3 research-layer only — no LLM output touches signal/gate/execution.
