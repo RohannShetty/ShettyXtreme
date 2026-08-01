@@ -98,7 +98,7 @@ OpenAlgo execution plumbing is vendored into `vendor/openalgo/` (origin-stamped,
 | 0 — References + vendoring | **DONE** |
 | 1 — Blueprint v2 + DESIGN.md + ADRs | **DONE** |
 | 2 — Usable MVP: pipeline completion + Svelte terminal | **DONE** |
-| 3 — Advanced intelligence (shadow-voter gates, calibration, research workspace) | Next |
+| 3 — Advanced intelligence | **3A done** (session-gated shadow graduation, calibration→sizing, correlation caps, D/P/G live, walkforward breakdowns, `/api/learning/*`); 3B research workspace next |
 | 4 — Maturity (knowledge layer, analytics, optional multi-broker) | After 3 |
 
 Full detail: [`docs/architecture/v2/sections/17-delivery-roadmap.md`](docs/architecture/v2/sections/17-delivery-roadmap.md).

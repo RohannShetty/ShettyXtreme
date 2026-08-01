@@ -1,5 +1,28 @@
 # ShettyXtreme Changelog
 
+## [2026-08-01] — v0.7.1: Phase 3A Advanced Intelligence
+
+Suite: **563 passed / 0 failed / 3 skipped** (was 527). All deterministic/statistical — no LLM surface (D3).
+
+### Added
+- **Session-aware shadow graduation**: `ShadowManager` gate counts ≥20 distinct tracked sessions (market days; NULL dates excluded) with hit rate > 0.55; correctness is direction-aware per the approved spec (sign agreement AND trade WIN); `graduate()` atomically persists then promotes the shadow into the live voter registry (idempotent); `graduation_status()` for the terminal.
+- **Synthetic session simulator** (`tests/wave6/session_simulator.py`): deterministic end-to-end graduation tests (good voter graduates at 21 sessions; poor voter and 19-session cases never do) — real graduation happens automatically once ≥20 real OBSERVER sessions accumulate.
+- **Calibration → sizing**: `learning/sizing.py` `CalibratedSizing` maps the fitted calibration curve to a position-size multiplier (clamped 0.25×–2×, inactive until reliable); strategy hints now carry `quantity`.
+- **Signal path wiring**: correlation block caps applied before weighting (correlated voter groups can't dominate conviction); `Signal` carries real participation-normalized D/P/G via `ConvictionEngine` (projection + `/signal` endpoint now show them, not zeros).
+- **Walkforward depth**: per-voter directional hit rates + per-regime win rates in the report (premium/cost/TP-SL-EOD evaluation as before).
+- **Learning endpoints**: `GET /api/learning/calibration` (curve points + reliability) and `GET /api/learning/shadows` (per-shadow sessions/hit-rate/graduated) — never 500 on missing DBs.
+
+### Fixed
+- Phase-2 deferred minors: `strike_price`/`drv_option_type` alias keys on the strategy-hint path; endpoint-level 503 tests for the 806 entitlement conversion; dead `_fetch_chain` wrapper removed; `on_regime_changed` dataclass-payload test.
+- `ShadowManager` module docstring now reflects graduation (was stale).
+
+### Changed
+- Shadow-voter correctness semantics finalized per spec §3.1.4 (user decision): a vote is correct only when it agrees with the live trade direction AND the trade won — a direction-echoing voter whose trades lose cannot graduate.
+
+### Known
+- Graduated shadow voters are 3-arg `ShadowFn`s registered in a 1-arg-typed registry that `SignalEngine` does not consume yet — reconcile with an adapter when registry→engine wiring lands (deferred integration note).
+- Live shadow-voter activation with real data is pending ≥20 real OBSERVER sessions (machinery proven with synthetic sessions; no fake claims).
+
 ## [2026-08-01] — v0.7.0: v2 Blueprint + Phase 2 Pipeline Completion
 
 This release ships the full v2 architecture (Phases 0-2 of the delivery roadmap): a 20-section blueprint with binding decisions D1-D12, a DESIGN.md design contract, an OpenAlgo vendoring pipeline, the two previously-stubbed intelligence endpoints, Dhan data-feed and credential corrections, and the Svelte+Vite terminal. Suite: **527 passed / 0 failed / 3 skipped** (was 495 / 4).
