@@ -1,0 +1,30 @@
+# Vendored files from marketcalls/openalgo (AGPL-3.0, private-use absorption)
+# Sources are relative to references/upstream/openalgo/ (mirror commit 3542a6e)
+# marker: false -> file is copied + listed in ORIGIN.md but gets NO origin
+# header (a '#' comment would corrupt the format, e.g. plugin.json).
+#
+# order_api.py is DEFERRED: it depends on database/auth_db.py (48.9 KB,
+# Flask-SQLAlchemy-entangled) which is outside vendor scope; revisit in Phase 2.
+# B-tier files (data.py, option_greeks_service.py, streaming/) are Phase-2 candidates.
+files:
+  - src: utils/constants.py
+    dest: utils/constants.py
+  - src: broker/dhan/plugin.json
+    dest: broker/dhan/plugin.json
+    marker: false
+  - src: broker/dhan/api/baseurl.py
+    dest: broker/dhan/api/baseurl.py
+  - src: broker/dhan/api/auth_api.py
+    dest: broker/dhan/api/auth_api.py
+  - src: broker/dhan/mapping/transform_data.py
+    dest: broker/dhan/mapping/transform_data.py
+  - src: utils/httpx_client.py
+    dest: utils/httpx_client.py
+  - src: utils/mpp_slab.py
+    dest: utils/mpp_slab.py
+  - src: database/token_db.py
+    dest: database/token_db.py
+  - src: database/symbol.py
+    dest: database/symbol.py
+  - src: utils/logging.py
+    dest: utils/logging.py
