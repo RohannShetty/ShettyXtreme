@@ -1,5 +1,25 @@
 # ShettyXtreme Changelog
 
+## [2026-08-01] — v0.8.0: Phase 3B Research Workspace (AI Research Layer)
+
+Suite: **599 passed / 0 failed / 3 skipped** (was 563). DeepSeek-backed briefer harness, per D3 research-layer only — no LLM output touches signal/gate/execution.
+
+### Added
+- **Briefer harness** (`research/`): `BriefProvider` protocol with `DeepSeekProvider` (httpx, OpenAI-compatible endpoint, JSON-output mode, non-thinking, `deepseek-v4-flash` default) and `SimulatedProvider` (deterministic test double with failure injection). `provider.py` is the only LLM-touching module (D3 wall).
+- **3 briefer lenses** (`research/lenses.py`, declarative registry): `oi_iv_flow`, `directional_momentum`, `tail_risk` — each mirroring a live shadow-voter philosophy.
+- **Context digest** (`research/digest.py`): as-of snapshot from injectable sources with `[SOURCE: name]` provenance; missing data renders `[UNSOURCED]`, never fabricated.
+- **`ResearchBrief`** (`research/briefs.py`): strict pydantic contract — unknown-field rejection, enum/length caps, harness-owned `brief_id`/`lens`/`as_of`/`status`; injected instructions cannot survive the channel.
+- **Orchestrator** (`research/orchestrator.py`): concurrent per-lens runs, reject-retry-once then fail, per-briefer token caps + timeouts, partial results on failure — never auto-advances.
+- **Sqlite store** (`research/store.py`): append-only decisions (second decision → 409), expiry computed at read time, `outcome` stub for later briefer scoring.
+- **Endpoints** (`/api/research/*`): `run`, `lenses`, `briefs` (list/get), `approve`/`reject`; 503 without `DEEPSEEK_API_KEY`, 400 unknown lens, never 500 on failed briefers or missing DBs.
+- **Smoke script** (`scripts/research_smoke.py`): env-gated manual DeepSeek run (exit 2 without key; never called from tests).
+
+### Security
+- `DEEPSEEK_API_KEY` env-only, read at call time, never logged.
+
+### Known
+- Briefer outcome scoring (`outcome` WIN/LOSS stub exists), read-only data tools/MCP, critic model pass, terminal panel + WS broadcast, scheduled runs — deferred to 3C per spec §5.
+
 ## [2026-08-01] — v0.7.1: Phase 3A Advanced Intelligence
 
 Suite: **563 passed / 0 failed / 3 skipped** (was 527). All deterministic/statistical — no LLM surface (D3).
