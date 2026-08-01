@@ -336,6 +336,7 @@ class TestDataAccessTokenFallback:
 
     @pytest.mark.asyncio
     async def test_806_returns_entitlement_error_dict(self, data_adapter) -> None:
+        """The raising path still classifies 806 (transport exceptions)."""
         dhan = data_adapter._dhan
         dhan.option_chain.side_effect = RuntimeError("806: token rejected")
         result = await data_adapter.get_option_chain(
@@ -344,6 +345,60 @@ class TestDataAccessTokenFallback:
         assert result["status"] == "error"
         assert result.get("entitlement") is True
         assert "subscribe to Data APIs" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_806_failure_dict_returns_entitlement_error(self, data_adapter) -> None:
+        """dhanhq never raises on HTTP errors — model its failure-dict contract."""
+        dhan = data_adapter._dhan
+        dhan.option_chain.return_value = {
+            "status": "failure",
+            "remarks": {
+                "error_code": 806,
+                "error_type": "HTTP 806",
+                "error_message": "Subscribe to Data APIs to continue",
+            },
+            "data": "",
+        }
+        result = await data_adapter.get_option_chain(
+            underlying_scrip="13", exchange_segment="NSE_FNO", expiry="",
+        )
+        assert result["status"] == "error"
+        assert result.get("entitlement") is True
+        assert "subscribe to Data APIs" in result["message"]
+        assert data_adapter.entitlement_error is True
+
+    @pytest.mark.asyncio
+    async def test_failure_dict_non_entitlement_returns_remarks_message(self, data_adapter) -> None:
+        """Non-806 failures surface the remarks message as an error dict."""
+        dhan = data_adapter._dhan
+        dhan.option_chain.return_value = {
+            "status": "failure",
+            "remarks": {
+                "error_code": 429,
+                "error_type": "HTTP 429",
+                "error_message": "Rate limit exceeded",
+            },
+            "data": "",
+        }
+        result = await data_adapter.get_option_chain(
+            underlying_scrip="13", exchange_segment="NSE_FNO", expiry="",
+        )
+        assert result["status"] == "error"
+        assert result.get("entitlement") is not True
+        assert "Rate limit exceeded" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_failure_dict_string_remarks(self, data_adapter) -> None:
+        """Transport-exception remarks arrive as a plain string, not a dict."""
+        dhan = data_adapter._dhan
+        dhan.ticker_data.return_value = {
+            "status": "failure",
+            "remarks": "Subscribe to Data APIs to continue",
+            "data": "",
+        }
+        result = await data_adapter.get_ltp({"NSE_EQ": ["11536"]})
+        assert result["status"] == "error"
+        assert result.get("entitlement") is True
 
     def test_806_marks_entitlement_flag(self, data_adapter) -> None:
         data_adapter._mark_ws_error(

@@ -310,6 +310,9 @@ class HealthProjection:
         if self._data_adapter is None:
             da_status = "down"
             da_msg = "Not initialized (no credentials)"
+        elif getattr(self._data_adapter, "entitlement_error", False):
+            da_status = "down"
+            da_msg = "Data API entitlement missing (806) — subscribe to Data APIs"
         elif not getattr(self._data_adapter, "_connected", False):
             da_status = "degraded"
             da_msg = "WebSocket not connected"

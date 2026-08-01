@@ -94,10 +94,14 @@ class DhanDataAdapter:
         self._connected = True
 
     @staticmethod
+    def _is_entitlement_text(text: str) -> bool:
+        """True when an error text means the Data-API entitlement is missing (806)."""
+        return "806" in text or "Subscribe to Data APIs" in text
+
+    @staticmethod
     def _is_entitlement_error(exc: Exception) -> bool:
         """True when the error means the Data-API entitlement is missing (806)."""
-        text = str(exc)
-        return "806" in text or "Subscribe to Data APIs" in text
+        return DhanDataAdapter._is_entitlement_text(str(exc))
 
     def _mark_ws_error(self, exc: Exception) -> None:
         """Record a WS error; flag entitlement problems (806) for the reconnect cap."""
@@ -114,6 +118,35 @@ class DhanDataAdapter:
                 "message": "subscribe to Data APIs — Dhan error 806",
             }
         return {"status": "error", "message": str(exc)}
+
+    def _failure_dict(self, result: dict[str, Any]) -> dict[str, Any]:
+        """Convert a dhanhq-style failure dict to this adapter's error contract.
+
+        dhanhq 2.2.0 never raises on HTTP errors: DhanHTTP._send_request
+        returns {"status": "failure", "remarks": ..., "data": ""} instead
+        (installed dhanhq/dhan_http.py:53-70). On HTTP errors ``remarks`` is
+        a dict with error_code/error_type/error_message; on transport
+        exceptions it is a plain string. Surface 806 as the Data-API
+        entitlement problem; other failures carry the remarks message.
+        """
+        remarks: Any = result.get("remarks", "")
+        if isinstance(remarks, dict):
+            text = " ".join(
+                str(remarks.get(k) or "")
+                for k in ("error_message", "error_type", "error_code")
+            )
+        else:
+            text = str(remarks)
+        if self._is_entitlement_text(text):
+            self.entitlement_error = True
+            self.last_error = "subscribe to Data APIs"
+            return {
+                "status": "error",
+                "entitlement": True,
+                "message": "subscribe to Data APIs — Dhan error 806",
+            }
+        self.last_error = text or "Dhan API failure"
+        return {"status": "error", "message": self.last_error}
 
     # ---- DataProvider protocol ----
 
@@ -357,6 +390,8 @@ class DhanDataAdapter:
                 interval=interval, oi=oi,
             )
             self._last_tick_time = time.time()
+            if result.get("status") == "failure":
+                return self._failure_dict(result)
             return result
         except Exception as exc:
             logger.error("Dhan get_intraday_bars failed: %s", exc)
@@ -391,6 +426,8 @@ class DhanDataAdapter:
                 from_date=from_date, to_date=to_date, oi=oi,
             )
             self._last_tick_time = time.time()
+            if result.get("status") == "failure":
+                return self._failure_dict(result)
             return result
         except Exception as exc:
             logger.error("Dhan get_daily_bars failed: %s", exc)
@@ -412,6 +449,8 @@ class DhanDataAdapter:
         try:
             result: dict[str, Any] = self._dhan.ohlc_data(securities)
             self._last_tick_time = time.time()
+            if result.get("status") == "failure":
+                return self._failure_dict(result)
             return result
         except Exception as exc:
             logger.error("Dhan get_ohlc failed: %s", exc)
@@ -433,6 +472,8 @@ class DhanDataAdapter:
         try:
             result: dict[str, Any] = self._dhan.ticker_data(securities)
             self._last_tick_time = time.time()
+            if result.get("status") == "failure":
+                return self._failure_dict(result)
             return result
         except Exception as exc:
             logger.error("Dhan get_ltp failed: %s", exc)
@@ -462,6 +503,8 @@ class DhanDataAdapter:
                 expiry=expiry,
             )
             self._last_tick_time = time.time()
+            if result.get("status") == "failure":
+                return self._failure_dict(result)
             return result
         except Exception as exc:
             logger.error("Dhan get_option_chain failed: %s", exc)

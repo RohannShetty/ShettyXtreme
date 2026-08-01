@@ -55,6 +55,13 @@
     return String(status).toUpperCase().replace("_", " ");
   }
 
+  function entitlementMessage(): string {
+    if (!health) return "";
+    const dhan = health.components.find((c) => c.name === "dhan_data");
+    const msg = dhan?.message ?? "";
+    return msg.includes("entitlement") || msg.includes("(806)") ? msg : "";
+  }
+
   function toggleDrawer(): void {
     dispatch("drawer", { open: !drawerOpen });
   }
@@ -81,6 +88,10 @@
       <span class="comp-name muted">health…</span>
     {/if}
   </div>
+
+  {#if entitlementMessage()}
+    <span class="ent-chip" title={entitlementMessage()}>{entitlementMessage()}</span>
+  {/if}
 
   <div class="session">
     {#if session}
@@ -162,6 +173,21 @@
   }
   .muted {
     color: var(--faint);
+  }
+  .ent-chip {
+    background: color-mix(in srgb, var(--danger) 14%, transparent);
+    border: 1px solid var(--danger);
+    border-radius: 4px;
+    color: var(--danger);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 3px 8px;
+    white-space: nowrap;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: none;
   }
   .session {
     display: flex;

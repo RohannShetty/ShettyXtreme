@@ -1,12 +1,13 @@
 from datetime import UTC, datetime
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from shettyxtreme.core.data_models import Tick
 from shettyxtreme.core.event_bus.event_bus import Event, Topic
 from shettyxtreme.terminal.projections import (
     AlertProjection,
+    HealthProjection,
     IntelligenceProjection,
     PositionProjection,
     RiskProjection,
@@ -188,3 +189,18 @@ async def test_signal_broadcast_on_signal(mock_broadcast):
         "conviction": 0.75,
         "voters": ["dp", "gamma"],
     })
+
+
+def test_health_reports_entitlement_down() -> None:
+    """dhan_data component goes down with the 806 entitlement message."""
+    proj = HealthProjection()
+    adapter = MagicMock()
+    adapter.entitlement_error = True
+    proj.configure(data_adapter=adapter)
+
+    result = proj.get()
+
+    dhan = next(c for c in result["components"] if c["name"] == "dhan_data")
+    assert dhan["status"] == "down"
+    assert "entitlement" in dhan["message"]
+    assert "(806)" in dhan["message"]
