@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -33,6 +34,10 @@ from shettyxtreme.terminal.api.health_router import router as health_router
 from shettyxtreme.terminal.api.intelligence_router import router as intelligence_router
 from shettyxtreme.terminal.api.learning_router import router as learning_router
 from shettyxtreme.terminal.api.research_router import router as research_router
+from shettyxtreme.research.scheduler import ResearchScheduler
+from shettyxtreme.research.tools import set_data_source
+from shettyxtreme.terminal.api.research_router import build_orchestrator, init_research
+from shettyxtreme.terminal.api.research_source import ProjectionDataSource
 from shettyxtreme.intelligence.regime.bus_bridge import RegimeBusBridge
 from shettyxtreme.intelligence.risk.bus_bridge import RiskBusBridge
 from shettyxtreme.terminal.api import postback_router
@@ -127,6 +132,50 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.intelligence_projection = intel_proj
     app.state.health_projection = health_proj
 
+    # ── Research: data source, WS broadcast, scheduler (3C) ────────────────
+    set_data_source(ProjectionDataSource(app.state))
+
+    def _research_broadcast(data: dict) -> None:
+        try:
+            asyncio.create_task(ws_manager.broadcast("research", data))
+        except Exception:
+            logger.exception("research broadcast failed")
+
+    research_scheduler: ResearchScheduler | None = None
+    if os.environ.get("RESEARCH_SCHEDULE_ENABLED") == "1":
+        if not os.environ.get("DEEPSEEK_API_KEY"):
+            logger.info("research scheduler skipped: DEEPSEEK_API_KEY not set")
+        else:
+            orch = build_orchestrator()
+            if orch is not None:
+                def _csv_env(name: str) -> list[str] | None:
+                    raw = os.environ.get(name, "")
+                    return [x.strip() for x in raw.split(",") if x.strip()] or None
+
+                try:
+                    interval = float(
+                        os.environ.get("RESEARCH_SCHEDULE_INTERVAL_MINUTES", "60")
+                    )
+                except ValueError:
+                    interval = 60.0
+                if interval <= 0:
+                    interval = 60.0
+
+                research_scheduler = ResearchScheduler(
+                    orchestrator=orch,
+                    interval_minutes=interval,
+                    lenses=_csv_env("RESEARCH_SCHEDULE_LENSES"),
+                    tools=_csv_env("RESEARCH_SCHEDULE_TOOLS"),
+                )
+                research_scheduler.start()
+                logger.info(
+                    "research scheduler started (interval %s min)",
+                    research_scheduler.interval_minutes,
+                )
+    else:
+        logger.info("research scheduler disabled (RESEARCH_SCHEDULE_ENABLED not set)")
+    init_research(broadcast_fn=_research_broadcast, scheduler=research_scheduler)
+
     # ── Seed watchlist from YAML FIRST (before pipeline needs it) ───────────
     watchlist_path = Path(__file__).resolve().parent.parent.parent.parent.parent / "configs" / "default_watchlist.yaml"
     if watchlist_path.exists():
@@ -208,6 +257,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("ShettyXtreme Terminal shutting down...")
     await regime_bridge.stop()
     await risk_bridge.stop()
+    if research_scheduler is not None:
+        research_scheduler.stop()
     if _ingestion_pipeline:
         await _ingestion_pipeline.stop()
     if _data_adapter:
@@ -224,7 +275,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="ShettyXtreme Terminal",
-    version="0.7.0",
+    version="0.9.0",
     lifespan=lifespan,
 )
 

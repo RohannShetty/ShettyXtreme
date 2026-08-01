@@ -5,6 +5,7 @@
   import HintsPanel from "./components/HintsPanel.svelte";
   import LogDrawer from "./components/LogDrawer.svelte";
   import PositionsRiskStrip from "./components/PositionsRiskStrip.svelte";
+  import ResearchPanel from "./components/ResearchPanel.svelte";
   import ScannerPanel from "./components/ScannerPanel.svelte";
   import Watchlist from "./components/Watchlist.svelte";
   import { connect, stop } from "./lib/ws";
@@ -58,6 +59,7 @@
         <HintsPanel />
       </div>
       <div class="right-col">
+        <ResearchPanel />
         <ScannerPanel />
         <LogDrawer bind:open={drawerOpen} />
       </div>

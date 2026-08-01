@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shettyxtreme"
-version = "0.7.0"
+version = "0.9.0"
 description = "Unified Indian-market trading intelligence and execution platform"
 requires-python = ">=3.11"
 authors = [{name = "Rohan Shetty", email = "shettyrohan2@gmail.com"}]

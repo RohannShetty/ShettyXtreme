@@ -206,6 +206,7 @@ class ResearchBriefResponse(BaseModel):
     validity_window_minutes: int
     status: str
     outcome: str | None = None
+    decided_at: str | None = None
     expired: bool = False
 
 
@@ -221,6 +222,7 @@ class LensListResponse(BaseModel):
 class ResearchRunRequest(BaseModel):
     lenses: list[str] | None = None
     context: dict[str, str] | None = None
+    tools: list[str] | None = None
 
 
 class ResearchRunItem(BaseModel):
@@ -240,3 +242,47 @@ class ResearchBriefListResponse(BaseModel):
 class ResearchDecisionResponse(BaseModel):
     brief_id: str
     status: str
+
+
+class ResearchToolResponse(BaseModel):
+    name: str
+    description: str
+    params_schema: dict = {}
+
+
+class ResearchToolsResponse(BaseModel):
+    tools: list[ResearchToolResponse] = []
+
+
+class ResearchSchedulerResponse(BaseModel):
+    enabled: bool = False
+    interval_minutes: float = 60.0
+    lenses: list[str] | None = None
+    tools: list[str] | None = None
+    next_run_at: str | None = None
+    last_run_at: str | None = None
+    last_result: str | None = None
+
+
+class ResearchOutcomeRequest(BaseModel):
+    # str, not Literal: the store validates and the router maps the
+    # resulting ValueError to the spec'd 400 (FastAPI would 422 otherwise).
+    outcome: str
+
+
+class ResearchOutcomeResponse(BaseModel):
+    brief_id: str
+    outcome: str
+
+
+class ResearchScoringItem(BaseModel):
+    lens: str
+    total: int
+    decided: int
+    with_outcome: int
+    win_rate: float
+    avg_confidence: float
+
+
+class ResearchScoringResponse(BaseModel):
+    lenses: list[ResearchScoringItem] = []
