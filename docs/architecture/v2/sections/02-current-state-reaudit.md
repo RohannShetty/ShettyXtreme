@@ -6,8 +6,8 @@ A restatement of the verified v1 delivery state (from the Phase-1 decisions pack
 
 Phase 3 of the v1 program was completed. Ship state, verified at pack-writing time (2026-08-01):
 
-- **Version:** v0.6.0; **~495 tests passing**, 4 known failures (see §3).
-- **Entry point:** `run.py` — opens browser, starts uvicorn on 127.0.0.1:8000; no CLI args (D10's observer-default fix will add explicit session control here).
+- **Version:** v0.7.0 (post-Phase-2); **527 tests passing**, 0 known failures (was ~495 / 4 — see §3 for the resolved set).
+- **Entry point:** `run.py` — opens browser, starts uvicorn on 127.0.0.1:8000; CLI flags `--mode OBSERVER|PAPER|LIVE` (D10: OBSERVER default, LIVE needs typed confirmation), `--no-browser`, `--port` (Phase 2).
 - **Config:** `configs/default.yaml` — broker dhan, dry_run true, mode observer.
 - **Storage:** `data/shetty_kv.db` (sqlite KV) + `data/shetty_ts.db` (duckdb time-series).
 
@@ -40,25 +40,27 @@ Module inventory (verified):
 | Config defaults (dry_run true, mode observer) | Correct default posture — matches D10's intent; only the mode-file mechanism is wrong |
 | FastAPI terminal scaffold + router separation | Terminal layer survives, frontend is replaced with Svelte per D9 |
 
-## 3. The 4 known test failures
+## 3. The 4 known test failures — ALL RESOLVED (Phase 2, 2026-08-01)
 
-| Test | Cause | Verdict | Fix phase |
-|---|---|---|---|
-| `test_get_options` | `get_option_chain` is a 501 stub | Implement per D6 in the options pipeline | Phase 2 ([Section 17 — Delivery Roadmap](17-delivery-roadmap.md)) |
-| `test_get_strategy_hint` | strategy-hint endpoint is a 501 stub | Implement per D6 with the strategy-hints panel (D4/design) | Phase 2 |
-| `test_execution_mode_default` | Mode file is env-dependent; default mode not asserted as OBSERVER | D10: OBSERVER is the default; LIVE is an explicit per-session action with confirmation | Phase 2 |
-| `test_matches_builtin_black76` | quantlib pricing mismatch vs reference | Unrelated to design; resolve in Phase 2 pricing work (`options/quantlib_pricer`) | Phase 2 |
+The Phase-2 exit gate fixed every row below (suite: 527 passed / 0 failed):
 
-## 4. Landmines (Phase-2 scope, verified)
-
-| Landmine | Detail | Fix |
+| Test | Cause | Resolution (commit) |
 |---|---|---|
-| `intelligence/hints/__init__.py` | Imports nonexistent `strategy_hints.py` | Wire to the Phase-2 strategy-hint implementation or remove the module until then |
-| `intelligence/conviction/__init__.py` | Imports docstring-only `conviction_engine.py` | Same — implement or cut; conviction metrics belong in the signal path per D3 |
-| `VoterRegistry` | Pass-stub | Real registry with voter discovery + shadow-voter activation (Phase 2/3) |
-| Stale conftest fixtures | Reference `integration.openalgo` and `dhan_adapter.DhanAdapter` — modules that no longer exist | Rewrite fixtures against `integration/dhan/` adapters during Phase 2 re-audit |
-| Empty dirs | `execution/lifecycle/`, `execution/position_tracker/`, `tests/risk/`, `tests/integration/` | Either implement (position lifecycle is Phase-2 work) or delete; no dead dirs in v2 |
-| `core/errors/__init__.py` | Empty | Define the error taxonomy (protocol + typed exceptions) in Phase 2 |
+| `test_get_options` | `get_option_chain` was a 501 stub | Implemented per D6 — chain + pure-Python greeks enrichment (`intelligence_router.py`); kills the 501 |
+| `test_get_strategy_hint` | strategy-hint endpoint was a 501 stub | Implemented per D6 — `intelligence/hints/strategy_hints.py` (strike EV selection), wired to the hints panel (D4/design) |
+| `test_execution_mode_default` | Mode file was env-dependent; default not asserted as OBSERVER | D10: OBSERVER is the runtime default; LIVE is an explicit per-session action with confirmation; test made deterministic |
+| `test_matches_builtin_black76` | quantlib pricing mismatch vs reference | Relative 1% tolerance with the QuantLib calendar-convention delta documented (env-pinned, no silent skip) |
+
+## 4. Landmines — ALL CLEARED (Phase 2, 2026-08-01)
+
+| Landmine | Resolution |
+|---|---|
+| `intelligence/hints/__init__.py` dead import | Implemented `strategy_hints.py` (StrategyHints/StrategyHint) |
+| `intelligence/conviction/__init__.py` dead import | Implemented `conviction_engine.py` (D/P/G per §14) |
+| `VoterRegistry` pass-stub | Real registry (register/names/count/get, `@voter` decorator, `get_registry()`); shadow-voter activation remains Phase 3 |
+| Stale conftest fixtures | Removed (`openalgo_adapter`, `dhan_adapter` imported nonexistent modules) |
+| Empty dirs | Removed `execution/lifecycle/`, `execution/position_tracker/`, `tests/risk/`, `tests/integration/` |
+| `core/errors/__init__.py` empty | Deleted (zero importers; no dead code in v2) |
 
 ## 5. Corrected facts: v1 said wrong, v2 says true
 

@@ -1,5 +1,33 @@
 # ShettyXtreme Changelog
 
+## [2026-08-01] — v0.7.0: v2 Blueprint + Phase 2 Pipeline Completion
+
+This release ships the full v2 architecture (Phases 0-2 of the delivery roadmap): a 20-section blueprint with binding decisions D1-D12, a DESIGN.md design contract, an OpenAlgo vendoring pipeline, the two previously-stubbed intelligence endpoints, Dhan data-feed and credential corrections, and the Svelte+Vite terminal. Suite: **527 passed / 0 failed / 3 skipped** (was 495 / 4).
+
+### Added
+- **Blueprint v2 + decisions**: 20-section architecture at `docs/architecture/v2/` (ARCHITECTURE_V2.md master + `sections/`), DESIGN.md design contract (token system: price-up red `#f6525c` / price-down green `#2ebd85`, JetBrains Mono numerals), ADR-002..007, v1 docs archived to `docs/architecture/v1/`.
+- **OpenAlgo vendoring pipeline (D1/D2)**: `scripts/sync_vendor.py` + `vendor/openalgo/` (10 origin-stamped files, AGPL-3.0, byte-idempotent re-sync); zero `import openalgo` in `src/` (grep-gated); 7 reference briefs at `docs/references/`.
+- **Intelligence endpoints (D6)**: `GET /api/intelligence/options` (chain + pure-Python greeks enrichment) and `GET /api/intelligence/strategy-hint` (regime/signal → strike EV selection) replace the two 501 stubs; new modules `intelligence/hints/strategy_hints.py`, `intelligence/conviction/conviction_engine.py` (D/P/G per blueprint §14); `VoterRegistry` fully implemented (register/names/count/get + `@voter` decorator + `get_registry()`).
+- **Svelte + Vite terminal (D9)**: `src/shettyxtreme/terminal/web/` (Svelte 5, Vite 6, TypeScript) built to `terminal/static/` and served by FastAPI; cockpit panels per DESIGN.md (watchlist rail, chain grid, strategy hints, positions/risk strip, logs/alerts drawer, session controls with kill switch `Ctrl+Shift+K` and LIVE confirmation); hash routes `#/`, `#/setup`, `#/settings`; WebSocket tick channel; `svelte-check` gate (0 errors).
+- **Credential fallback (D8)**: optional encrypted `data_access_token` slot + PIN/TOTP `generateAccessToken` flow (`DhanOAuthHelper.generate_access_token`); 806 surfaced as Data-API entitlement ("subscribe to Data APIs") on REST failure dicts, WS flag, health endpoint, and a visible terminal strip.
+- **`run.py` CLI (D10)**: `--mode OBSERVER|PAPER|LIVE` (OBSERVER default), `--no-browser`, `--port`; LIVE requires a typed confirmation prompt.
+
+### Fixed
+- **Dhan WS feed request codes**: v2 subscription codes now 15/17/21 (was invalid v1 2/8) — `DhanDataAdapter.subscribe_ticks`/`subscribe_bars`; stale protocol docstring corrected.
+- **OBSERVER default (D10)**: mode file never auto-restores LIVE (per-session confirmation, `confirm=true` required); `test_execution_mode_default` made deterministic.
+- **`test_matches_builtin_black76`**: relative 1% tolerance with the QuantLib calendar-convention delta documented (env-pinned, no silent skip).
+- **Strategy-hint starvation**: `IntelligenceProjection.on_signal_v2` now accepts `Signal` dataclass events (projection updates in production).
+- **OAuth callback → SPA**: redirects to `/static/?...​#/setup` instead of the deleted `setup.html`; status banner on the setup view.
+- **Landmines**: removed stale conftest fixtures (`openalgo_adapter`, `dhan_adapter` importing nonexistent modules), empty dirs (`execution/lifecycle`, `execution/position_tracker`, `tests/risk`, `tests/integration`), dead `core/errors/` package.
+- **Changelog 2026-07-31's "Known" failures** (`test_get_options`, `test_get_strategy_hint`, `test_execution_mode_default`) are resolved by this release.
+
+### Changed
+- Runtime mode semantics: LIVE is an explicit per-session action with confirmation (API + CLI + terminal dialog); PAPER/OBSERVER persist.
+- Test suite: 495 passing → 527 passing (4 known failures fixed, ~36 net new tests).
+
+### Known
+- Dhan `/optionchain` response key names unverified against a live API (no live credentials in this environment) — the router handles `strike`/`strike_price`, `option_type`/`drv_option_type`, spot aliases defensively; verify with a recorded fixture once live credentials are available (OPEN QUESTION, blueprint §02 precedent).
+
 ## [2026-07-31] — Graphify Knowledge-Graph Integration
 
 ### Added
