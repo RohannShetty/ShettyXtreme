@@ -46,16 +46,24 @@ def test_good_voter_graduates_after_21_sessions(tmp_path) -> None:
 
 
 def test_poor_voter_never_graduates(tmp_path) -> None:
+    before = set(get_registry().names())
     mgr = make_shadow_manager(str(tmp_path / "s.db"))
-    run_sessions(mgr, _build_sessions(_N, wins=_N))
-    assert mgr.should_promote("poor_voter") is False  # always votes against
-    assert mgr.graduate("poor_voter") is None
+    try:
+        run_sessions(mgr, _build_sessions(_N, wins=_N))
+        assert mgr.should_promote("poor_voter") is False  # always votes against
+        assert mgr.graduate("poor_voter") is None
+    finally:
+        _restore_registry(before)
     mgr.close()
 
 
 def test_19_sessions_insufficient(tmp_path) -> None:
+    before = set(get_registry().names())
     mgr = make_shadow_manager(str(tmp_path / "s.db"))
-    run_sessions(mgr, _build_sessions(19, wins=19))
-    assert mgr.should_promote("good_voter") is False
-    assert mgr.graduate("good_voter") is None
+    try:
+        run_sessions(mgr, _build_sessions(19, wins=19))
+        assert mgr.should_promote("good_voter") is False
+        assert mgr.graduate("good_voter") is None
+    finally:
+        _restore_registry(before)
     mgr.close()

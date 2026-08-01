@@ -14,8 +14,17 @@ from shettyxtreme.intelligence.signals.signal_engine import (
     Signal,
     SignalDirection,
     Vote,
+    get_registry,
 )
 from shettyxtreme.learning.outcome_tracker import OutcomeLabel
+
+
+def _restore_registry(before: set[str]) -> None:
+    """Remove names registered during the test; never touch pre-existing ones."""
+    reg = get_registry()
+    for name in set(reg.names()) - before:
+        reg._voters.pop(name, None)
+        reg._weights.pop(name, None)
 
 
 def _dummy_vote(features, regime, options_context) -> Vote:
@@ -112,6 +121,52 @@ def test_should_promote_true_over_20_with_high_hitrate(tmp_data_dir) -> None:
     assert mgr.should_promote("candidate") is True
 
 
+def test_legacy_db_migrates_session_date_and_data_intact(tmp_path) -> None:
+    db = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "CREATE TABLE shadow_sessions ("
+        "shadow_name TEXT, signal_id TEXT, vote_direction REAL, "
+        "vote_confidence REAL, outcome TEXT, was_correct INTEGER)"
+    )
+    for i in range(25):
+        conn.execute(
+            "INSERT INTO shadow_sessions (shadow_name, signal_id, vote_direction, "
+            "vote_confidence, outcome, was_correct) VALUES (?, ?, ?, ?, ?, ?)",
+            ("legacy_voter", f"sig-{i}", 1.0, 0.6, "WIN", 1),
+        )
+    conn.commit()
+    conn.close()
+
+    mgr = ShadowManager(db_path=str(db))
+    try:
+        mgr.register_shadow(
+            "legacy_voter",
+            lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "legacy_voter"),
+        )
+        cols = [
+            row[1]
+            for row in sqlite3.connect(str(db))
+            .execute("PRAGMA table_info(shadow_sessions)")
+            .fetchall()
+        ]
+        assert "session_date" in cols
+        assert mgr._conn.execute(
+            "SELECT COUNT(*) FROM shadow_sessions"
+        ).fetchone()[0] == 25
+        assert mgr.should_promote("legacy_voter") is False
+        status = {s["name"]: s for s in mgr.graduation_status()}
+        assert status["legacy_voter"]["sessions"] == 0
+        assert status["legacy_voter"]["evaluated"] == 25
+        assert status["legacy_voter"]["hit_rate"] == 1.0
+        assert status["legacy_voter"]["graduated"] is False
+        votes = mgr.run_shadow({}, Regime.TRENDING_UP, {})
+        mgr.log_shadow_results("new-sig", votes, session_date="2026-03-01")
+        assert mgr.graduation_status()[0]["sessions"] == 1
+    finally:
+        mgr.close()
+
+
 class TestSessionGate:
     def test_promote_requires_twenty_distinct_sessions(self, tmp_path) -> None:
         mgr = ShadowManager(db_path=str(tmp_path / "s.db"))
@@ -168,50 +223,106 @@ class TestSessionGate:
 
 class TestGraduation:
     def test_graduate_registers_into_default_registry(self, tmp_path) -> None:
-        from shettyxtreme.intelligence.signals.signal_engine import get_registry
+        before = set(get_registry().names())
         mgr = ShadowManager(db_path=str(tmp_path / "s.db"))
-        mgr.register_shadow("grad1", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "grad1"))
-        for i in range(21):
-            votes = mgr.run_shadow({}, None, {})
-            mgr.log_shadow_results(f"sig-{i}", votes, session_date=f"2026-01-{i+1:02d}")
-            mgr.compare_shadow_vs_live(f"sig-{i}", OutcomeLabel.WIN, live_direction=1.0)
-        fn = mgr.graduate("grad1")
-        assert fn is not None
-        assert get_registry().get("grad1") is fn
+        try:
+            mgr.register_shadow("grad1", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "grad1"))
+            for i in range(21):
+                votes = mgr.run_shadow({}, None, {})
+                mgr.log_shadow_results(f"sig-{i}", votes, session_date=f"2026-01-{i+1:02d}")
+                mgr.compare_shadow_vs_live(f"sig-{i}", OutcomeLabel.WIN, live_direction=1.0)
+            fn = mgr.graduate("grad1")
+            assert fn is not None
+            assert get_registry().get("grad1") is fn
+        finally:
+            _restore_registry(before)
         mgr.close()
 
     def test_graduate_gate_not_met_returns_none(self, tmp_path) -> None:
+        before = set(get_registry().names())
         mgr = ShadowManager(db_path=str(tmp_path / "s.db"))
-        mgr.register_shadow("grad2", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "grad2"))
-        assert mgr.graduate("grad2") is None  # no sessions at all
+        try:
+            mgr.register_shadow("grad2", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "grad2"))
+            assert mgr.graduate("grad2") is None  # no sessions at all
+        finally:
+            _restore_registry(before)
         mgr.close()
 
     def test_graduation_is_idempotent(self, tmp_path) -> None:
-        from shettyxtreme.intelligence.signals.signal_engine import get_registry
+        before = set(get_registry().names())
         mgr = ShadowManager(db_path=str(tmp_path / "s.db"))
-        mgr.register_shadow("grad3", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "grad3"))
-        for i in range(21):
-            votes = mgr.run_shadow({}, None, {})
-            mgr.log_shadow_results(f"sig-{i}", votes, session_date=f"2026-01-{i+1:02d}")
-            mgr.compare_shadow_vs_live(f"sig-{i}", OutcomeLabel.WIN, live_direction=1.0)
-        first = mgr.graduate("grad3")
-        second = mgr.graduate("grad3")
-        assert first is second
+        try:
+            mgr.register_shadow("grad3", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "grad3"))
+            for i in range(21):
+                votes = mgr.run_shadow({}, None, {})
+                mgr.log_shadow_results(f"sig-{i}", votes, session_date=f"2026-01-{i+1:02d}")
+                mgr.compare_shadow_vs_live(f"sig-{i}", OutcomeLabel.WIN, live_direction=1.0)
+            first = mgr.graduate("grad3")
+            second = mgr.graduate("grad3")
+            assert first is second
+        finally:
+            _restore_registry(before)
         mgr.close()
 
     def test_graduation_status_shape(self, tmp_path) -> None:
+        before = set(get_registry().names())
         mgr = ShadowManager(db_path=str(tmp_path / "s.db"))
-        mgr.register_shadow("grad4", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "grad4"))
-        for i in range(21):
-            votes = mgr.run_shadow({}, None, {})
-            mgr.log_shadow_results(f"sig-{i}", votes, session_date=f"2026-01-{i+1:02d}")
-            mgr.compare_shadow_vs_live(f"sig-{i}", OutcomeLabel.WIN, live_direction=1.0)
-        mgr.graduate("grad4")
-        status = {s["name"]: s for s in mgr.graduation_status()}
-        row = status["grad4"]
-        assert row["sessions"] == 21
-        assert row["evaluated"] == 21
-        assert row["hit_rate"] > 0.55
-        assert row["graduated"] is True
-        assert row["registered"] is True
+        try:
+            mgr.register_shadow("grad4", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "grad4"))
+            for i in range(21):
+                votes = mgr.run_shadow({}, None, {})
+                mgr.log_shadow_results(f"sig-{i}", votes, session_date=f"2026-01-{i+1:02d}")
+                mgr.compare_shadow_vs_live(f"sig-{i}", OutcomeLabel.WIN, live_direction=1.0)
+            mgr.graduate("grad4")
+            status = {s["name"]: s for s in mgr.graduation_status()}
+            row = status["grad4"]
+            assert row["sessions"] == 21
+            assert row["evaluated"] == 21
+            assert row["hit_rate"] > 0.55
+            assert row["graduated"] is True
+            assert row["registered"] is True
+        finally:
+            _restore_registry(before)
+        mgr.close()
+
+    def test_persist_failure_does_not_register(self, tmp_path) -> None:
+        before = set(get_registry().names())
+        mgr = ShadowManager(db_path=str(tmp_path / "s.db"))
+        try:
+            mgr.register_shadow(
+                "grad_fail", lambda fe, rg, oc: Vote(1.0, 0.6, 1.0, "grad_fail")
+            )
+            for i in range(21):
+                votes = mgr.run_shadow({}, None, {})
+                mgr.log_shadow_results(f"sig-{i}", votes, session_date=f"2026-01-{i+1:02d}")
+                mgr.compare_shadow_vs_live(f"sig-{i}", OutcomeLabel.WIN, live_direction=1.0)
+
+            class _FlakyConn:
+                """Delegates to the real conn; first commit() raises."""
+
+                def __init__(self, real: sqlite3.Connection) -> None:
+                    self._real = real
+                    self._commits = 0
+
+                def __getattr__(self, item):
+                    return getattr(self._real, item)
+
+                def commit(self) -> None:
+                    self._commits += 1
+                    if self._commits == 1:
+                        raise sqlite3.OperationalError("simulated commit failure")
+                    self._real.commit()
+
+            mgr._conn = _FlakyConn(mgr._conn)
+            assert mgr.graduate("grad_fail") is None
+            assert "grad_fail" not in get_registry().names()
+            assert mgr._conn.cursor().execute(
+                "SELECT COUNT(*) FROM shadow_graduates"
+            ).fetchone()[0] == 0
+            mgr._conn._real.commit()  # later success must not flush a pending insert
+            assert mgr._conn.cursor().execute(
+                "SELECT COUNT(*) FROM shadow_graduates"
+            ).fetchone()[0] == 0
+        finally:
+            _restore_registry(before)
         mgr.close()
