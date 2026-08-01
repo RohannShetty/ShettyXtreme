@@ -22,6 +22,7 @@ files:
     dest: utils/httpx_client.py
   - src: utils/mpp_slab.py
     dest: utils/mpp_slab.py
+  # token_db.py is a backward-compat re-export shim; substance lives in non-vendored database/token_db_enhanced.py — Phase 2 must vendor or reimplement it.
   - src: database/token_db.py
     dest: database/token_db.py
   - src: database/symbol.py

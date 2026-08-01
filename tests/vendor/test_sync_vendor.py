@@ -71,6 +71,27 @@ def test_sync_skips_unlisted_files(layout):
     assert not (vendor / "skip.py").exists()
 
 
+def test_sync_apply_twice_is_idempotent(layout):
+    mirror, vendor, files_yaml, meta = layout
+    sync_vendor.sync(files_yaml, mirror, vendor, meta, apply=True)
+    first = (vendor / "order_validator.py").read_text(encoding="utf-8")
+    sync_vendor.sync(files_yaml, mirror, vendor, meta, apply=True)
+    second = (vendor / "order_validator.py").read_text(encoding="utf-8")
+    assert first == second
+    assert second.count("=== ORIGIN ===") == 1
+
+
+def test_sync_preserves_trailing_newline_and_leading_blank_line(layout):
+    mirror, vendor, files_yaml, meta = layout
+    (mirror / "src" / "order.py").write_text("\nVALID_ACTIONS = ['BUY']\n\n", encoding="utf-8")
+    sync_vendor.sync(files_yaml, mirror, vendor, meta, apply=True)
+    out = (vendor / "order_validator.py").read_text(encoding="utf-8")
+    assert out.endswith("\n")
+    assert not out.endswith("\n\n")
+    marker_end = out.index("# === END ORIGIN ===\n") + len("# === END ORIGIN ===\n")
+    assert out[marker_end:] == "\nVALID_ACTIONS = ['BUY']\n"
+
+
 def test_sync_no_marker_for_json(layout):
     mirror, vendor, files_yaml, meta = layout
     (mirror / "src" / "plugin.json").write_text('{"name": "dhan"}\n', encoding="utf-8")

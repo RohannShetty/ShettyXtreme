@@ -11,6 +11,8 @@ use only** — ShettyXtreme itself remains Proprietary. You may not
 distribute, offer as a network service (SaaS), or re-license these files or
 derivative adaptations outside the terms of AGPL-3.0.
 
+License: the full AGPL-3.0 text ships in [./LICENSE](LICENSE).
+
 ## What lives here
 
 `FILES.yaml` declares which mirror files (`references/upstream/openalgo/`)

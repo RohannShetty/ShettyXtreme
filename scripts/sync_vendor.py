@@ -50,27 +50,54 @@ def load_file_list(files_yaml: Path) -> list[dict]:
 def collect_sources(file_list: list[dict], mirror: Path) -> list[tuple[Path, Path]]:
     sources: list[tuple[Path, Path]] = []
     for entry in file_list:
+        dest = Path(entry["dest"])
+        if dest.is_absolute():
+            raise ValueError(f"dest must be relative: {entry['dest']}")
+        if ".." in dest.parts:
+            raise ValueError(f"dest must not contain '..': {entry['dest']}")
         src = mirror / entry["src"]
         if not src.exists():
             print(f"SKIP (missing in mirror): {entry['src']}", file=sys.stderr)
             continue
-        sources.append((src, Path(entry["dest"])))
+        sources.append((src, dest))
     return sources
 
 
 def stamp(content: str, meta: dict) -> str:
+    content = content.rstrip("\n") + "\n"
     return MARKER.format(**meta) + content
 
 
+def destamp(content: str, meta: dict) -> str:
+    """Strip a previously written origin marker, byte-exact when possible.
+
+    The happy path strips the exact runtime-formatted marker; a file stamped
+    with an older commit/date falls back to dropping leading comment lines.
+    """
+    expected = MARKER.format(**meta)
+    if content.startswith(expected):
+        return content[len(expected):]
+    lines = content.splitlines()
+    if "=== ORIGIN ===" in lines[:6]:
+        first = next((i for i, line in enumerate(lines) if not line.startswith("#")), None)
+        if first is not None:
+            return "\n".join(lines[first:])
+    return content
+
+
 def git_meta(mirror: Path) -> dict:
-    commit = subprocess.run(
-        ["git", "-C", str(mirror), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    url = subprocess.run(
-        ["git", "-C", str(mirror), "config", "--get", "remote.origin.url"],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
+    try:
+        commit = subprocess.run(
+            ["git", "-C", str(mirror), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        url = subprocess.run(
+            ["git", "-C", str(mirror), "config", "--get", "remote.origin.url"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except subprocess.CalledProcessError as exc:
+        print(f"git_meta failed: {exc.stderr.strip() or exc}", file=sys.stderr)
+        raise SystemExit(1)
     return {
         "commit": commit,
         "url": url,
@@ -84,8 +111,7 @@ def sync(files_yaml: Path, mirror: Path, vendor_dir: Path, meta: dict, apply: bo
     changed: list[str] = []
     for src, dest_rel in collect_sources(entries, mirror):
         content = src.read_text(encoding="utf-8")
-        if "=== ORIGIN ===" in content.splitlines()[0:6]:
-            content = "\n".join(content.splitlines()[6:]).lstrip("\n")
+        content = destamp(content, meta)
         if marker_flags.get(src.relative_to(mirror).as_posix(), True):
             content = stamp(content, meta)
         dest = vendor_dir / dest_rel
@@ -94,12 +120,14 @@ def sync(files_yaml: Path, mirror: Path, vendor_dir: Path, meta: dict, apply: bo
             dest.write_text(content, encoding="utf-8")
         changed.append(dest_rel.name)
     if apply:
-        rows = ["| File | Source | Commit | Date |"]
-        rows.append("|---|---|---|---|")
+        rows = ["| File | Source | Commit | Date | Digest |"]
+        rows.append("|---|---|---|---|---|")
         for src, dest_rel in collect_sources(entries, mirror):
             dest = vendor_dir / dest_rel
             digest = hashlib.sha256(dest.read_bytes()).hexdigest()[:12] if dest.exists() else "-"
-            rows.append(f"| {dest_rel.name} | `{src.relative_to(mirror)}` | {meta['commit'][:8]} | {meta['date']} | `{digest}` |")
+            rows.append(
+                f"| {dest_rel.as_posix()} | `{src.relative_to(mirror).as_posix()}` | {meta['commit'][:8]} | {meta['date']} | `{digest}` |"
+            )
         (vendor_dir / "ORIGIN.md").write_text("\n".join(rows) + "\n", encoding="utf-8")
     return changed
 
