@@ -189,3 +189,54 @@ class ShadowStatusItem(BaseModel):
 
 class ShadowStatusResponse(BaseModel):
     shadows: list[ShadowStatusItem] = []
+
+
+# ── Research ───────────────────────────────────────────────────────────────
+class ResearchBriefResponse(BaseModel):
+    brief_id: str
+    lens: str
+    as_of: str
+    instruments: list[str] = []
+    direction: int
+    confidence: float
+    thesis: str
+    rationale: str
+    evidence: list[dict] = []
+    risks: list[str] = []
+    validity_window_minutes: int
+    status: str
+    outcome: str | None = None
+    expired: bool = False
+
+
+class LensInfoResponse(BaseModel):
+    name: str
+    description: str
+
+
+class LensListResponse(BaseModel):
+    lenses: list[LensInfoResponse] = []
+
+
+class ResearchRunRequest(BaseModel):
+    lenses: list[str] | None = None
+    context: dict[str, str] | None = None
+
+
+class ResearchRunItem(BaseModel):
+    lens: str
+    brief: ResearchBriefResponse | None = None
+    error: str | None = None
+
+
+class ResearchRunResponse(BaseModel):
+    results: list[ResearchRunItem] = []
+
+
+class ResearchBriefListResponse(BaseModel):
+    briefs: list[ResearchBriefResponse] = []
+
+
+class ResearchDecisionResponse(BaseModel):
+    brief_id: str
+    status: str
