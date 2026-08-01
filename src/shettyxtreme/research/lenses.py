@@ -18,11 +18,17 @@ class Lens:
     brief_prompt_template: str
 
     def build_prompt(self, digest_text: str) -> str:
-        return self.brief_prompt_template.format(digest=digest_text)
+        """Substitute the digest via sentinel replace — never str.format,
+        so operator content containing braces cannot break the prompt."""
+        return self.brief_prompt_template.replace(DIGEST_SENTINEL, digest_text)
 
+
+DIGEST_SENTINEL = "__DIGEST__"
 
 _BRIEF_FORMAT = (
-    "DATA SNAPSHOT:\n{digest}\n\n"
+    "DATA SNAPSHOT:\n"
+    + DIGEST_SENTINEL
+    + "\n\n"
     "Respond with a single JSON object only: "
     '{{"instruments": [..max 10 NSE symbols..], "direction": -1|0|1, '
     '"confidence": 0.0-1.0, "thesis": "1-2 sentences, max 500 chars", '

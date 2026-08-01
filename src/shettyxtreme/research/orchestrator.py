@@ -86,7 +86,11 @@ class ResearchOrchestrator:
                 brief = parse_brief_payload(
                     raw, lens=lens_name, as_of=as_of, brief_id=brief_id
                 )
-                self.store.insert(brief)
+                try:
+                    self.store.insert(brief)
+                except Exception as exc:
+                    logger.warning("Lens %s persist failed: %s", lens_name, exc)
+                    return LensRunResult(lens=lens_name, error=f"persist failed: {exc}")
                 return LensRunResult(lens=lens_name, brief=brief)
             except (ProviderError, BriefValidationError, asyncio.TimeoutError) as exc:
                 last_error = str(exc)

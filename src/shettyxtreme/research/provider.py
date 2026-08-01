@@ -39,13 +39,20 @@ class DeepSeekProvider:
         model: str = DEFAULT_MODEL,
         timeout: float = 90.0,
     ) -> None:
-        self._api_key = api_key if api_key is not None else os.environ.get("DEEPSEEK_API_KEY", "")
+        self._explicit_key = api_key
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._timeout = timeout
 
+    def _api_key(self) -> str:
+        """Explicit constructor key wins; otherwise read env at call time."""
+        if self._explicit_key:
+            return self._explicit_key
+        return os.environ.get("DEEPSEEK_API_KEY", "")
+
     async def generate(self, *, system: str, prompt: str, max_output_tokens: int) -> str:
-        if not self._api_key:
+        api_key = self._api_key()
+        if not api_key:
             raise ProviderError("DEEPSEEK_API_KEY is not set")
         payload = {
             "model": self._model,
@@ -59,7 +66,7 @@ class DeepSeekProvider:
             "stream": False,
         }
         headers = {
-            "Authorization": f"Bearer {self._api_key}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
         try:

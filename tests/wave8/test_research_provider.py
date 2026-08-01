@@ -43,7 +43,16 @@ async def test_deepseek_provider_no_key(monkeypatch) -> None:
         await p.generate(system="s", prompt="p", max_output_tokens=10)
 
 
-def test_deepseek_uses_env_key(monkeypatch) -> None:
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+@pytest.mark.asyncio
+async def test_deepseek_reads_env_at_call_time(monkeypatch) -> None:
+    # Without an explicit key, generate() reads the env var at call time:
+    # absent env -> no-key error; present env -> proceeds past the guard.
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     p = DeepSeekProvider()
-    assert p._api_key == "sk-test"
+    with pytest.raises(ProviderError, match="DEEPSEEK_API_KEY"):
+        await p.generate(system="s", prompt="p", max_output_tokens=10)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    try:
+        await p.generate(system="s", prompt="p", max_output_tokens=10)
+    except ProviderError as exc:
+        assert "DEEPSEEK_API_KEY is not set" not in str(exc)
