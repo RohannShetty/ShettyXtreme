@@ -76,19 +76,6 @@ def test_execution_mode_default(client: TestClient, tmp_path: Path, monkeypatch)
     assert body["mode"] == "OBSERVER"
 
 
-# ── Intelligence endpoints (501 stubs) ────────────────────────────────────
-
-
-def test_intelligence_options_501(client: TestClient) -> None:
-    resp = client.get("/api/intelligence/options")
-    assert resp.status_code == 501
-
-
-def test_intelligence_strategy_hint_501(client: TestClient) -> None:
-    resp = client.get("/api/intelligence/strategy-hint")
-    assert resp.status_code == 501
-
-
 # ── Watchlist endpoint ────────────────────────────────────────────────────
 
 

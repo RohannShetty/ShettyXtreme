@@ -160,6 +160,34 @@ async def test_get_strategy_hint(client: AsyncClient) -> None:
     assert "rationale" in data
 
 
+@pytest.mark.asyncio
+async def test_get_options_with_adapter(client: AsyncClient) -> None:
+    """Options endpoint enriches a real adapter chain response."""
+    class FakeAdapter:
+        async def get_option_chain(self, underlying_scrip: str, exchange_segment: str, expiry: str) -> dict:
+            return {
+                "status": "success",
+                "data": {
+                    "option_chain": [
+                        {"strike": 19000, "option_type": "CE", "ltp": 150.0},
+                        {"strike": 19000, "option_type": "PE", "ltp": 120.0},
+                    ],
+                },
+            }
+
+    app.state.data_adapter = FakeAdapter()
+    try:
+        resp = await client.get("/api/intelligence/options?symbol=NIFTY")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["underlying"] == "NIFTY"
+        assert len(data["contracts"]) == 2
+        assert data["contracts"][0]["strike"] == 19000.0
+        assert data["contracts"][0]["option_type"] == "CE"
+    finally:
+        app.state.data_adapter = None
+
+
 # ── Execution ──────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_positions(client: AsyncClient) -> None:
