@@ -115,3 +115,181 @@ async def test_missing_db_returns_empty(client: AsyncClient, tmp_path) -> None:
     resp = await client.get("/api/research/briefs")
     assert resp.status_code == 200
     assert resp.json()["briefs"] == []
+
+
+import shettyxtreme.terminal.api.research_router as rr
+from shettyxtreme.research.provider import ToolCall
+from shettyxtreme.research.scheduler import ResearchScheduler
+
+
+@pytest.mark.asyncio
+async def test_tools_listing(client: AsyncClient) -> None:
+    resp = await client.get("/api/research/tools")
+    assert resp.status_code == 200
+    names = {t["name"] for t in resp.json()["tools"]}
+    assert names == {
+        "chain_snapshot",
+        "regime_snapshot",
+        "scanner_alerts",
+        "options_posture",
+    }
+    chain = next(t for t in resp.json()["tools"] if t["name"] == "chain_snapshot")
+    assert chain["params_schema"]["required"] == ["symbol"]
+
+
+@pytest.mark.asyncio
+async def test_run_with_tools(client: AsyncClient, tmp_path) -> None:
+    store = ResearchStore(str(tmp_path / "research.db"))
+    rr.RESEARCH_DB_PATH = str(tmp_path / "research.db")
+    rr._ORCHESTRATOR = ResearchOrchestrator(
+        provider=SimulatedProvider(
+            script=[
+                '{"instruments": [], "direction": 0, "confidence": 0.5, '
+                '"thesis": "T", "rationale": "' + "r" * 320 + '", '
+                '"evidence": [], "risks": []}'
+            ],
+            simulate_tool_calls=[
+                ToolCall(name="regime_snapshot", arguments={}),
+            ],
+        ),
+        store=store,
+    )
+    resp = await client.post(
+        "/api/research/run",
+        json={"lenses": ["oi_iv_flow"], "tools": ["regime_snapshot", "scanner_alerts"]},
+    )
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert len(results) == 1
+    assert results[0]["brief"] is not None
+    assert results[0]["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_unknown_tool_400(client: AsyncClient, orchestrator) -> None:
+    resp = await client.post(
+        "/api/research/run", json={"lenses": ["oi_iv_flow"], "tools": ["nope"]}
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_scheduler_status_disabled(client: AsyncClient) -> None:
+    rr.init_research(broadcast_fn=None, scheduler=None)
+    resp = await client.get("/api/research/scheduler")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["enabled"] is False
+    assert body["interval_minutes"] == 60.0
+
+
+@pytest.mark.asyncio
+async def test_scheduler_status_reflects_handle(client: AsyncClient, tmp_path) -> None:
+    store = ResearchStore(str(tmp_path / "research.db"))
+    orch = ResearchOrchestrator(provider=SimulatedProvider(), store=store)
+    sched = ResearchScheduler(orchestrator=orch, interval_minutes=30, lenses=["tail_risk"], tools=["regime_snapshot"])
+    rr.init_research(broadcast_fn=None, scheduler=sched)
+    resp = await client.get("/api/research/scheduler")
+    body = resp.json()
+    assert body["enabled"] is False
+    assert body["interval_minutes"] == 30
+    assert body["lenses"] == ["tail_risk"]
+    assert body["tools"] == ["regime_snapshot"]
+    rr.init_research(broadcast_fn=None, scheduler=None)
+
+
+@pytest.mark.asyncio
+async def test_outcome_flow(client: AsyncClient, orchestrator) -> None:
+    resp = await client.post("/api/research/run", json={"lenses": ["oi_iv_flow"]})
+    brief = resp.json()["results"][0]["brief"]
+    assert brief is not None
+    # outcome on proposed -> 409
+    r409 = await client.post(
+        f"/api/research/briefs/{brief['brief_id']}/outcome", json={"outcome": "WIN"}
+    )
+    assert r409.status_code == 409
+    # decide then score
+    r_ok = await client.post(f"/api/research/briefs/{brief['brief_id']}/approve")
+    assert r_ok.status_code == 200
+    r_out = await client.post(
+        f"/api/research/briefs/{brief['brief_id']}/outcome", json={"outcome": "WIN"}
+    )
+    assert r_out.status_code == 200
+    assert r_out.json()["outcome"] == "WIN"
+    # unknown brief -> 404
+    r404 = await client.post(
+        "/api/research/briefs/nope/outcome", json={"outcome": "WIN"}
+    )
+    assert r404.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_outcome_invalid_value_400(client: AsyncClient, orchestrator) -> None:
+    resp = await client.post("/api/research/run", json={"lenses": ["oi_iv_flow"]})
+    brief = resp.json()["results"][0]["brief"]
+    await client.post(f"/api/research/briefs/{brief['brief_id']}/approve")
+    r_bad = await client.post(
+        f"/api/research/briefs/{brief['brief_id']}/outcome", json={"outcome": "DRAW"}
+    )
+    assert r_bad.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_scoring_empty_db(client: AsyncClient, tmp_path) -> None:
+    rr.RESEARCH_DB_PATH = str(tmp_path / "scoring_empty.db")
+    resp = await client.get("/api/research/scoring")
+    assert resp.status_code == 200
+    assert resp.json()["lenses"] == []
+
+
+@pytest.mark.asyncio
+async def test_scoring_after_decisions(client: AsyncClient, orchestrator) -> None:
+    resp = await client.post(
+        "/api/research/run", json={"lenses": ["oi_iv_flow", "tail_risk"]}
+    )
+    items = resp.json()["results"]
+    briefs = [r["brief"] for r in items if r["brief"] is not None]
+    assert len(briefs) == 2
+    for b in briefs:
+        await client.post(f"/api/research/briefs/{b['brief_id']}/approve")
+        await client.post(
+            f"/api/research/briefs/{b['brief_id']}/outcome", json={"outcome": "WIN"}
+        )
+    resp2 = await client.get("/api/research/scoring")
+    lenses = {l["lens"]: l for l in resp2.json()["lenses"]}
+    assert lenses["oi_iv_flow"]["total"] == 1
+    assert lenses["oi_iv_flow"]["with_outcome"] == 1
+    assert lenses["oi_iv_flow"]["win_rate"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_decided_at_in_brief_response(client: AsyncClient, orchestrator) -> None:
+    resp = await client.post("/api/research/run", json={"lenses": ["oi_iv_flow"]})
+    brief = resp.json()["results"][0]["brief"]
+    assert brief is not None
+    assert brief["decided_at"] is None
+    await client.post(f"/api/research/briefs/{brief['brief_id']}/approve")
+    fetched = await client.get(f"/api/research/briefs/{brief['brief_id']}")
+    assert fetched.json()["decided_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_broadcast_new_brief_and_decision(client: AsyncClient, tmp_path) -> None:
+    events: list[dict] = []
+    rr.init_research(broadcast_fn=events.append, scheduler=None)
+    store = ResearchStore(str(tmp_path / "research.db"))
+    rr.RESEARCH_DB_PATH = str(tmp_path / "research.db")
+    rr._ORCHESTRATOR = ResearchOrchestrator(
+        provider=SimulatedProvider(), store=store, on_brief=rr._on_brief
+    )
+    resp = await client.post("/api/research/run", json={"lenses": ["oi_iv_flow"]})
+    brief = resp.json()["results"][0]["brief"]
+    assert brief is not None
+    await client.post(f"/api/research/briefs/{brief['brief_id']}/approve")
+    kinds = [e["event"] for e in events]
+    assert "new_brief" in kinds
+    assert "decision" in kinds
+    decision = next(e for e in events if e["event"] == "decision")
+    assert decision["data"]["brief_id"] == brief["brief_id"]
+    assert decision["data"]["status"] == "approved"
+    rr.init_research(broadcast_fn=None, scheduler=None)
