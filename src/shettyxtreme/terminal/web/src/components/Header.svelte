@@ -1,0 +1,199 @@
+<script lang="ts">
+  import { onMount } from "svelte";
+  import { createEventDispatcher } from "svelte";
+  import { get } from "../lib/api";
+  import KillSwitch from "./KillSwitch.svelte";
+  import ModeSwitcher from "./ModeSwitcher.svelte";
+
+  type ComponentHealth = {
+    name: string;
+    status: string;
+    message: string;
+  };
+
+  type HealthResponse = {
+    components: ComponentHealth[];
+    overall: string;
+  };
+
+  type Session = {
+    status: string;
+    current_time_ist: string;
+    next_event: string;
+  };
+
+  const dispatch = createEventDispatcher<{ drawer: { open: boolean } }>();
+
+  export let drawerOpen = false;
+
+  let health: HealthResponse | null = null;
+  let session: Session | null = null;
+
+  onMount(() => {
+    load();
+  });
+
+  async function load(): Promise<void> {
+    try {
+      const [h, s] = await Promise.all([
+        get<HealthResponse>("/api/health"),
+        get<Session>("/api/health/session"),
+      ]);
+      health = h;
+      session = s;
+    } catch {
+      /* header degrades silently — panels show their own errors */
+    }
+  }
+
+  function statusClass(status: string): string {
+    const s = String(status).toLowerCase();
+    return s === "healthy" ? "st-ok" : s === "degraded" ? "st-warn" : "st-down";
+  }
+
+  function sessionText(status: string): string {
+    return String(status).toUpperCase().replace("_", " ");
+  }
+
+  function toggleDrawer(): void {
+    dispatch("drawer", { open: !drawerOpen });
+  }
+</script>
+
+<header class="head">
+  <div class="brand">
+    <span class="logo">SX</span>
+    <span class="title">SHETTYXTREME TERMINAL</span>
+  </div>
+
+  <ModeSwitcher />
+  <KillSwitch />
+
+  <div class="health">
+    {#if health}
+      {#each health.components as c (c.name)}
+        <span class="comp" title={c.message || c.name}>
+          <span class="dot {statusClass(c.status)}"></span>
+          <span class="comp-name">{c.name}</span>
+        </span>
+      {/each}
+    {:else}
+      <span class="comp-name muted">health…</span>
+    {/if}
+  </div>
+
+  <div class="session">
+    {#if session}
+      <span class="session-status">{sessionText(session.status)}</span>
+      <span class="mono session-time">{session.current_time_ist?.slice(11, 16) ?? ""}</span>
+    {/if}
+  </div>
+
+  <button class="drawer-btn" class:active={drawerOpen} on:click={toggleDrawer} title="Toggle logs drawer">
+    LOGS
+  </button>
+</header>
+
+<style>
+  .head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    background: var(--canvas-raised);
+    border-bottom: 1px solid var(--hairline);
+    min-height: 44px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-right: 4px;
+  }
+  .logo {
+    background: var(--accent);
+    color: var(--on-accent);
+    font-weight: 800;
+    font-size: 11px;
+    border-radius: 4px;
+    padding: 2px 5px;
+  }
+  .title {
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+  }
+  .health {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+    overflow: hidden;
+  }
+  .comp {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+    max-width: 220px;
+  }
+  .comp-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex: none;
+  }
+  .st-ok {
+    background: var(--success);
+  }
+  .st-warn {
+    background: var(--warning);
+  }
+  .st-down {
+    background: var(--danger);
+  }
+  .muted {
+    color: var(--faint);
+  }
+  .session {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .session-status {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  .session-time {
+    font-size: 11px;
+    color: var(--faint);
+  }
+  .drawer-btn {
+    background: var(--surface-card);
+    border: 1px solid var(--hairline-strong);
+    border-radius: 4px;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 5px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .drawer-btn:hover,
+  .drawer-btn.active {
+    color: var(--accent-active);
+    border-color: var(--accent-disabled);
+  }
+</style>

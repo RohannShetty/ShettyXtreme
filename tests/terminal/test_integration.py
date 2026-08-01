@@ -26,19 +26,19 @@ def client() -> TestClient:
 def test_root_redirects(client: TestClient) -> None:
     resp = client.get("/", follow_redirects=False)
     assert resp.status_code == 307
-    assert resp.headers["location"] == "/static/index.html"
+    assert resp.headers["location"] == "/static/"
 
 
 def test_setup_redirects(client: TestClient) -> None:
     resp = client.get("/setup", follow_redirects=False)
     assert resp.status_code == 307
-    assert resp.headers["location"] == "/static/setup.html"
+    assert resp.headers["location"] == "/static/#/setup"
 
 
 def test_settings_redirects(client: TestClient) -> None:
     resp = client.get("/settings", follow_redirects=False)
     assert resp.status_code == 307
-    assert resp.headers["location"] == "/static/settings.html"
+    assert resp.headers["location"] == "/static/#/settings"
 
 
 # ── Health endpoints ──────────────────────────────────────────────────────

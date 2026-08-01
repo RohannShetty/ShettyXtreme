@@ -71,14 +71,14 @@ async def client() -> AsyncIterator[AsyncClient]:
 async def test_root_redirects_to_terminal(client: AsyncClient) -> None:
     resp = await client.get("/", follow_redirects=False)
     assert resp.status_code == 307
-    assert resp.headers["location"] == "/static/index.html"
+    assert resp.headers["location"] == "/static/"
 
 
 @pytest.mark.asyncio
 async def test_setup_redirects_to_wizard(client: AsyncClient) -> None:
     resp = await client.get("/setup", follow_redirects=False)
     assert resp.status_code == 307
-    assert resp.headers["location"] == "/static/setup.html"
+    assert resp.headers["location"] == "/static/#/setup"
 
 
 # ── Watchlist ───────────────────────────────────────────────────

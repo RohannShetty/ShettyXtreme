@@ -1,0 +1,51 @@
+:root {
+  --canvas: #0a0b0d;
+  --canvas-raised: #111317;
+  --surface-card: #15181d;
+  --surface-elevated: #1b1f26;
+  --surface-overlay: #1e232b;
+  --hairline: #232830;
+  --hairline-strong: #2f3640;
+  --ink: #f2f5f9;
+  --body: #c3cbd6;
+  --muted: #8b94a1;
+  --faint: #5c6470;
+  --accent: #35c8ff;
+  --accent-active: #5fd6ff;
+  --accent-disabled: #14404f;
+  --on-accent: #06121a;
+  --price-up: #f6525c;
+  --price-up-strong: #ff7a82;
+  --price-down: #2ebd85;
+  --price-down-strong: #3fd9a0;
+  --success: #22c55e;
+  --warning: #ffb020;
+  --danger: #e5484d;
+  --info: #3b82f6;
+  --focus-ring: #35c8ff;
+  --row-hover: #1b2129;
+  --row-selected: #12283a;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --font-sans: Inter, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  background: var(--canvas);
+  color: var(--body);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  overflow: hidden;
+}
+.num, .ticker, table td:last-child, .mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.price-up { color: var(--price-up); }
+.price-down { color: var(--price-down); }
+.flash-up { animation: flash-up 150ms ease-out; }
+.flash-down { animation: flash-down 150ms ease-out; }
+@keyframes flash-up { from { background: rgba(246, 82, 92, 0.16); } to { background: transparent; } }
+@keyframes flash-down { from { background: rgba(46, 189, 133, 0.16); } to { background: transparent; } }
