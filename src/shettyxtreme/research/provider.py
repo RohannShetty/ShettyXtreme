@@ -96,9 +96,17 @@ class SimulatedProvider:
     empty script returns a schema-valid default brief.
     """
 
-    def __init__(self, script: list[str] | None = None, fail: str | None = None) -> None:
+    def __init__(
+        self,
+        script: list[str] | None = None,
+        fail: str | None = None,
+        fail_first: int = 0,
+        fail_system_substring: str | None = None,
+    ) -> None:
         self._script = list(script) if script else []
         self.fail = fail
+        self._fail_first = fail_first
+        self._fail_system_substring = fail_system_substring
         self.calls: list[dict] = []
 
     async def generate(self, *, system: str, prompt: str, max_output_tokens: int) -> str:
@@ -109,6 +117,10 @@ class SimulatedProvider:
             raise ProviderError("simulated network failure")
         if self.fail == "invalid_json":
             return "this is not json"
+        if len(self.calls) <= self._fail_first:
+            raise ProviderError("simulated network failure")
+        if self._fail_system_substring and self._fail_system_substring in system:
+            raise ProviderError("simulated network failure")
         if not self._script:
             return _DEFAULT_BRIEF
         if len(self._script) == 1:
