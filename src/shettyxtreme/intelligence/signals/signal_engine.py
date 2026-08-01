@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -8,9 +9,13 @@ from typing import TYPE_CHECKING
 
 from shettyxtreme.intelligence.conviction.conviction_engine import ConvictionEngine
 from shettyxtreme.intelligence.features.feature_engine import FeatureEngine
+from shettyxtreme.intelligence.regime import Regime
+from shettyxtreme.intelligence.signals.registry_adapter import adapt_shadow_fn
 
 if TYPE_CHECKING:
     from shettyxtreme.intelligence.signals.voter_correlation import VoterCorrelation
+
+logger = logging.getLogger(__name__)
 
 
 class SignalDirection(Enum):
@@ -59,6 +64,9 @@ class VoterRegistry:
     def get(self, name: str) -> Callable[[dict[str, float]], Vote] | None:
         return self._voters.get(name)
 
+    def get_weight(self, name: str) -> float:
+        return self._weights.get(name, 1.0)
+
 
 _DEFAULT_REGISTRY = VoterRegistry()
 
@@ -81,18 +89,53 @@ class SignalEngine:
         feature_engine: FeatureEngine,
         correlation: VoterCorrelation | None = None,
         history_window: int = 50,
+        regime: Regime | None = None,
+        options_context: dict | None = None,
+        consume_registry: bool = False,
         **kwargs,
     ) -> None:
         self.feature_engine = feature_engine
         self.correlation = correlation
         self.history_window = history_window
+        self.regime = regime
+        self.options_context = options_context
         self.voters: dict[str, Callable[[dict[str, float]], Vote]] = {}
         self.voter_weights: dict[str, float] = {}
+        self._synced_registry_names: set[str] = set()
         self._vote_history: list[list[Vote]] = []
+        if consume_registry:
+            self.sync_registry_members()
 
     def register_voter(self, name: str, voter: Callable[[dict[str, float]], Vote], weight: float = 1.0) -> None:
         self.voters[name] = voter
         self.voter_weights[name] = weight
+
+    def sync_registry_members(self) -> None:
+        """Import members of the global registry not already wired to the engine.
+
+        Collision rule (deterministic, no silent override): a voter already
+        registered on the engine wins; the registry member is skipped with a
+        logged warning. Explicit local wiring beats implicit global import.
+        Members synced in a previous call are skipped silently (idempotent).
+        3-arg callables (graduated shadows) are wrapped in a ShadowAdapter
+        that supplies the engine's current regime/options_context; 1-arg
+        callables pass through unchanged.
+        """
+        registry = get_registry()
+        for name in registry.names():
+            if name in self._synced_registry_names:
+                continue
+            if name in self.voters:
+                logger.warning(
+                    "voter %r already registered on engine; registry member skipped", name
+                )
+                self._synced_registry_names.add(name)
+                continue
+            fn = registry.get(name)
+            if fn is None:
+                continue
+            self.register_voter(name, adapt_shadow_fn(fn, self), registry.get_weight(name))
+            self._synced_registry_names.add(name)
 
     def compute_signal(self, *args, **kwargs) -> Signal:
         votes = []
