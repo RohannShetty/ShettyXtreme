@@ -10,6 +10,14 @@ from tests.wave6.session_simulator import (
 _N = 21  # sessions >= MIN_SESSIONS
 
 
+def _restore_registry(before: set[str]) -> None:
+    """Remove names registered during the test; never touch pre-existing ones."""
+    reg = get_registry()
+    for name in set(reg.names()) - before:
+        reg._voters.pop(name, None)
+        reg._weights.pop(name, None)
+
+
 def _build_sessions(sessions: int, wins: int) -> list[SimulatedSession]:
     """wins of the first `wins` sessions produce WIN outcomes; rest LOSS."""
     out = []
@@ -24,12 +32,16 @@ def _build_sessions(sessions: int, wins: int) -> list[SimulatedSession]:
 
 
 def test_good_voter_graduates_after_21_sessions(tmp_path) -> None:
+    before = set(get_registry().names())
     mgr = make_shadow_manager(str(tmp_path / "s.db"))
-    run_sessions(mgr, _build_sessions(_N, wins=_N))  # 100% agreement
-    assert mgr.should_promote("good_voter") is True
-    assert mgr.graduate("good_voter") is not None
-    assert get_registry().get("good_voter") is not None
-    assert mgr.graduation_status()[0]["graduated"] is True
+    try:
+        run_sessions(mgr, _build_sessions(_N, wins=_N))  # 100% agreement
+        assert mgr.should_promote("good_voter") is True
+        assert mgr.graduate("good_voter") is not None
+        assert get_registry().get("good_voter") is not None
+        assert mgr.graduation_status()[0]["graduated"] is True
+    finally:
+        _restore_registry(before)
     mgr.close()
 
 

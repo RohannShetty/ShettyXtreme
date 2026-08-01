@@ -1,10 +1,12 @@
 """Shadow model manager — run experimental voters without affecting live signals.
 
-Shadow voters are logged for promotion evaluation ONLY. They are NOT counted in
-conviction / D / P / G and never enter the global voter registry.
+Shadow voters are logged for promotion evaluation ONLY; they are not counted
+in conviction / D / P / G. They enter the global voter registry only via
+`graduate()`, after the session gate (min sessions + hit-rate threshold) passes.
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -13,6 +15,8 @@ from datetime import UTC, datetime
 from shettyxtreme.intelligence.regime import Regime
 from shettyxtreme.intelligence.signals.signal_engine import Vote, get_registry
 from shettyxtreme.learning.outcome_tracker import OutcomeLabel
+
+logger = logging.getLogger(__name__)
 
 ShadowFn = Callable[[dict[str, float], Regime, dict], Vote]
 
@@ -133,7 +137,7 @@ class ShadowManager:
         for row in rows:
             direction = float(row["vote_direction"])
             confidence = float(row["vote_confidence"])
-            was_correct = self._is_correct(direction, live_direction)
+            was_correct = self._is_correct(direction, live_direction, live_outcome)
             cur.execute(
                 "UPDATE shadow_sessions SET outcome = ?, was_correct = ? "
                 "WHERE signal_id = ? AND shadow_name = ?",
@@ -178,22 +182,28 @@ class ShadowManager:
     def graduate(self, name: str) -> ShadowFn | None:
         """Promote a shadow into the default registry once the gate passes.
 
-        Idempotent: re-graduating returns the same fn and replaces the
-        persisted row (PRIMARY KEY + INSERT OR REPLACE).
+        Persists first, then registers: a DB write failure is logged and
+        returns None without touching the registry. Idempotent: re-graduating
+        returns the same fn and replaces the persisted row
+        (PRIMARY KEY + INSERT OR REPLACE).
         """
         if not self.should_promote(name):
             return None
         fn = self._shadows.get(name)
         if fn is None:
             return None
-        get_registry().register(name, fn, weight=1.0)
         if self._conn is not None:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO shadow_graduates (shadow_name, graduated_at) "
-                "VALUES (?, ?)",
-                (name, datetime.now(UTC).isoformat()),
-            )
-            self._conn.commit()
+            try:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO shadow_graduates "
+                    "(shadow_name, graduated_at) VALUES (?, ?)",
+                    (name, datetime.now(UTC).isoformat()),
+                )
+                self._conn.commit()
+            except sqlite3.Error:
+                logger.exception("Failed to persist graduation for shadow %r", name)
+                return None
+        get_registry().register(name, fn, weight=1.0)
         return fn
 
     def graduation_status(self) -> list[dict]:
@@ -235,10 +245,12 @@ class ShadowManager:
         return statuses
 
     @staticmethod
-    def _is_correct(vote_direction: float, live_direction: float) -> bool:
+    def _is_correct(
+        vote_direction: float, live_direction: float, outcome: OutcomeLabel
+    ) -> bool:
         if vote_direction == 0.0 or live_direction == 0.0:
             return False
-        return (vote_direction > 0) == (live_direction > 0)
+        return (vote_direction > 0) == (live_direction > 0) and outcome == OutcomeLabel.WIN
 
     def close(self) -> None:
         """Close the underlying database connection if open."""
