@@ -80,8 +80,14 @@ class ResearchStore:
         rows = self._conn.execute(sql, params).fetchall()
         return [self._row_to_brief(r) for r in rows]
 
-    def decide(self, brief_id: str, decision: str) -> ResearchBrief:
-        """Set status to approved/rejected; raises AlreadyDecidedError if set."""
+    def decide(
+        self, brief_id: str, decision: str, regime: str | None = None
+    ) -> ResearchBrief:
+        """Set status to approved/rejected; raises AlreadyDecidedError if set.
+
+        `regime` (harness-owned, like `decided_at`) is recorded into the
+        payload at decision time for later analytics.
+        """
         brief = self.get(brief_id)
         if brief is None:
             raise KeyError(brief_id)
@@ -91,6 +97,7 @@ class ResearchStore:
         payload = json.loads(brief.model_dump_json())
         payload["status"] = decision
         payload["decided_at"] = now
+        payload["regime_at_decision"] = regime
         self._conn.execute(
             "UPDATE briefs SET payload = ?, status = ?, decided_at = ? WHERE brief_id = ?",
             (json.dumps(payload), decision, now, brief_id),
