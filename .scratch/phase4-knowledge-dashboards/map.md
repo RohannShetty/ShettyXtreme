@@ -26,6 +26,17 @@ Multi-broker and backtest depth are decided by tickets as they surface; the dest
 - (2026-08-01 chart) v1 extractor scope: **symbols + regimes + risk themes**, heuristic only.
 - (2026-08-01 chart) v1 dashboards: **scorecard core** (sessions logged, net EV/session, win rate by regime, calibration curve), **zero-new-deps** Svelte rendering.
 - (2026-08-01) [Doc-store backend: sqlite3 + FTS5](issues/01-knowledge-docstore-backend.md) — stdlib FTS5 (verified compiled in: sqlite 3.50.4), content= tables + triggers, bm25/snippet, tag filtering via joined columns; zero new deps; extends the ResearchStore append-only pattern. Findings: `docs/references/BRIEF-knowledge-docstore.md`. → unblocks tickets 02 and 03.
+- (2026-08-01) [Knowledge schema + ingest contract](issues/02-knowledge-schema-ingest-contract.md) — decided briefs only; knowledge = derived projection; idempotent on brief_id; research store stays source of truth.
+- (2026-08-01) [Tagger design](issues/03-tagger-extractor-design.md) — core/ lexicons (symbols + regimes + risk themes), tags table (doc_id, tag, kind), unit-tested.
+- (2026-08-01) [Activation flow](issues/04-activation-flow.md) — activate → `knowledge_search` research tool (DataSource.knowledge_summary); KnowledgePanel with search + review/approve.
+- (2026-08-01) [Dashboards scorecard](issues/05-dashboards-scorecard-core.md) — calibration now + empty states + recording track (SessionLog at lifespan start/stop; regime_at_decision at decide time); plain SVG/CSS charts, zero new deps.
+- (2026-08-01) [Analytics data inventory](issues/06-analytics-data-inventory.md) — only calibration computable today; sessions/outcomes/walkforward are library-only with zero runtime callers; no trades ledger → recording is new plumbing (ticket 05 absorbed it).
+- (2026-08-01) [Multi-broker](issues/07-multibroker-decision.md) — DECIDED-DEFER (trigger: concrete broker or missing Dhan capability).
+- (2026-08-01) [Backtest depth](issues/08-backtest-depth-scope.md) — DECIDED-DEFER (walkforward stays; no comparison surface in Phase 4).
+
+## Map state
+
+All 8 tickets resolved — the way is clear: two implementation tracks (knowledge layer, dashboards+recording). Continue with brainstorming→spec→plan→SDD per track.
 
 ## Not yet specified
 
