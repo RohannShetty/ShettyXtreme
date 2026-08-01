@@ -16,18 +16,25 @@ Design decisions (documented, tested in tests/wave6/test_registry_adapter.py):
    regime classifier's neutral fallback) and `{}`. The engine attributes
    themselves default to None so "unset" is distinguishable from "set".
 
-2. Which callables get wrapped? Only 3-arg ones.
+ 2. Which callables get wrapped? Only 3-arg ones.
    Arity is probed with `inspect.signature` (count of parameters excluding
-   *args/**kwargs), not a TypeError call-probe. Rationale: signature
-   inspection is deterministic and side-effect free; a TypeError probe would
-   actually invoke the callable, which may have side effects and cannot
-   distinguish "wrong arity" from "raised TypeError internally". A callable
-   that reports exactly 3 parameters is wrapped; anything else (including
-   uninspectable callables, which are assumed to conform to the engine's
-   1-arg contract) is passed through unchanged.
+   *args/**kwargs and keyword-only parameters), not a TypeError call-probe.
+   Rationale: signature inspection is deterministic and side-effect free; a
+   TypeError probe would actually invoke the callable, which may have side
+   effects and cannot distinguish "wrong arity" from "raised TypeError
+   internally". A callable that reports exactly 3 positional parameters is
+   wrapped; anything else (including uninspectable callables, which are
+   assumed to conform to the engine's 1-arg contract) is passed through
+   unchanged.
 
 3. Name collisions are resolved by `SignalEngine.sync_registry_members`
    (engine-registered voter wins; see its docstring).
+
+4. Sync staleness: re-registering a different fn under an already-synced
+   name (or unregistering an engine voter after a collision) is NOT
+   re-wired by a later sync — `_synced_registry_names` only grows. This is
+   deliberate: a shadow's identity is its registry name, and the engine
+   contract treats registered names as stable for a session.
 """
 from __future__ import annotations
 
@@ -45,7 +52,7 @@ DEFAULT_OPTIONS_CONTEXT: dict = {}
 
 
 def is_shadow_fn(fn: Callable) -> bool:
-    """True if `fn` declares exactly 3 parameters (a ShadowFn-shaped callable)."""
+    """True if `fn` declares exactly 3 positional parameters (ShadowFn-shaped)."""
     try:
         params = inspect.signature(fn).parameters.values()
     except (TypeError, ValueError):
@@ -63,7 +70,7 @@ class ShadowAdapter:
 
     def __call__(self, features: dict[str, float]) -> Vote:
         regime = self._engine.regime if self._engine.regime is not None else DEFAULT_REGIME
-        context = (
+        context = dict(
             self._engine.options_context
             if self._engine.options_context is not None
             else DEFAULT_OPTIONS_CONTEXT

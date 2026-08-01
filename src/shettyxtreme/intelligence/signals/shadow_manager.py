@@ -67,6 +67,10 @@ class ShadowManager:
         if "session_date" not in cols:
             cur.execute("ALTER TABLE shadow_sessions ADD COLUMN session_date TEXT")
         cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_shadow_sessions_name "
+            "ON shadow_sessions(shadow_name)"
+        )
+        cur.execute(
             """
             CREATE TABLE IF NOT EXISTS shadow_graduates (
                 shadow_name TEXT PRIMARY KEY,
