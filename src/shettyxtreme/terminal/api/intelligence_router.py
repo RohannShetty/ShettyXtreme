@@ -39,16 +39,24 @@ async def _fetch_chain(request: Request, symbol: str, expiry: str | None) -> lis
     return result.get("data", {}).get("option_chain", [])
 
 
+def _safe_float(value: Any) -> float:
+    """Coerce a chain row value to float, defaulting to 0.0 on junk."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _enrich_chain(chain: list[dict[str, Any]]) -> list[OptionsChainItem]:
     """Map raw chain rows to OptionsChainItem, enriching with pure-Python greeks."""
     calc = GreeksCalculator(use_quantlib=False)
     contracts: list[OptionsChainItem] = []
     for row in chain:
-        spot = row.get("underlying_ltp") or row.get("spot")
-        iv = float(row.get("iv", 0.0) or 0.0)
-        greeks: dict[str, float] = {}
-        if spot and iv > 0:
-            try:
+        try:
+            spot = row.get("underlying_ltp") or row.get("spot")
+            iv = float(row.get("iv", 0.0) or 0.0)
+            greeks: dict[str, float] = {}
+            if spot and iv > 0:
                 raw_type = str(row.get("option_type", "CE")).upper()
                 greeks = calc.calculate_all(
                     spot=float(spot),
@@ -57,22 +65,27 @@ def _enrich_chain(chain: list[dict[str, Any]]) -> list[OptionsChainItem]:
                     iv=iv,
                     option_type="CALL" if raw_type in ("CE", "CALL") else "PUT",
                 )
-            except Exception:
-                greeks = {}
-        contracts.append(OptionsChainItem(
-            strike=float(row.get("strike", 0.0)),
-            option_type=str(row.get("option_type", "CE")),
-            ltp=float(row.get("ltp", 0.0) or 0.0),
-            iv=iv,
-            delta=float(greeks.get("delta", 0.0)),
-            gamma=float(greeks.get("gamma", 0.0)),
-            theta=float(greeks.get("theta", 0.0)),
-            vega=float(greeks.get("vega", 0.0)),
-            oi=int(row.get("oi", 0) or 0),
-            volume=int(row.get("volume", 0) or 0),
-            bid=float(row.get("bid", 0.0) or 0.0),
-            ask=float(row.get("ask", 0.0) or 0.0),
-        ))
+            contracts.append(OptionsChainItem(
+                strike=float(row.get("strike", 0.0)),
+                option_type=str(row.get("option_type", "CE")),
+                ltp=float(row.get("ltp", 0.0) or 0.0),
+                iv=iv,
+                delta=float(greeks.get("delta", 0.0)),
+                gamma=float(greeks.get("gamma", 0.0)),
+                theta=float(greeks.get("theta", 0.0)),
+                vega=float(greeks.get("vega", 0.0)),
+                oi=int(row.get("oi", 0) or 0),
+                volume=int(row.get("volume", 0) or 0),
+                bid=float(row.get("bid", 0.0) or 0.0),
+                ask=float(row.get("ask", 0.0) or 0.0),
+            ))
+        except (TypeError, ValueError):
+            contracts.append(OptionsChainItem(
+                strike=_safe_float(row.get("strike")),
+                option_type=str(row.get("option_type") or "CE"),
+                ltp=0.0, iv=0.0, delta=0.0, gamma=0.0, theta=0.0, vega=0.0,
+                oi=0, volume=0, bid=0.0, ask=0.0,
+            ))
     return contracts
 
 
@@ -146,9 +159,18 @@ async def get_options(
 @router.get("/strategy-hint", response_model=StrategyHintResponse)
 async def get_strategy_hint(request: Request) -> StrategyHintResponse:
     """Return a strategy hint with EV analysis."""
-    signal = request.app.state.intelligence_projection.get_signal()
+    signal = request.app.state.intelligence_projection.get_signal() or {}
     chain = await _fetch_chain(request, "NIFTY", None)
-    hint = StrategyHints(signal=signal, chain=chain).generate()
+    current_price: float | None = None
+    for row in chain:
+        spot = row.get("underlying_ltp") or row.get("spot")
+        if spot is not None:
+            try:
+                current_price = float(spot)
+            except (TypeError, ValueError):
+                current_price = None
+            break
+    hint = StrategyHints(signal=signal, chain=chain, current_price=current_price).generate()
     return StrategyHintResponse(
         direction=hint.direction,
         strike=hint.strike,

@@ -146,4 +146,8 @@ class StrategyHints:
             iv=float(best.get("iv", iv)),
             days_to_expiry=self._dte,
         )
-        return {**best, "ev": ev}
+        return {
+            "strike": float(best.get("strike", 0.0)),
+            "premium": float(best.get("premium", 0.0)),
+            "ev": ev,
+        }
