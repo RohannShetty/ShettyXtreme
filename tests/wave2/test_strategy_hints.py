@@ -48,3 +48,56 @@ class TestStrategyHints:
         assert hint.direction == "bullish"
         assert hint.strike == 24000.0
         assert hint.ev_after_cost > 0
+
+
+def test_sizing_hook_sets_quantity() -> None:
+    from datetime import UTC, datetime
+    from shettyxtreme.intelligence.signals.signal_engine import Signal, SignalDirection, Vote
+    from shettyxtreme.learning.calibration import CalibrationCurve
+    from shettyxtreme.learning.outcome_tracker import OutcomeLabel, SignalDecision
+    from shettyxtreme.learning.sizing import CalibratedSizing
+
+    def cal_decision(conviction: float) -> SignalDecision:
+        sig = Signal(direction=SignalDirection.UP, conviction=conviction,
+                     voters=[Vote(1.0, conviction, 1.0, "v")], timestamp=datetime.now(UTC))
+        return SignalDecision(id="x", signal=sig, timestamp=datetime.now(UTC), outcome=OutcomeLabel.WIN)
+
+    # Fit at the signal's own conviction (0.7): predict(0.7) hits a populated
+    # bin (100% WIN -> 1.0); fitting at 0.8 would leave bin 7 empty and fall
+    # back to raw conviction.
+    curve = CalibrationCurve()
+    curve.fit([cal_decision(0.7) for _ in range(40)])
+    sizing = CalibratedSizing(curve, base_rate=0.5)
+    sizing.set_active(True)
+    hint = StrategyHints(signal=BULLISH_SIGNAL, chain=None, current_price=24000.0,
+                         sizing=sizing, base_quantity=100).generate()
+    assert hint.quantity == pytest.approx(200, rel=0.05)
+
+
+def test_sizing_hook_sets_quantity_with_strike() -> None:
+    from datetime import UTC, datetime
+    from shettyxtreme.intelligence.signals.signal_engine import Signal, SignalDirection, Vote
+    from shettyxtreme.learning.calibration import CalibrationCurve
+    from shettyxtreme.learning.outcome_tracker import OutcomeLabel, SignalDecision
+    from shettyxtreme.learning.sizing import CalibratedSizing
+
+    def cal_decision(conviction: float) -> SignalDecision:
+        sig = Signal(direction=SignalDirection.UP, conviction=conviction,
+                     voters=[Vote(1.0, conviction, 1.0, "v")], timestamp=datetime.now(UTC))
+        return SignalDecision(id="x", signal=sig, timestamp=datetime.now(UTC), outcome=OutcomeLabel.WIN)
+
+    curve = CalibrationCurve()
+    curve.fit([cal_decision(0.7) for _ in range(40)])
+    sizing = CalibratedSizing(curve, base_rate=0.5)
+    sizing.set_active(True)
+    hint = StrategyHints(signal=BULLISH_SIGNAL, chain=CHAIN, current_price=24000.0,
+                         slippage_per_lot=0.0, brokerage_per_lot=0.0,
+                         sizing=sizing, base_quantity=100).generate()
+    assert hint.direction == "bullish"
+    assert hint.strike == 24000.0
+    assert hint.quantity == pytest.approx(200, rel=0.05)
+
+
+def test_no_sizing_no_quantity() -> None:
+    hint = StrategyHints(signal=BULLISH_SIGNAL).generate()
+    assert hint.quantity is None
