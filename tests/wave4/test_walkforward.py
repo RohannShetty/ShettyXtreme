@@ -6,21 +6,28 @@ import pytest
 from shettyxtreme.intelligence.signals.signal_engine import (
     Signal,
     SignalDirection,
+    Vote,
 )
-from shettyxtreme.learning.outcome_tracker import SignalDecision
+from shettyxtreme.learning.outcome_tracker import OutcomeLabel, SignalDecision
 from shettyxtreme.learning.walkforward import WalkforwardEvaluator
 
 
-def _decision(dec_id: str, direction: SignalDirection) -> SignalDecision:
+def _decision(
+    dec_id: str,
+    direction: SignalDirection,
+    voters: list[Vote] | None = None,
+    outcome: OutcomeLabel | None = None,
+) -> SignalDecision:
     return SignalDecision(
         id=dec_id,
         signal=Signal(
             direction=direction,
             conviction=0.7,
-            voters=[],
+            voters=voters or [],
         ),
         timestamp=None,  # type: ignore[arg-type]
         strategy_hint=None,
+        outcome=outcome,
     )
 
 
@@ -86,3 +93,42 @@ def test_cost_adjusted_and_aggregate() -> None:
     assert res.cost_adjusted_return == pytest.approx(res.total_return)
     # with one loss, win_rate < 1
     assert res.win_rate < 1.0
+
+
+def test_breakdown_fields_present() -> None:
+    ev = WalkforwardEvaluator()
+    decisions = [_decision("d1", SignalDirection.UP)]
+    res = ev.evaluate(decisions, {"d1": 100.0}, {"d1": 110.0})
+    assert "per_voter" in res.__dict__
+    assert "per_regime" in res.__dict__
+
+
+def test_per_voter_breakdown_counts_correct_votes() -> None:
+    ev = WalkforwardEvaluator()
+    decisions = [
+        _decision(
+            "d1",
+            SignalDirection.UP,
+            voters=[Vote(direction=1.0, confidence=0.8, weight=1.0, name="v1")],
+            outcome=OutcomeLabel.WIN,
+        )
+    ]
+    res = ev.evaluate(decisions, {"d1": 100.0}, {"d1": 130.0})
+    # one voter 'v1' votes +1 on an UP decision (WIN) -> correct
+    assert res.per_voter["v1"]["signals"] == 1
+    assert res.per_voter["v1"]["correct"] == 1
+    assert res.per_voter["v1"]["directional_hit_rate"] == pytest.approx(1.0)
+
+
+def test_per_regime_breakdown_with_labels() -> None:
+    ev = WalkforwardEvaluator()
+    decisions = [
+        _decision("d1", SignalDirection.UP, outcome=OutcomeLabel.WIN),
+        _decision("d2", SignalDirection.UP, outcome=OutcomeLabel.WIN),
+    ]
+    entry = {"d1": 100.0, "d2": 100.0}
+    exit_p = {"d1": 130.0, "d2": 130.0}
+    regimes = {d.id: "trending" for d in decisions}
+    res = ev.evaluate(decisions, entry, exit_p, regimes=regimes)
+    assert res.per_regime["trending"]["signals"] == len(decisions)
+    assert res.per_regime["trending"]["win_rate"] > 0

@@ -163,3 +163,29 @@ class SessionResponse(BaseModel):
 # ── Postback ─────────────────────────────────────────────────────────────
 class PostbackResponse(BaseModel):
     status: str
+
+
+# ── Learning ──────────────────────────────────────────────────────────────
+class CalibrationPointResponse(BaseModel):
+    conviction_bin: list[float]  # [low, high]
+    actual_win_rate: float
+    sample_size: int
+    confidence_interval: list[float]  # [low, high]
+
+
+class CalibrationResponse(BaseModel):
+    reliable: bool
+    points: list[CalibrationPointResponse] = []
+
+
+class ShadowStatusItem(BaseModel):
+    name: str
+    sessions: int
+    evaluated: int
+    hit_rate: float
+    graduated: bool
+    registered: bool
+
+
+class ShadowStatusResponse(BaseModel):
+    shadows: list[ShadowStatusItem] = []

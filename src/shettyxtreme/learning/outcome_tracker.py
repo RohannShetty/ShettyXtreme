@@ -182,6 +182,14 @@ class OutcomeTracker:
         ).fetchall()
         return [self._row_to_decision(r) for r in rows]
 
+    def get_all_decisions(self) -> list[SignalDecision]:
+        """Return all recorded decisions, oldest first."""
+        cur = self._conn.cursor()
+        rows = cur.execute(
+            "SELECT * FROM signal_decisions ORDER BY timestamp"
+        ).fetchall()
+        return [self._row_to_decision(r) for r in rows]
+
     def _row_to_decision(self, row: sqlite3.Row) -> SignalDecision:
         attempts = self._attempts_for(row["id"])
         hint = (

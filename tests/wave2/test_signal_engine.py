@@ -163,3 +163,35 @@ class TestVoterRegistry:
 
         reg = get_registry()
         assert reg.get("decorated_test") is decorated
+
+
+# ---------------------------------------------------------------------------
+# Signal path wiring: correlation block caps + conviction D/P/G
+# ---------------------------------------------------------------------------
+class TestSignalPathWiring:
+    def setup_method(self) -> None:
+        self.engine = SignalEngine(feature_engine=MagicMock(features={}))
+
+    def test_correlation_block_caps_scale_group_weights(self) -> None:
+        from shettyxtreme.intelligence.signals.voter_correlation import VoterCorrelation
+        engine = SignalEngine(feature_engine=MagicMock(features={}),
+                              correlation=VoterCorrelation(block_cap=1.0))
+        engine.register_voter("v1", lambda fe: Vote(1.0, 0.8, 1.0, "v1"))
+        engine.register_voter("v2", lambda fe: Vote(1.0, 0.8, 1.0, "v2"))
+        engine.register_voter("v3", lambda fe: Vote(-1.0, 0.8, 1.0, "v3"))
+        for _ in range(6):  # build history so the matrix is computed
+            engine.compute_signal()
+        sig = engine.compute_signal()
+        assert sig.conviction < 0.8  # capped group cannot dominate
+        assert sig.P == pytest.approx(1.0)
+
+    def test_signal_carries_dpg(self) -> None:
+        self.engine.register_voter("u", lambda fe: Vote(1.0, 0.8, 1.0, "u"))
+        sig = self.engine.compute_signal()
+        assert sig.D > 0
+        assert sig.P == pytest.approx(1.0)
+        assert sig.G in ("unanimous", "contested")
+
+    def test_dpg_defaults_when_no_voters(self) -> None:
+        sig = self.engine.compute_signal()
+        assert sig.D == 0.0 and sig.P == 1.0 and sig.G == "contested"

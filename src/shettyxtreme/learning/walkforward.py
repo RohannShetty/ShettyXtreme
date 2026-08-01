@@ -6,11 +6,11 @@ subtracted so performance is not inflated.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import time
 
 from shettyxtreme.intelligence.risk.cost_model import compute_cost
-from shettyxtreme.learning.outcome_tracker import SignalDecision
+from shettyxtreme.learning.outcome_tracker import OutcomeLabel, SignalDecision
 
 LOT_SIZE = 75
 
@@ -27,6 +27,8 @@ class WalkforwardResult:
     max_drawdown: float
     num_trades: int
     cost_adjusted_return: float
+    per_voter: dict[str, dict] = field(default_factory=dict)
+    per_regime: dict[str, dict] = field(default_factory=dict)
 
 
 class WalkforwardEvaluator:
@@ -87,6 +89,7 @@ class WalkforwardEvaluator:
         signals: list[SignalDecision],
         entry_prices: dict[str, float],
         exit_prices: dict[str, float],
+        regimes: dict[str, str] | None = None,
     ) -> WalkforwardResult:
         """Evaluate decisions and return aggregate metrics."""
         pnls: list[float] = []
@@ -96,6 +99,8 @@ class WalkforwardEvaluator:
         win_sum = 0.0
         loss_sum = 0.0
         total_cost = 0.0
+        voter_stats: dict[str, dict] = {}
+        regime_stats: dict[str, dict] = {}
 
         for decision in signals:
             direction = self._direction(decision)
@@ -103,6 +108,18 @@ class WalkforwardEvaluator:
                 continue
             if decision.id not in entry_prices or decision.id not in exit_prices:
                 continue
+            for vote in decision.signal.voters:
+                stat = voter_stats.setdefault(vote.name, {"signals": 0, "correct": 0})
+                stat["signals"] += 1
+                if (vote.direction > 0) == (direction > 0):
+                    stat["correct"] += 1
+            if regimes:
+                label = regimes.get(decision.id)
+                if label:
+                    stat = regime_stats.setdefault(label, {"signals": 0, "wins": 0})
+                    stat["signals"] += 1
+                    if decision.outcome == OutcomeLabel.WIN:
+                        stat["wins"] += 1
             entry = float(entry_prices[decision.id])
             exit_price = float(exit_prices[decision.id])
             exit_premium = self._simulate_exit(entry, exit_price, direction)
@@ -130,6 +147,25 @@ class WalkforwardEvaluator:
         sharpe = self._sharpe(pnls)
         max_dd = self._max_drawdown(pnls)
 
+        per_voter = {
+            name: {
+                "signals": s["signals"],
+                "correct": s["correct"],
+                "directional_hit_rate": s["correct"] / s["signals"]
+                if s["signals"] > 0
+                else 0.0,
+            }
+            for name, s in voter_stats.items()
+        }
+        per_regime = {
+            label: {
+                "signals": s["signals"],
+                "wins": s["wins"],
+                "win_rate": s["wins"] / s["signals"] if s["signals"] > 0 else 0.0,
+            }
+            for label, s in regime_stats.items()
+        }
+
         return WalkforwardResult(
             total_return=total_return,
             win_rate=win_rate,
@@ -139,6 +175,8 @@ class WalkforwardEvaluator:
             max_drawdown=max_dd,
             num_trades=num_trades,
             cost_adjusted_return=total_return,
+            per_voter=per_voter,
+            per_regime=per_regime,
         )
 
     def _sharpe(self, pnls: list[float]) -> float:

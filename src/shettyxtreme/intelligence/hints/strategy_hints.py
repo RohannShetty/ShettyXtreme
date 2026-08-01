@@ -12,6 +12,7 @@ from shettyxtreme.intelligence.options.options_intel import (
     compute_signal_drift_ev,
     select_strike_by_ev,
 )
+from shettyxtreme.learning.sizing import CalibratedSizing
 from shettyxtreme.options.strategy_analyzer import StrategyAnalyzer
 
 _CONVICTION_GATE: float = 0.25
@@ -35,6 +36,7 @@ class StrategyHint:
     premium: float | None = None
     ev_after_cost: float = 0.0
     rationale: str = ""
+    quantity: int | None = None
 
 
 class StrategyHints:
@@ -48,6 +50,8 @@ class StrategyHints:
         slippage_per_lot: float = 5.0,
         brokerage_per_lot: float = 20.0,
         days_to_expiry: int = _DEFAULT_DTE,
+        sizing: CalibratedSizing | None = None,
+        base_quantity: int = 75,
     ) -> None:
         self._signal = signal
         self._chain = chain or []
@@ -55,6 +59,8 @@ class StrategyHints:
         self._slippage = slippage_per_lot
         self._brokerage = brokerage_per_lot
         self._dte = days_to_expiry
+        self._sizing = sizing
+        self._base_quantity = base_quantity
 
     def generate(self) -> StrategyHint:
         direction = str(self._signal.get("direction", "NEUTRAL")).upper()
@@ -94,11 +100,16 @@ class StrategyHints:
         option_type = "CE" if bullish else "PE"
         strategy_name = StrategyAnalyzer.display_name("long_call" if bullish else "long_put")
 
+        quantity: int | None = None
+        if self._sizing is not None and self._sizing.active:
+            quantity = self._sizing.adjust(self._base_quantity, conviction)
+
         selected = self._select_strike(option_type, conviction, bullish)
         if selected is None:
             return StrategyHint(
                 direction=hint_dir,
                 strategy=strategy_name,
+                quantity=quantity,
                 rationale=(
                     f"{hint_dir.capitalize()} signal with conviction {conviction:.2f}; "
                     f"no strike in the chain offers positive EV after costs "
@@ -111,6 +122,7 @@ class StrategyHints:
             strike=selected["strike"],
             premium=selected["premium"],
             ev_after_cost=selected["ev"],
+            quantity=quantity,
             rationale=(
                 f"{hint_dir.capitalize()} conviction {conviction:.2f} "
                 f"(participation {participation:.0%}); best strike {selected['strike']:.0f} "
@@ -127,7 +139,7 @@ class StrategyHints:
 
         def _usable(row: dict[str, Any]) -> bool:
             """Drop rows whose numeric fields are junk (would break coercion)."""
-            for key in ("strike", "premium", "iv"):
+            for key in ("strike", "strike_price", "premium", "iv"):
                 if row.get(key) is not None:
                     try:
                         float(row[key])
@@ -135,10 +147,22 @@ class StrategyHints:
                         return False
             return True
 
+        def _row_option_type(row: dict[str, Any]) -> str:
+            return str(row.get("option_type") or row.get("drv_option_type") or "").upper()
+
+        def _row_strike(row: dict[str, Any]) -> float:
+            return _safe_float(row.get("strike") if row.get("strike") is not None else row.get("strike_price", 0.0), 0.0)
+
         strikes = [
-            s for s in self._chain
+            {
+                "strike": _row_strike(s),
+                "premium": _safe_float(s.get("premium"), 0.0),
+                "iv": _safe_float(s.get("iv"), 15.0),
+            }
+            for s in self._chain
             if isinstance(s, dict)
-            and str(s.get("option_type", "")).upper() == option_type
+            and _row_option_type(s) == option_type
+            and not (_row_strike(s) == 0.0 and s.get("premium") is None)
             and _usable(s)
         ]
         if not strikes:

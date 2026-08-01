@@ -73,11 +73,6 @@ def _normalized_type(row: dict[str, Any]) -> str:
     return raw if raw in ("CE", "PE") else "CE"
 
 
-async def _fetch_chain(request: Request, symbol: str, expiry: str | None) -> list[dict[str, Any]]:
-    chain, _ = await _fetch_chain_with_spot(request, symbol, expiry)
-    return chain
-
-
 async def _fetch_chain_with_spot(
     request: Request, symbol: str, expiry: str | None,
 ) -> tuple[list[dict[str, Any]], float | None]:
