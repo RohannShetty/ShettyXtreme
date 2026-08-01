@@ -27,6 +27,8 @@ from shettyxtreme.core.storage.time_series_store import TimeSeriesStore
 from shettyxtreme.data.ingestion import IngestionPipeline
 from shettyxtreme.integration.dhan.data_adapter import DhanDataAdapter
 from shettyxtreme.integration.dhan.trading_adapter import DhanTradingAdapter
+from shettyxtreme.knowledge.store import KnowledgeStore
+from shettyxtreme.learning.sessions import SessionLog
 from shettyxtreme.terminal.api.auth_router import init_auth
 from shettyxtreme.terminal.api.auth_router import router as auth_router
 from shettyxtreme.terminal.api.execution_router import router as execution_router
@@ -42,6 +44,9 @@ from shettyxtreme.intelligence.regime.bus_bridge import RegimeBusBridge
 from shettyxtreme.intelligence.risk.bus_bridge import RiskBusBridge
 from shettyxtreme.terminal.api import postback_router
 from shettyxtreme.terminal.api import ws_bridge
+from shettyxtreme.terminal.api.analytics_router import router as analytics_router
+from shettyxtreme.terminal.api.knowledge_router import init_knowledge
+from shettyxtreme.terminal.api.knowledge_router import router as knowledge_router
 from shettyxtreme.terminal.api.scanner_data import GapDetector, LogCollector, ClusterDetector
 from shettyxtreme.terminal.api.scanner_router import init_scanner_data
 from shettyxtreme.terminal.api.scanner_router import router as scanner_router
@@ -176,6 +181,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("research scheduler disabled (RESEARCH_SCHEDULE_ENABLED not set)")
     init_research(broadcast_fn=_research_broadcast, scheduler=research_scheduler)
 
+    # ── Knowledge store + session log (Phase 4) ────────────────────────────
+    knowledge_store = KnowledgeStore("data/knowledge.db")
+    app.state.knowledge_store = knowledge_store
+
+    def _knowledge_broadcast(data: dict) -> None:
+        try:
+            asyncio.create_task(ws_manager.broadcast("knowledge", data))
+        except Exception:
+            logger.exception("knowledge broadcast failed")
+
+    init_knowledge(store=knowledge_store, broadcast_fn=_knowledge_broadcast)
+
+    session_log = SessionLog("data/sessions.db")
+    app.state.session_log = session_log
+    session_mode = getattr(app.state, "mode", None) or "OBSERVER"
+    _session_id = session_log.start(session_mode)
+    logger.info("session %s started (mode=%s)", _session_id, session_mode)
+
     # ── Seed watchlist from YAML FIRST (before pipeline needs it) ───────────
     watchlist_path = Path(__file__).resolve().parent.parent.parent.parent.parent / "configs" / "default_watchlist.yaml"
     if watchlist_path.exists():
@@ -259,6 +282,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await risk_bridge.stop()
     if research_scheduler is not None:
         research_scheduler.stop()
+    try:
+        session_log.end(_session_id)
+    except Exception:
+        logger.exception("session end failed")
+    knowledge_store.close()
     if _ingestion_pipeline:
         await _ingestion_pipeline.stop()
     if _data_adapter:
@@ -313,6 +341,8 @@ app.include_router(postback_router.router)
 app.include_router(settings_router)
 app.include_router(learning_router)
 app.include_router(research_router)
+app.include_router(knowledge_router)
+app.include_router(analytics_router)
 
 
 # ── Root: redirect to the Svelte SPA ────────────────────────────────────────

@@ -207,6 +207,7 @@ class ResearchBriefResponse(BaseModel):
     status: str
     outcome: str | None = None
     decided_at: str | None = None
+    regime_at_decision: str | None = None
     expired: bool = False
 
 
