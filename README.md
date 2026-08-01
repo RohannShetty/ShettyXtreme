@@ -99,7 +99,7 @@ OpenAlgo execution plumbing is vendored into `vendor/openalgo/` (origin-stamped,
 | 1 — Blueprint v2 + DESIGN.md + ADRs | **DONE** |
 | 2 — Usable MVP: pipeline completion + Svelte terminal | **DONE** |
 | 3 — Advanced intelligence | **3A done** (session-gated shadow graduation, calibration→sizing, correlation caps, D/P/G live, walkforward breakdowns, `/api/learning/*`); **3B done** (DeepSeek briefer harness — OI/IV-flow, directional-momentum, tail-risk lenses → schema-validated briefs, human approve/reject, `/api/research/*`); **3C done** (read-only data tools w/ mid-run function calling, env-config scheduler, ResearchPanel + WS live updates, outcome scoring + decided_at) |
-| 4 — Maturity (knowledge layer, analytics, optional multi-broker) | After 3 |
+| 4 — Maturity (knowledge layer, analytics, optional multi-broker) | **4A/4B done (v1)** — D12 knowledge layer (FTS5 store + tagger + activation → `knowledge_search` tool), scorecard dashboards + recording track; multi-broker + backtest depth deferred |
 
 Full detail: [`docs/architecture/v2/sections/17-delivery-roadmap.md`](docs/architecture/v2/sections/17-delivery-roadmap.md).
 
