@@ -132,6 +132,7 @@ async def test_tools_listing(client: AsyncClient) -> None:
         "regime_snapshot",
         "scanner_alerts",
         "options_posture",
+        "knowledge_search",
     }
     chain = next(t for t in resp.json()["tools"] if t["name"] == "chain_snapshot")
     assert chain["params_schema"]["required"] == ["symbol"]

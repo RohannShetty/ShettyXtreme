@@ -44,10 +44,12 @@ def test_tools_registry_shape() -> None:
         "regime_snapshot",
         "scanner_alerts",
         "options_posture",
+        "knowledge_search",
     ]
     assert all(t.description for t in list_tools())
     assert TOOLS["chain_snapshot"].params_schema["required"] == ["symbol"]
     assert TOOLS["regime_snapshot"].params_schema["required"] == []
+    assert TOOLS["knowledge_search"].params_schema["required"] == ["query"]
 
 
 def test_unsourced_without_source() -> None:
@@ -78,3 +80,25 @@ def test_source_none_text_becomes_unsourced() -> None:
 def test_unknown_tool_raises() -> None:
     with pytest.raises(KeyError):
         run_tool("nope", {})
+
+
+def test_knowledge_search_with_source() -> None:
+    class KSource(FakeSource):
+        def knowledge_summary(self, query: str) -> str | None:
+            return f"hits for {query}"
+
+    set_data_source(KSource())
+    out = run_tool("knowledge_search", {"query": "nifty"})
+    assert out == "hits for nifty"
+
+
+def test_knowledge_search_unsourced() -> None:
+    set_data_source(None)
+    assert run_tool("knowledge_search", {"query": "nifty"}) == UNSOURCED
+
+
+def test_knowledge_search_missing_query() -> None:
+    set_data_source(None)
+    assert run_tool("knowledge_search", {}) == (
+        "TOOL ERROR: missing required parameter 'query'"
+    )
