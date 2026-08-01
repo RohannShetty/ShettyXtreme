@@ -49,6 +49,19 @@ class TestStrategyHints:
         assert hint.strike == 24000.0
         assert hint.ev_after_cost > 0
 
+    def test_bullish_selects_strike_with_alias_keys(self) -> None:
+        """Dhan /optionchain alias keys (strike_price/drv_option_type) must work."""
+        chain = [
+            {"strike_price": 24000, "drv_option_type": "CE", "premium": 150.0, "lot_size": 25, "iv": 15.0},
+            {"strike_price": 24100, "drv_option_type": "CE", "premium": 100.0, "lot_size": 25, "iv": 15.0},
+        ]
+        hint = StrategyHints(
+            signal=BULLISH_SIGNAL, chain=chain, current_price=24000.0,
+            slippage_per_lot=0.0, brokerage_per_lot=0.0,
+        ).generate()
+        assert hint.direction == "bullish"
+        assert hint.strike == 24000.0
+
 
 def test_sizing_hook_sets_quantity() -> None:
     from datetime import UTC, datetime

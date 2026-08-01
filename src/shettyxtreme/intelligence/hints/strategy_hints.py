@@ -139,7 +139,7 @@ class StrategyHints:
 
         def _usable(row: dict[str, Any]) -> bool:
             """Drop rows whose numeric fields are junk (would break coercion)."""
-            for key in ("strike", "premium", "iv"):
+            for key in ("strike", "strike_price", "premium", "iv"):
                 if row.get(key) is not None:
                     try:
                         float(row[key])
@@ -147,10 +147,22 @@ class StrategyHints:
                         return False
             return True
 
+        def _row_option_type(row: dict[str, Any]) -> str:
+            return str(row.get("option_type") or row.get("drv_option_type") or "").upper()
+
+        def _row_strike(row: dict[str, Any]) -> float:
+            return _safe_float(row.get("strike") if row.get("strike") is not None else row.get("strike_price", 0.0), 0.0)
+
         strikes = [
-            s for s in self._chain
+            {
+                "strike": _row_strike(s),
+                "premium": _safe_float(s.get("premium"), 0.0),
+                "iv": _safe_float(s.get("iv"), 15.0),
+            }
+            for s in self._chain
             if isinstance(s, dict)
-            and str(s.get("option_type", "")).upper() == option_type
+            and _row_option_type(s) == option_type
+            and not (_row_strike(s) == 0.0 and s.get("premium") is None)
             and _usable(s)
         ]
         if not strikes:

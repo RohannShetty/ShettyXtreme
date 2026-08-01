@@ -237,3 +237,20 @@ def test_health_reports_entitlement_down() -> None:
     assert dhan["status"] == "down"
     assert "entitlement" in dhan["message"]
     assert "(806)" in dhan["message"]
+
+
+@pytest.mark.asyncio
+async def test_regime_changed_dataclass_payload() -> None:
+    proj = IntelligenceProjection()
+    from shettyxtreme.core.event_bus.event_bus import Event, Topic
+
+    class RegimePayload:
+        def __init__(self) -> None:
+            self.regime = "trending"
+            self.confidence = 0.8
+            self.transition = False
+
+    await proj.on_regime_changed(Event(topic=Topic.REGIME_CHANGED, data=RegimePayload(), source="test"))
+    state = proj.get_regime()
+    assert state["regime"] == "trending"
+    assert state["confidence"] == 0.8

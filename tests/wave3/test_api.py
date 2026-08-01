@@ -72,6 +72,13 @@ async def client() -> AsyncIterator[AsyncClient]:
         yield ac
 
 
+class EntitledAdapter:
+    """Adapter that reports a missing Data-API entitlement (Dhan 806)."""
+
+    async def get_option_chain(self, underlying_scrip: str, exchange_segment: str, expiry: str) -> dict:
+        return {"status": "error", "entitlement": True, "message": "subscribe to Data APIs — Dhan error 806"}
+
+
 # ── Root ───────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_root_redirects_to_terminal(client: AsyncClient) -> None:
@@ -190,6 +197,28 @@ async def test_get_options_with_adapter(client: AsyncClient) -> None:
         assert len(data["contracts"]) == 2
         assert data["contracts"][0]["strike"] == 19000.0
         assert data["contracts"][0]["option_type"] == "CE"
+    finally:
+        app.state.data_adapter = None
+
+
+@pytest.mark.asyncio
+async def test_options_entitlement_503(client: AsyncClient) -> None:
+    """806 entitlement from the adapter surfaces as a 503 with an actionable detail."""
+    app.state.data_adapter = EntitledAdapter()
+    try:
+        resp = await client.get("/api/intelligence/options?symbol=NIFTY")
+        assert resp.status_code == 503
+        assert "subscribe to Data APIs" in resp.json()["detail"]
+    finally:
+        app.state.data_adapter = None
+
+
+@pytest.mark.asyncio
+async def test_strategy_hint_entitlement_503(client: AsyncClient) -> None:
+    app.state.data_adapter = EntitledAdapter()
+    try:
+        resp = await client.get("/api/intelligence/strategy-hint")
+        assert resp.status_code == 503
     finally:
         app.state.data_adapter = None
 
