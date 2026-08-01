@@ -97,6 +97,109 @@ def test_store_decision_immutable(tmp_path) -> None:
 def test_store_outcome_stub(tmp_path) -> None:
     store = ResearchStore(str(tmp_path / "research.db"))
     store.insert(parse_brief_payload(_valid_payload(), lens="l", as_of="2026-08-01T10:00:00Z", brief_id="b1"))
+    store.decide("b1", "approved")
     updated = store.set_outcome("b1", "WIN")
     assert updated.outcome == "WIN"
+    store.close()
+
+
+from uuid import uuid4
+
+from shettyxtreme.research.briefs import MODEL_AUTHORED_FIELDS, ResearchBrief
+from shettyxtreme.research.store import BriefNotDecidedError, ResearchStore
+
+
+def _make_brief(lens: str, direction: int = 1, confidence: float = 0.6) -> ResearchBrief:
+    return ResearchBrief(
+        brief_id=str(uuid4()),
+        lens=lens,
+        as_of=datetime.now(UTC).isoformat(),
+        direction=direction,
+        confidence=confidence,
+        thesis="Thesis",
+        rationale="r" * 320,
+        evidence=[],
+        risks=[],
+    )
+
+
+def test_decided_at_not_model_authorable() -> None:
+    assert "decided_at" not in MODEL_AUTHORED_FIELDS
+
+
+def test_decided_at_surfaces_after_decision(tmp_path) -> None:
+    store = ResearchStore(str(tmp_path / "r.db"))
+    brief = _make_brief("lens_a")
+    store.insert(brief)
+    decided = store.decide(brief.brief_id, "approved")
+    assert decided.decided_at is not None
+    assert store.get(brief.brief_id).decided_at is not None
+    assert store.get(brief.brief_id).status == "approved"
+    store.close()
+
+
+def test_outcome_on_proposed_rejected(tmp_path) -> None:
+    store = ResearchStore(str(tmp_path / "r.db"))
+    brief = _make_brief("lens_a")
+    store.insert(brief)
+    with pytest.raises(BriefNotDecidedError):
+        store.set_outcome(brief.brief_id, "WIN")
+    store.close()
+
+
+def test_outcome_invalid_value(tmp_path) -> None:
+    store = ResearchStore(str(tmp_path / "r.db"))
+    brief = _make_brief("lens_a")
+    store.insert(brief)
+    store.decide(brief.brief_id, "approved")
+    with pytest.raises(ValueError, match="invalid outcome"):
+        store.set_outcome(brief.brief_id, "DRAW")
+    store.close()
+
+
+def test_outcome_unknown_brief(tmp_path) -> None:
+    store = ResearchStore(str(tmp_path / "r.db"))
+    with pytest.raises(KeyError):
+        store.set_outcome("nope", "WIN")
+    store.close()
+
+
+def test_outcome_on_rejected_brief_allowed(tmp_path) -> None:
+    store = ResearchStore(str(tmp_path / "r.db"))
+    brief = _make_brief("lens_a")
+    store.insert(brief)
+    store.decide(brief.brief_id, "rejected")
+    updated = store.set_outcome(brief.brief_id, "LOSS")
+    assert updated.outcome == "LOSS"
+    store.close()
+
+
+def test_scoring_aggregates(tmp_path) -> None:
+    store = ResearchStore(str(tmp_path / "r.db"))
+    b1 = _make_brief("lens_a", direction=1, confidence=0.6)
+    b2 = _make_brief("lens_a", direction=-1, confidence=0.8)
+    b3 = _make_brief("lens_b", direction=0, confidence=0.5)
+    store.insert(b1)
+    store.insert(b2)
+    store.insert(b3)
+    store.decide(b1.brief_id, "approved")
+    store.decide(b2.brief_id, "rejected")
+    store.decide(b3.brief_id, "approved")
+    store.set_outcome(b1.brief_id, "WIN")
+    store.set_outcome(b2.brief_id, "LOSS")
+    rows = {r["lens"]: r for r in store.scoring()}
+    assert rows["lens_a"]["total"] == 2
+    assert rows["lens_a"]["decided"] == 2
+    assert rows["lens_a"]["with_outcome"] == 2
+    assert rows["lens_a"]["win_rate"] == 0.5
+    assert rows["lens_a"]["avg_confidence"] == 0.7
+    assert rows["lens_b"]["total"] == 1
+    assert rows["lens_b"]["with_outcome"] == 0
+    assert rows["lens_b"]["win_rate"] == 0.0
+    store.close()
+
+
+def test_scoring_empty_db(tmp_path) -> None:
+    store = ResearchStore(str(tmp_path / "r.db"))
+    assert store.scoring() == []
     store.close()
