@@ -35,6 +35,8 @@
 
   function fmtValue(m: ScorecardMetric): string {
     if (!m.available) return "—";
+    if (typeof m.value === "boolean") return m.value ? "reliable" : "unreliable";
+    if (typeof m.value !== "number") return String(m.value);
     if (m.unit === "%") return `${(m.value * 100).toFixed(1)}%`;
     if (Number.isInteger(m.value)) return m.value.toLocaleString("en-IN");
     return m.value.toFixed(2);

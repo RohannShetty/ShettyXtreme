@@ -50,9 +50,12 @@ def ingest_decided_briefs(
         if brief.status not in ("approved", "rejected") or not brief.decided_at:
             result.skipped_undecided += 1
             continue
-        text = " ".join(
-            [brief.thesis, brief.rationale] + [str(item) for item in (brief.evidence or [])]
-        )
+        evidence_parts = [
+            f"{item.get('item', '')} {item.get('source', '')}"
+            for item in (brief.evidence or [])
+            if isinstance(item, dict)
+        ]
+        text = " ".join([brief.thesis, brief.rationale, *evidence_parts])
         doc = KnowledgeDoc(
             doc_id=f"brief-{brief.brief_id}",
             kind="research_brief",

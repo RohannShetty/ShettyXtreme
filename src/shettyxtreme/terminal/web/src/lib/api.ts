@@ -95,6 +95,7 @@ export type ResearchBrief = {
   status: string;
   outcome: string | null;
   decided_at: string | null;
+  regime_at_decision: string | null;
   expired: boolean;
 };
 export type ResearchRunRequest = {
@@ -163,6 +164,7 @@ export type KnowledgeSyncResponse = {
   ingested: number;
   skipped_undecided: number;
   skipped_duplicate: number;
+  error: string | null;
 };
 
 // --- Analytics (Phase 4) ---
@@ -176,10 +178,10 @@ export type CalibrationPoint = {
 export type ScorecardMetric = {
   key: string;
   label: string;
-  value: number;
-  unit: string;
+  value: number | boolean | string | null;
+  unit: string | null;
   available: boolean;
-  note: string;
+  note: string | null;
 };
 export type RegimeRow = {
   regime: string;

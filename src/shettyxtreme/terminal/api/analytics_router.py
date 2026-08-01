@@ -91,6 +91,7 @@ async def scorecard() -> ScorecardResponse:
             "Sessions open",
             sessions_open,
             sessions_open > 0,
+            note=None if sessions_open > 0 else "No session is currently running.",
             unit="sessions",
         )
     )
