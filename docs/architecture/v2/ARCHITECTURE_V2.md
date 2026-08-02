@@ -100,6 +100,6 @@ Dhan Data WS (feed codes 15/17/21) → DhanDataAdapter → EventBus (MarketDataR
 |-------|------|--------|
 | 0 | References + vendoring pipeline | ✅ DONE (2026-08-01, branch phase0-references-vendoring) |
 | 1 | Blueprint v2 + DESIGN.md + ADRs | ✅ THIS DOCUMENT |
-| 2 | Pipeline completion + Svelte terminal (usable MVP) | NEXT |
-| 3 | Advanced intelligence + research workspace | Planned |
-| 4 | Maturity: multi-broker optional, knowledge layer | Optional |
+| 2 | Pipeline completion + Svelte terminal (usable MVP) | ✅ DONE (2026-08-01) |
+| 3 | Advanced intelligence + research workspace | ✅ DONE (2026-08-01) |
+| 4 | Maturity: multi-broker optional, knowledge layer | ✅ DONE (2026-08-01) — v0.11.0 |

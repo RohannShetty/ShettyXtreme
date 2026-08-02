@@ -3,8 +3,9 @@
 Implements core.interfaces.data_provider.DataProvider and
 core.interfaces.market_data_stream.MarketDataStream protocols.
 
-Uses SEPARATE credentials from Trading adapter (Dhan error 806 if mixed).
-Includes staleness detection for data feed.
+Uses the single primary access token (D8) for the WS feed; an optional
+data-access token fallback exists for separate-entitlement cases (Dhan
+error 806). Includes staleness detection for data feed.
 
 Dhan WS binary protocol — two distinct code sets:
   Subscription REQUEST codes (v2 JSON, validated to 15/17/21):
@@ -59,7 +60,8 @@ class DhanDataAdapter:
     """Dhan Data API adapter for market data.
 
     Implements DataProvider and MarketDataStream protocols.
-    Uses data-specific credentials (separate from trading to avoid error 806).
+    Uses the primary access token (D8); an optional data-access token
+    fallback covers separate-entitlement cases (error 806).
     """
 
     name: str = "dhan-data"

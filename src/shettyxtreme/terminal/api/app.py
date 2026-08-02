@@ -7,6 +7,7 @@ Mounts static files and includes all routers.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -52,7 +53,6 @@ from shettyxtreme.terminal.api.knowledge_router import router as knowledge_route
 from shettyxtreme.terminal.api.scanner_data import GapDetector, LogCollector, ClusterDetector
 from shettyxtreme.terminal.api.scanner_router import init_scanner_data
 from shettyxtreme.terminal.api.scanner_router import router as scanner_router
-from shettyxtreme.terminal.api.settings_router import init_settings
 from shettyxtreme.terminal.api.settings_router import router as settings_router
 from shettyxtreme.terminal.api.watchlist_router import router as watchlist_router
 from shettyxtreme.terminal.api.ws_manager import WebSocketManager
@@ -87,7 +87,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     oauth = DhanOAuthHelper()
     validator = CredentialValidator()
     init_auth(store, oauth, validator)
-    init_settings(store, oauth, validator)
 
     _event_bus = EventBus()
     _event_bus_task = asyncio.create_task(_event_bus.start())
@@ -375,15 +374,33 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     """WebSocket endpoint for live data push.
 
     Clients connect and receive: ticks, signals, alerts, regime changes.
+    Client frames: "ping" (plain text) keeps the connection warm;
+    {"type": "subscribe", "topics": [...]} / {"type": "unsubscribe",
+    "topics": [...]} declare per-client topic interest. Clients that never
+    subscribe receive all topics (backward compatible).
     """
     await ws_manager.connect(websocket)
     try:
         while True:
-            # Keep connection alive, listen for client commands
             data = await websocket.receive_text()
-            # Future: handle client-side subscriptions
             if data == "ping":
                 await websocket.send_text('{"topic":"pong","data":{}}')
+                continue
+            try:
+                msg = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(msg, dict):
+                continue
+            topics = msg.get("topics")
+            if not isinstance(topics, list) or not all(
+                isinstance(t, str) for t in topics
+            ):
+                continue
+            if msg.get("type") == "subscribe":
+                await ws_manager.subscribe(websocket, topics)
+            elif msg.get("type") == "unsubscribe":
+                await ws_manager.unsubscribe(websocket, topics)
     except WebSocketDisconnect:
         await ws_manager.disconnect(websocket)
     except Exception:

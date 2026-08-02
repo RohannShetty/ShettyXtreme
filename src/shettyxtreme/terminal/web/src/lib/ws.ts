@@ -1,8 +1,10 @@
 /** WebSocket client with auto-reconnect and a topic-based handler registry.
  *
  * Server broadcasts JSON frames shaped `{ "topic": string, "data": object }`
- * (see ws_manager.broadcast). Pings keep the connection warm; pong frames are
- * consumed here and never forwarded.
+ * (see ws_manager.broadcast). On connect (and whenever the handler registry
+ * changes) this client sends a subscribe frame declaring its topics:
+ * `{ "type": "subscribe", "topics": [...] }`. Pings keep the connection
+ * warm; pong frames are consumed here and never forwarded.
  */
 
 export type WsMessageHandler = (data: unknown) => void;
@@ -11,6 +13,7 @@ const RECONNECT_MS = 2000;
 const PING_MS = 30000;
 
 const handlers = new Map<string, Set<WsMessageHandler>>();
+const subscribedTopics = new Set<string>();
 let socket: WebSocket | null = null;
 let keepAlive: number | undefined;
 let retryTimer: number | undefined;
@@ -55,6 +58,12 @@ function dispatch(topic: string, data: unknown): void {
   }
 }
 
+function sendSubscribe(): void {
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: "subscribe", topics: [...subscribedTopics] }));
+  }
+}
+
 export function connect(): void {
   if (!stopped) return;
   stopped = false;
@@ -71,6 +80,7 @@ export function connect(): void {
     keepAlive = window.setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) ws.send("ping");
     }, PING_MS);
+    sendSubscribe();
   };
 
   ws.onmessage = (ev: MessageEvent) => {
@@ -125,11 +135,17 @@ export function onMessage(topic: string, handler: WsMessageHandler): () => void 
     handlers.set(topic, set);
   }
   set.add(handler);
+  subscribedTopics.add(topic);
+  sendSubscribe();
   return () => {
     const current = handlers.get(topic);
     if (current) {
       current.delete(handler);
-      if (current.size === 0) handlers.delete(topic);
+      if (current.size === 0) {
+        handlers.delete(topic);
+        subscribedTopics.delete(topic);
+        sendSubscribe();
+      }
     }
   };
 }

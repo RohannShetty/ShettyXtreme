@@ -8,7 +8,7 @@ The roadmap is re-anchored on the verified repo state in [Section 02 — Current
 | 1 | Blueprint + design contract | **DONE (2026-08-01)** | Blueprint approved; DESIGN.md + ADRs committed |
 | 2 | Usable MVP — pipeline completion | **DONE (2026-08-01)** | 527 tests green (0 failures); terminal renders per DESIGN.md; option chain + strategy hints live |
 | 3 | Advanced intelligence | **3A DONE (2026-08-01); 3B DONE (2026-08-01); 3C DONE (2026-08-01)** | 3A: session-gated shadow graduation (≥20 sessions, direction-aware, spec semantics), calibration→sizing, correlation block caps + conviction D/P/G live, walkforward breakdowns, learning endpoints — 563 tests green. 3B: research workspace core — DeepSeek briefer harness (3 lenses), schema-validated briefs with reject-retry, human approve/reject + outcome stub, `/api/research/*` — 599 tests green. 3C: read-only data tools w/ mid-run function calling, env-config scheduler, terminal panel + WS broadcast, outcome scoring + decided_at — 655 tests green (0 skipped). Critic pass deferred until order intents exist. |
-| 4 | Maturity | **DONE (2026-08-01)** — v1 | Knowledge flow end-to-end (human-gated): FTS5 doc store + heuristic tagger + activation → `knowledge_search` research tool (D12, imports core only) — 703 tests green. Analytics dashboards: scorecard-core (calibration live, sessions/decisions/win-rate by regime with recording track), zero-new-deps SVG charts. Multi-broker + backtest depth: DECIDED-DEFER (triggers recorded on the wayfinder map). Net-EV/cost metrics deferred (no trades ledger). |
+| 4 | Maturity | **DONE (2026-08-01)** — v1 | Knowledge flow end-to-end (human-gated): FTS5 doc store + heuristic tagger + activation → `knowledge_search` research tool (D12, imports core only) — 703 tests green. Analytics dashboards: scorecard-core (calibration live, sessions/decisions/win-rate by regime with recording track), zero-new-deps SVG charts. TradeLedger + net-EV/fills scorecard metrics shipped in v0.11.0 (2026-08-02). Multi-broker + backtest depth: DECIDED-DEFER (triggers recorded on the wayfinder map). |
 
 ## Phase 0 — Foundations: references + vendoring (DONE, 2026-08-01)
 
@@ -24,7 +24,7 @@ The roadmap is re-anchored on the verified repo state in [Section 02 — Current
 
 **Validation**: `sync_vendor.py` syncs from the fresh mirror; vendor files hash-check; all 8 briefs committed.
 
-## Phase 1 — This blueprint (CURRENT)
+## Phase 1 — Blueprint + design contract (DONE, 2026-08-01)
 
 **Objectives**: write the full v2 architecture (this 20-section blueprint), the design contract, and ADR-recorded decisions before further code changes.
 
