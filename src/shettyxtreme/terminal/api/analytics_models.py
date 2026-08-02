@@ -37,3 +37,28 @@ class ScorecardResponse(BaseModel):
 class SessionsResponse(BaseModel):
     sessions: list[dict] = []
     counts: dict = {}
+
+
+class LedgerFillResponse(BaseModel):
+    fill_id: str
+    order_id: str | None = None
+    session_id: str | None = None
+    symbol: str | None = None
+    side: str | None = None
+    quantity: int | None = None
+    price: float | None = None
+    product: str | None = None
+    source: str
+    recorded_at: str
+
+
+class LedgerSessionResponse(BaseModel):
+    session_id: str
+    fills: int = 0
+    gross_notional: float = 0.0
+    realized_pnl: float = 0.0
+
+
+class LedgerResponse(BaseModel):
+    fills: list[LedgerFillResponse] = []
+    sessions: list[LedgerSessionResponse] = []

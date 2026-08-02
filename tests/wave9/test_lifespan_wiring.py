@@ -66,3 +66,10 @@ async def test_decide_records_regime_from_projection(
         assert fetched.json()["regime_at_decision"] == "trending_up"
     finally:
         del app.state.intelligence_projection
+
+
+@pytest.mark.asyncio
+async def test_lifespan_wires_trade_ledger() -> None:
+    async with app.router.lifespan_context(app):
+        assert hasattr(app.state, "trade_ledger")
+        assert getattr(app.state, "current_session_id", None) is not None
