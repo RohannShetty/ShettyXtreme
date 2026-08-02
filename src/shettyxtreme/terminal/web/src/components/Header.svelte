@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { createEventDispatcher } from "svelte";
   import { authStatus, get, type AuthStatus } from "../lib/api";
+  import { applyTheme, getTheme, type Theme } from "../lib/theme";
   import KillSwitch from "./KillSwitch.svelte";
   import ModeSwitcher from "./ModeSwitcher.svelte";
 
@@ -29,6 +30,12 @@
   let health: HealthResponse | null = null;
   let session: Session | null = null;
   let credStatus: AuthStatus | null = null;
+  let theme: Theme = getTheme();
+
+  function toggleTheme(): void {
+    theme = theme === "dark" ? "light" : "dark";
+    applyTheme(theme);
+  }
 
   onMount(() => {
     load();
@@ -125,6 +132,10 @@
       </a>
     {/if}
   {/if}
+
+  <button class="theme-btn" on:click={toggleTheme} title="Toggle theme" aria-label="Toggle light or dark theme">
+    T
+  </button>
 
   <button class="drawer-btn" class:active={drawerOpen} on:click={toggleDrawer} title="Toggle logs drawer">
     LOGS
@@ -276,6 +287,25 @@
   .session-time {
     font-size: 11px;
     color: var(--faint);
+  }
+  .theme-btn {
+    background: transparent;
+    border: 1px solid var(--hairline);
+    border-radius: 4px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    padding: 5px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex: none;
+  }
+  .theme-btn:hover,
+  .theme-btn.active {
+    color: var(--accent);
+    border-color: var(--accent-disabled);
   }
   .drawer-btn {
     background: var(--surface-card);

@@ -1,31 +1,91 @@
-:root {
-  --canvas: #0a0b0d;
-  --canvas-raised: #111317;
-  --surface-card: #15181d;
-  --surface-elevated: #1b1f26;
-  --surface-overlay: #1e232b;
-  --hairline: #232830;
-  --hairline-strong: #2f3640;
-  --ink: #f2f5f9;
-  --body: #c3cbd6;
-  --muted: #8b94a1;
-  --faint: #5c6470;
-  --accent: #35c8ff;
-  --accent-active: #5fd6ff;
-  --accent-disabled: #14404f;
-  --on-accent: #06121a;
+/* design.css — component design tokens (DESIGN.md §2). Single source of truth
+   for the 14 legacy components. Theme is selected by `data-theme` on <html>;
+   the :root fallback block (dark) renders before JS applies the attribute. */
+
+/* Dark (warm amber) — DEFAULT. Also the no-JS fallback. */
+:root,
+:root[data-theme="dark"] {
+  --canvas: #0d0c0a;
+  --canvas-raised: #141210;
+  --surface-card: #181613;
+  --surface-elevated: #1e1b17;
+  --surface-overlay: #221f19;
+  --hairline: #26221c;
+  --hairline-strong: #322d25;
+  --ink: #f4f0e7;
+  --body: #c6bfb1;
+  --muted: #948b7c;
+  --faint: #5f584c;
+  --accent: #f5b942;
+  --accent-active: #ffce6b;
+  --accent-disabled: #5c4712;
+  --on-accent: #1a1405;
   --price-up: #f6525c;
   --price-up-strong: #ff7a82;
+  --price-up-soft: rgba(246, 82, 92, 0.12);
   --price-down: #2ebd85;
   --price-down-strong: #3fd9a0;
+  --price-down-soft: rgba(46, 189, 133, 0.12);
+  --flash-up: rgba(246, 82, 92, 0.16);
+  --flash-down: rgba(46, 189, 133, 0.16);
   --success: #22c55e;
   --warning: #ffb020;
   --danger: #e5484d;
   --info: #3b82f6;
-  --focus-ring: #35c8ff;
-  --row-hover: #1b2129;
-  --row-selected: #12283a;
+  --focus-ring: #f5b942;
+  --row-hover: #211d17;
+  --row-selected: #2b2210;
   --scrim: rgba(0, 0, 0, 0.6);
+  --candle-up: #f6525c;
+  --candle-down: #2ebd85;
+  --volume: #3b362c;
+  --grid-line: #211d17;
+  --crosshair: #948b7c;
+  --watermark: #26221c;
+  --font-sans: Inter, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
+}
+
+/* Light (warm paper) — opt-in. Price law preserved: red = up, green = down.
+   Down-green darkened to #1e9e6b for AA on paper; hue stays green. */
+:root[data-theme="light"] {
+  --canvas: #f7f5f1;
+  --canvas-raised: #efede6;
+  --surface-card: #ffffff;
+  --surface-elevated: #f2efe9;
+  --surface-overlay: #faf8f4;
+  --hairline: #e0dcd2;
+  --hairline-strong: #c9c4b8;
+  --ink: #1a1a18;
+  --body: #3f3d38;
+  --muted: #6f6a60;
+  --faint: #9a948a;
+  --accent: #a16207;
+  --accent-active: #7c4a03;
+  --accent-disabled: #d8c6a3;
+  --on-accent: #ffffff;
+  --price-up: #f6525c;
+  --price-up-strong: #f6525c;
+  --price-up-soft: rgba(246, 82, 92, 0.12);
+  --price-down: #1e9e6b;
+  --price-down-strong: #2ebd85;
+  --price-down-soft: rgba(30, 158, 107, 0.12);
+  --flash-up: rgba(246, 82, 92, 0.16);
+  --flash-down: rgba(30, 158, 107, 0.16);
+  --success: #15803d;
+  --warning: #92400e;
+  --danger: #c62828;
+  --info: #1e40af;
+  --focus-ring: #a16207;
+  --row-hover: #f1eee8;
+  --row-selected: #f4e9cf;
+  --scrim: rgba(23, 20, 14, 0.4);
+  --candle-up: #f6525c;
+  --candle-down: #1e9e6b;
+  --volume: #d6d0c4;
+  --grid-line: #e6e2d8;
+  --crosshair: #6f6a60;
+  --watermark: #e0dcd2;
   --font-sans: Inter, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
 }
@@ -47,5 +107,5 @@ body {
 .price-down { color: var(--price-down); }
 .flash-up { animation: flash-up 150ms ease-out; }
 .flash-down { animation: flash-down 150ms ease-out; }
-@keyframes flash-up { from { background: rgba(246, 82, 92, 0.16); } to { background: transparent; } }
-@keyframes flash-down { from { background: rgba(46, 189, 133, 0.16); } to { background: transparent; } }
+@keyframes flash-up { from { background: var(--flash-up); } to { background: transparent; } }
+@keyframes flash-down { from { background: var(--flash-down); } to { background: transparent; } }
