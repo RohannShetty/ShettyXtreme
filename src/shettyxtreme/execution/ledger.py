@@ -116,11 +116,6 @@ class TradeLedger:
         params.append(limit)
         return [self._row(r) for r in self._conn.execute(sql, params).fetchall()]
 
-    def _fills_for(self, session_id: str | None) -> list[dict]:
-        if session_id is None:
-            return self.list(limit=100000)
-        return self.list(session_id=session_id, limit=100000)
-
     def per_session_summary(self) -> list[dict]:
         rows = self._conn.execute(
             "SELECT session_id, COUNT(*), COALESCE(SUM(quantity * price), 0) "
@@ -128,7 +123,11 @@ class TradeLedger:
         ).fetchall()
         out = []
         for session_id, count, notional in rows:
-            pnl = sum(p["pnl"] for p in pair_fills(self._fills_for(session_id)))
+            pairing = [self._row(r) for r in self._conn.execute(
+                "SELECT * FROM fills WHERE symbol IS NOT NULL AND session_id = ?",
+                (session_id,),
+            ).fetchall()]
+            pnl = sum(p["pnl"] for p in pair_fills(pairing))
             out.append({
                 "session_id": session_id, "fills": int(count),
                 "gross_notional": round(float(notional), 4), "realized_pnl": round(pnl, 4),

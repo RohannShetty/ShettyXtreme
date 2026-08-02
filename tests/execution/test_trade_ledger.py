@@ -44,6 +44,18 @@ def test_per_session_summary_pairing(tmp_path) -> None:
     assert summary[0]["gross_notional"] == 100.0 * 75 + 110.0 * 75 + 200.0 * 75
 
 
+def test_per_session_summary_ignores_nullsymbol_fills_for_pairing(tmp_path) -> None:
+    store = TradeLedger(str(tmp_path / "l.db"))
+    store.record_fill(_fill(order_id="O1", side="BUY", price=100.0, symbol=None))
+    store.record_fill(_fill(order_id="O2", side="SELL", price=110.0, symbol=None))
+    store.record_fill(_fill(order_id="O3", side="BUY", price=200.0))
+    summary = store.per_session_summary()
+    assert len(summary) == 1
+    assert summary[0]["fills"] == 3
+    assert summary[0]["realized_pnl"] == 0.0  # NULL-symbol fills never pair
+    assert summary[0]["gross_notional"] == 100.0 * 75 + 110.0 * 75 + 200.0 * 75
+
+
 def test_pair_fills_long_and_short() -> None:
     fills = [
         _fill(order_id="A", side="SELL", price=200.0, qty=75),
