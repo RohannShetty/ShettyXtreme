@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { del, get, post } from "../lib/api";
+  import { selectedSymbol } from "../lib/selection";
   import { onMessage } from "../lib/ws";
 
   type WatchItem = {
@@ -115,11 +116,15 @@
         class:selected={selected === item.symbol}
         class:flash-up={flashClass(item.symbol) === "flash-up"}
         class:flash-down={flashClass(item.symbol) === "flash-down"}
-        on:click={() => (selected = item.symbol)}
+        on:click={() => {
+          selected = item.symbol;
+          selectedSymbol.set(item.symbol);
+        }}
         on:keydown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             selected = item.symbol;
+            selectedSymbol.set(item.symbol);
           }
         }}
         role="button"

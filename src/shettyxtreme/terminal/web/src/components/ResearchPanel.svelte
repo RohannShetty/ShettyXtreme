@@ -112,8 +112,9 @@
     deciding = true;
     error = "";
     try {
+      const action = status === "approved" ? "approve" : "reject";
       const resp = await post<ResearchDecisionResponse>(
-        `/api/research/briefs/${selected.brief_id}/${status}`,
+        `/api/research/briefs/${selected.brief_id}/${action}`,
       );
       briefs = briefs.map((b) =>
         b.brief_id === resp.brief_id ? { ...b, status: resp.status } : b,

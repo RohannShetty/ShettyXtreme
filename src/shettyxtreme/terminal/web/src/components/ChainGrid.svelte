@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { get } from "../lib/api";
+  import { selectedSymbol } from "../lib/selection";
 
   type Contract = {
     strike: number;
@@ -36,6 +37,12 @@
 
   onMount(() => {
     load();
+    return selectedSymbol.subscribe((v) => {
+      if (v && v !== symbol) {
+        symbol = v;
+        load();
+      }
+    });
   });
 
   function buildRows(list: Contract[]): ChainRow[] {

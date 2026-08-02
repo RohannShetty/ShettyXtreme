@@ -8,6 +8,7 @@
     exchange: string;
     quantity: number;
     net_quantity: number;
+    buy_avg: number | null;
     m2m: number;
     pnl: number;
     product: string;
@@ -51,6 +52,10 @@
     return `${sign}${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
 
+  function fmtAvg(value: number): string {
+    return value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
   $: marginRatio =
     risk && risk.margin_used + risk.margin_available > 0
       ? risk.margin_used / (risk.margin_used + risk.margin_available)
@@ -78,7 +83,7 @@
             <tr>
               <td class="ticker">{p.symbol}</td>
               <td class="num">{p.net_quantity}</td>
-              <td class="num">—</td>
+              <td class="num">{p.buy_avg ? fmtAvg(p.buy_avg) : "—"}</td>
               <td class="num {pnlClass(p.m2m)}">{fmtMoney(p.m2m)}</td>
               <td class="num {pnlClass(p.pnl)}">{fmtMoney(p.pnl)}</td>
             </tr>
