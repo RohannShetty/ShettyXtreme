@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { authStatus, logoutAuth, reauth, type AuthStatus } from "../lib/api";
+  import { Button } from "$lib/components/ui/button";
+  import { Card, CardContent } from "$lib/components/ui/card";
 
-  let status: AuthStatus | null = null;
-  let error = "";
-  let busy = false;
+  let status: AuthStatus | null = $state(null);
+  let error = $state("");
+  let busy = $state(false);
 
   onMount(load);
 
@@ -53,17 +55,19 @@
   <h1 class="heading">Settings</h1>
 
   {#if status}
-    <div class="card">
-      <div class="row"><span class="label">Client</span><span class="value mono">{status.client_name || status.client_id || "—"}</span></div>
-      <div class="row"><span class="label">Token</span><span class="value mono">{status.token_valid ? "VALID" : status.has_token ? "EXPIRED" : "NOT SET"}</span></div>
-      <div class="row"><span class="label">Token expiry</span><span class="value mono">{fmtExpiry(status.token_expiry)}</span></div>
-      <div class="row"><span class="label">Data token</span><span class="value mono">{status.data_token_valid ? "VALID" : "NOT SET"}</span></div>
-      <div class="row"><span class="label">Data token expiry</span><span class="value mono">{fmtExpiry(status.data_token_expiry)}</span></div>
-      <div class="actions">
-        <button class="btn-primary" on:click={onReauth} disabled={busy}>Re-auth (open Dhan login)</button>
-        <button class="btn-danger" on:click={onLogout} disabled={busy}>Logout</button>
-      </div>
-    </div>
+    <Card>
+      <CardContent class="flex flex-col gap-2.5">
+        <div class="row"><span class="label">Client</span><span class="value mono">{status.client_name || status.client_id || "—"}</span></div>
+        <div class="row"><span class="label">Token</span><span class="value mono">{status.token_valid ? "VALID" : status.has_token ? "EXPIRED" : "NOT SET"}</span></div>
+        <div class="row"><span class="label">Token expiry</span><span class="value mono">{fmtExpiry(status.token_expiry)}</span></div>
+        <div class="row"><span class="label">Data token</span><span class="value mono">{status.data_token_valid ? "VALID" : "NOT SET"}</span></div>
+        <div class="row"><span class="label">Data token expiry</span><span class="value mono">{fmtExpiry(status.data_token_expiry)}</span></div>
+        <div class="actions">
+          <Button onclick={onReauth} disabled={busy}>Re-auth (open Dhan login)</Button>
+          <Button variant="danger" onclick={onLogout} disabled={busy}>Logout</Button>
+        </div>
+      </CardContent>
+    </Card>
   {:else}
     <p class="caption">Could not load credential status — is the terminal running?</p>
   {/if}
@@ -76,26 +80,41 @@
 </div>
 
 <style>
-  .settings { max-width: 560px; margin: 32px auto; padding: 0 16px; }
-  .heading { font-size: 14px; font-weight: 600; color: var(--ink); margin-bottom: 12px; }
-  .card {
-    background: var(--surface-card); border: 1px solid var(--hairline); border-radius: 6px;
-    padding: 16px; display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px;
+  .settings {
+    max-width: 560px;
+    margin: 32px auto;
+    padding: 0 16px;
   }
-  .row { display: flex; justify-content: space-between; gap: 16px; }
-  .label { color: var(--muted); font-size: 12px; }
-  .value { color: var(--ink); font-size: 12px; }
-  .actions { display: flex; gap: 8px; margin-top: 8px; }
-  .btn-primary {
-    background: var(--accent); border: 1px solid var(--accent); border-radius: 4px;
-    color: var(--on-accent); font-size: 13px; font-weight: 600; padding: 8px 24px; cursor: pointer;
+  .heading {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+    margin-bottom: 12px;
   }
-  .btn-primary:disabled { background: var(--accent-disabled); color: var(--faint); cursor: default; }
-  .btn-danger {
-    background: var(--danger); border: 1px solid var(--danger); border-radius: 4px;
-    color: #fff; font-size: 13px; font-weight: 600; padding: 8px 24px; cursor: pointer;
+  .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
   }
-  .btn-danger:disabled { background: #7a2a2e; color: #ffb9bb; cursor: default; }
-  .caption { color: var(--muted); font-size: 12px; }
-  .err-text { color: var(--danger); font-size: 12px; }
+  .label {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .value {
+    color: var(--ink);
+    font-size: 12px;
+  }
+  .actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .caption {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .err-text {
+    color: var(--danger);
+    font-size: 12px;
+  }
 </style>

@@ -3,6 +3,13 @@
   import { createEventDispatcher } from "svelte";
   import { authStatus, get, type AuthStatus } from "../lib/api";
   import { applyTheme, getTheme, type Theme } from "../lib/theme";
+  import { Button } from "$lib/components/ui/button";
+  import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+  } from "$lib/components/ui/tooltip";
+  import { FileText, Moon, Sun } from "@lucide/svelte";
   import KillSwitch from "./KillSwitch.svelte";
   import ModeSwitcher from "./ModeSwitcher.svelte";
 
@@ -25,12 +32,12 @@
 
   const dispatch = createEventDispatcher<{ drawer: { open: boolean } }>();
 
-  export let drawerOpen = false;
+  let { drawerOpen = false }: { drawerOpen?: boolean } = $props();
 
-  let health: HealthResponse | null = null;
-  let session: Session | null = null;
-  let credStatus: AuthStatus | null = null;
-  let theme: Theme = getTheme();
+  let health: HealthResponse | null = $state(null);
+  let session: Session | null = $state(null);
+  let credStatus: AuthStatus | null = $state(null);
+  let theme: Theme = $state(getTheme());
 
   function toggleTheme(): void {
     theme = theme === "dark" ? "light" : "dark";
@@ -133,13 +140,42 @@
     {/if}
   {/if}
 
-  <button class="theme-btn" on:click={toggleTheme} title="Toggle theme" aria-label="Toggle light or dark theme">
-    T
-  </button>
+  <Tooltip>
+    <TooltipTrigger>
+      <Button
+        variant="ghost"
+        size="icon"
+        class="text-muted-foreground hover:text-accent-active"
+        onclick={toggleTheme}
+        aria-label="Toggle light or dark theme"
+      >
+        {#if theme === "dark"}
+          <Sun class="size-4" />
+        {:else}
+          <Moon class="size-4" />
+        {/if}
+      </Button>
+    </TooltipTrigger>
+    <TooltipContent>Toggle theme</TooltipContent>
+  </Tooltip>
 
-  <button class="drawer-btn" class:active={drawerOpen} on:click={toggleDrawer} title="Toggle logs drawer">
-    LOGS
-  </button>
+  <Tooltip>
+    <TooltipTrigger>
+      <Button
+        variant="ghost"
+        size="icon"
+        class={drawerOpen
+          ? "border border-accent-disabled text-accent-active hover:text-accent-active"
+          : "text-muted-foreground hover:text-accent-active"}
+        onclick={toggleDrawer}
+        aria-label="Toggle logs drawer"
+        aria-pressed={drawerOpen}
+      >
+        <FileText class="size-4" />
+      </Button>
+    </TooltipTrigger>
+    <TooltipContent>Toggle logs drawer</TooltipContent>
+  </Tooltip>
 </header>
 
 <style>
@@ -147,7 +183,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 8px 12px;
+    padding: 4px 12px;
     background: var(--canvas-raised);
     border-bottom: 1px solid var(--hairline);
     min-height: 44px;
@@ -287,41 +323,5 @@
   .session-time {
     font-size: 11px;
     color: var(--faint);
-  }
-  .theme-btn {
-    background: transparent;
-    border: 1px solid var(--hairline);
-    border-radius: 4px;
-    color: var(--muted);
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 1;
-    padding: 5px 8px;
-    cursor: pointer;
-    white-space: nowrap;
-    flex: none;
-  }
-  .theme-btn:hover,
-  .theme-btn.active {
-    color: var(--accent);
-    border-color: var(--accent-disabled);
-  }
-  .drawer-btn {
-    background: var(--surface-card);
-    border: 1px solid var(--hairline-strong);
-    border-radius: 4px;
-    color: var(--muted);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    padding: 5px 10px;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .drawer-btn:hover,
-  .drawer-btn.active {
-    color: var(--accent-active);
-    border-color: var(--accent-disabled);
   }
 </style>

@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { get, post } from "../lib/api";
+  import { Button } from "$lib/components/ui/button";
 
   type KillSwitchResponse = { active: boolean };
 
-  let armed = false;
-  let error = "";
+  let armed = $state(false);
+  let error = $state("");
 
   onMount(() => {
     loadState();
@@ -43,45 +44,20 @@
   }
 </script>
 
-<button
-  class="kill"
-  class:armed
-  on:click={toggle}
+<Button
+  variant="danger"
+  class={armed ? "kill-pulse min-h-9 whitespace-nowrap tracking-[0.05em]" : "min-h-9 whitespace-nowrap tracking-[0.05em]"}
+  onclick={toggle}
   title="Toggle kill switch (Ctrl+Shift+K)"
   type="button"
 >
   {armed ? "KILL SWITCH ARMED" : "KILL SWITCH OFF"}
-</button>
+</Button>
 {#if error}
   <span class="error" title={error}>ERR</span>
 {/if}
 
 <style>
-  .kill {
-    background: var(--surface-card);
-    color: var(--muted);
-    border: 1px solid var(--danger);
-    border-radius: 4px;
-    padding: 5px 12px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .kill:hover {
-    color: var(--danger);
-  }
-  .kill.armed {
-    background: var(--danger);
-    border-color: var(--danger);
-    color: #fff;
-    animation: pulse 1.4s ease-in-out infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.5); }
-    50% { box-shadow: 0 0 0 5px rgba(229, 72, 77, 0); }
-  }
   .error {
     color: var(--danger);
     font-size: 10px;
