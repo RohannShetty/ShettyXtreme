@@ -8,8 +8,10 @@
   const { children, ...rest }: Props = $props();
 </script>
 
-<TooltipPrimitive.Root delayDuration={400} {...rest}>
-  {#if children}
-    {@render children()}
-  {/if}
+<TooltipPrimitive.Provider delayDuration={400}>
+  <TooltipPrimitive.Root {...rest}>
+    {#if children}
+      {@render children()}
+    {/if}
   </TooltipPrimitive.Root>
+</TooltipPrimitive.Provider>
