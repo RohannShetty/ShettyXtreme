@@ -80,6 +80,21 @@ async def test_lifespan_wires_trade_ledger() -> None:
 
 
 @pytest.mark.asyncio
+async def test_lifespan_wires_shadow_loop() -> None:
+    """The real lifespan must register shadow voters and bind the loop."""
+    async with app.router.lifespan_context(app):
+        loop = getattr(app.state, "shadow_loop", None)
+        assert loop is not None
+        names = loop.shadow_names
+        assert set(names) == {
+            "shadow_dpg_vote",
+            "shadow_orb_decay",
+            "shadow_signal_drift_ev",
+            "shadow_time_bucketed_oi",
+        }
+
+
+@pytest.mark.asyncio
 async def test_lifespan_wires_intelligence_pipeline() -> None:
     """The real lifespan must instantiate the pipeline and register live voters."""
     async with app.router.lifespan_context(app):

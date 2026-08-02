@@ -32,6 +32,7 @@ from shettyxtreme.integration.dhan.data_adapter import DhanDataAdapter
 from shettyxtreme.integration.dhan.trading_adapter import DhanTradingAdapter
 from shettyxtreme.knowledge.store import KnowledgeStore
 from shettyxtreme.learning.sessions import SessionLog
+from shettyxtreme.learning.shadow_loop import ShadowLoop, session_outcome_label
 from shettyxtreme.terminal.api.auth_router import init_auth
 from shettyxtreme.terminal.api.auth_router import router as auth_router
 from shettyxtreme.terminal.api.execution_router import router as execution_router
@@ -231,6 +232,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     _ledger_recorder.subscribe(_event_bus)
 
+    # ── Learning loop wiring (P4c): decisions + shadow voters into stores ────
+    def _learning_regime_provider() -> dict | None:
+        proj = getattr(app.state, "intelligence_projection", None)
+        if proj is None:
+            return None
+        try:
+            return proj.get_regime() or {}
+        except Exception:
+            return None
+
+    shadow_loop = ShadowLoop(
+        shadow_db_path="data/shadow.db",
+        learning_db_path="data/learning.db",
+        session_id_provider=lambda: getattr(app.state, "current_session_id", None),
+        feature_provider=lambda: getattr(
+            getattr(app.state, "feature_engine", None), "features", None
+        ),
+        regime_provider=_learning_regime_provider,
+    )
+    shadow_loop.register()
+    shadow_loop.subscribe(_event_bus)
+    app.state.shadow_loop = shadow_loop
+
     # ── Seed watchlist from YAML FIRST (before pipeline needs it) ───────────
     watchlist_path = Path(__file__).resolve().parent.parent.parent.parent.parent / "configs" / "default_watchlist.yaml"
     if watchlist_path.exists():
@@ -322,6 +346,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         session_log.end(_session_id)
     except Exception:
         logger.exception("session end failed")
+    try:
+        fills = trade_ledger.list(session_id=_session_id)
+        outcome = session_outcome_label(fills)
+        shadow_loop.evaluate_session(_session_id, outcome)
+        logger.info(
+            "session %s learning outcome: %s",
+            _session_id,
+            outcome.value if outcome is not None else "none",
+        )
+    except Exception:
+        logger.exception("session learning evaluation failed")
+    try:
+        shadow_loop.close()
+    except Exception:
+        logger.exception("shadow loop close failed")
     knowledge_store.close()
     trade_ledger.close()
     if _ingestion_pipeline:
