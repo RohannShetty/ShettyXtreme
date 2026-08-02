@@ -233,6 +233,8 @@ class IntelligenceProjection:
             "voters": [],
             "timestamp": datetime.now(UTC),
         }
+        self._has_data = False
+        self._last_update: datetime | None = None
 
     async def on_regime_changed(self, event: Event) -> None:
         d = event.data
@@ -242,6 +244,7 @@ class IntelligenceProjection:
         for key in ("regime", "confidence", "transition", "adx", "di_plus", "di_minus"):
             if key in values:
                 self._regime[key] = values[key]
+        self._mark_received(event.timestamp)
         await ws_bridge.broadcast("regime", dict(self._regime))
 
     async def on_signal_v2(self, event: Event) -> None:
@@ -255,11 +258,24 @@ class IntelligenceProjection:
                 if isinstance(value, Enum):
                     value = value.name
                 self._signal[key] = value
+        self._mark_received(event.timestamp)
         await ws_bridge.broadcast("signal", {
             "direction": self._signal["direction"],
             "conviction": self._signal["conviction"],
             "voters": self._signal["voters"],
         })
+
+    def _mark_received(self, timestamp: datetime | None) -> None:
+        """Record that a live event was received (honest no-data detection)."""
+        self._has_data = True
+        self._last_update = timestamp
+
+    def has_data(self) -> bool:
+        """True once any live regime/signal event has been received."""
+        return self._has_data
+
+    def last_update(self) -> datetime | None:
+        return self._last_update
 
     def get_regime(self) -> dict[str, Any]:
         return dict(self._regime)
@@ -282,6 +298,8 @@ class HealthProjection:
         self._event_bus: EventBus | None = None
         self._data_adapter: Any = None
         self._trading_adapter: Any = None
+        self._feature_engine: Any = None
+        self._signal_engine: Any = None
 
     def subscribe(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus
@@ -291,10 +309,14 @@ class HealthProjection:
         event_bus: EventBus | None = None,
         data_adapter: Any = None,
         trading_adapter: Any = None,
+        feature_engine: Any = None,
+        signal_engine: Any = None,
     ) -> None:
         self._event_bus = event_bus
         self._data_adapter = data_adapter
         self._trading_adapter = trading_adapter
+        self._feature_engine = feature_engine
+        self._signal_engine = signal_engine
 
     def get(self) -> dict[str, Any]:
         import time
@@ -357,6 +379,21 @@ class HealthProjection:
             "latency_ms": ta_latency,
             "last_check": now,
             "message": ta_msg,
+        })
+
+        # Intelligence pipeline (features/signal engines)
+        ip_status = "healthy"
+        ip_latency = 0.0
+        ip_msg = ""
+        if self._feature_engine is None or self._signal_engine is None:
+            ip_status = "degraded"
+            ip_msg = "Intelligence pipeline not initialized"
+        components.append({
+            "name": "intelligence",
+            "status": ip_status,
+            "latency_ms": ip_latency,
+            "last_check": now,
+            "message": ip_msg,
         })
 
         # Storage

@@ -1,6 +1,8 @@
-"""Phase 4 lifespan wiring tests (spec 4A §3.6, 4B §4.1)."""
+"""Phase 4 lifespan wiring tests (spec 4A §3.6, 4B §4.1, P4a pipeline wiring)."""
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime
 from typing import AsyncIterator
 
 import pytest
@@ -8,6 +10,8 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 import shettyxtreme.terminal.api.research_router as rr
+from shettyxtreme.core.data_models.market_data import Tick
+from shettyxtreme.core.event_bus import Event, Topic
 from shettyxtreme.research.orchestrator import ResearchOrchestrator
 from shettyxtreme.research.provider import SimulatedProvider
 from shettyxtreme.research.store import ResearchStore
@@ -73,3 +77,33 @@ async def test_lifespan_wires_trade_ledger() -> None:
     async with app.router.lifespan_context(app):
         assert hasattr(app.state, "trade_ledger")
         assert getattr(app.state, "current_session_id", None) is not None
+
+
+@pytest.mark.asyncio
+async def test_lifespan_wires_intelligence_pipeline() -> None:
+    """The real lifespan must instantiate the pipeline and register live voters."""
+    async with app.router.lifespan_context(app):
+        assert getattr(app.state, "feature_engine", None) is not None
+        assert getattr(app.state, "signal_engine", None) is not None
+        assert app.state.intelligence_pipeline == "started"
+        voter_names = set(app.state.signal_engine.voters)
+        assert {"options_flow_voter", "micro_voter", "breadth_voter", "orb", "iv_rank"} <= voter_names
+        # Ticks published on the real bus flow through the wiring end-to-end.
+        bus = app.state.event_bus
+        now = datetime.now(UTC)
+        for i in range(40):
+            tick = Tick(
+                symbol="NIFTY", exchange="NSE",
+                ltp=100.0 + i, volume=100,
+                high=101.0 + i, low=99.0 + i,
+                timestamp=now,
+            )
+            await bus.publish(Event(Topic.MARKET_DATA_TICK, tick, source="test"))
+        for _ in range(200):
+            if app.state.intelligence_projection.get_regime().get("adx") is not None:
+                break
+            await asyncio.sleep(0.05)
+        regime = app.state.intelligence_projection.get_regime()
+        assert regime["adx"] is not None, "regime bridge never received features"
+        signal = app.state.intelligence_projection.get_signal()
+        assert signal["direction"] in ("UP", "DOWN", "NEUTRAL")

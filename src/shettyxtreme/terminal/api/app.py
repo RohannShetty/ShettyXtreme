@@ -45,6 +45,7 @@ from shettyxtreme.terminal.api.research_router import build_orchestrator, init_r
 from shettyxtreme.terminal.api.research_source import ProjectionDataSource
 from shettyxtreme.intelligence.regime.bus_bridge import RegimeBusBridge
 from shettyxtreme.intelligence.risk.bus_bridge import RiskBusBridge
+from shettyxtreme.intelligence.pipeline import IntelligencePipeline
 from shettyxtreme.terminal.api import postback_router
 from shettyxtreme.terminal.api import ws_bridge
 from shettyxtreme.terminal.api.analytics_router import router as analytics_router
@@ -75,12 +76,14 @@ _health_monitor: TokenHealthMonitor | None = None
 _trading_adapter: DhanTradingAdapter | None = None
 _data_adapter: DhanDataAdapter | None = None
 _ingestion_pipeline: IngestionPipeline | None = None
+_intelligence_pipeline: IntelligencePipeline | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown lifecycle."""
     global _event_bus, _event_bus_task, _health_monitor, _trading_adapter, _data_adapter, _ingestion_pipeline
+    global _intelligence_pipeline
     logger.info("ShettyXtreme Terminal starting up...")
 
     store = CredentialStore.load() or CredentialStore()
@@ -123,6 +126,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     risk_bridge = RiskBusBridge(_event_bus)
     await regime_bridge.start()
     await risk_bridge.start()
+
+    # ── Live intelligence pipeline (features → regime/signal) ──────────────
+    # FeatureEngine + SignalEngine must be alive for FEATURES_COMPUTED /
+    # SIGNAL_V2 to fire; the bridges and projections above are their sinks.
+    # Runs regardless of credentials — without ticks it just stays idle.
+    try:
+        _intelligence_pipeline = IntelligencePipeline(_event_bus)
+        _intelligence_pipeline.subscribe()
+        app.state.feature_engine = _intelligence_pipeline.feature_engine
+        app.state.signal_engine = _intelligence_pipeline.signal_engine
+        app.state.intelligence_pipeline = "started"
+        logger.info(
+            "Intelligence pipeline started (voters=%s)",
+            _intelligence_pipeline.voter_names,
+        )
+    except Exception:
+        logger.exception("Intelligence pipeline failed to start")
+        app.state.feature_engine = None
+        app.state.signal_engine = None
+        app.state.intelligence_pipeline = "degraded"
 
     # Store adapters and pipeline on app.state for router access
     app.state.trading_adapter = None
@@ -282,11 +305,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         event_bus=_event_bus,
         data_adapter=app.state.data_adapter,
         trading_adapter=app.state.trading_adapter,
+        feature_engine=app.state.feature_engine,
+        signal_engine=app.state.signal_engine,
     )
 
     yield
 
     logger.info("ShettyXtreme Terminal shutting down...")
+    if _intelligence_pipeline is not None:
+        _intelligence_pipeline.unsubscribe()
     await regime_bridge.stop()
     await risk_bridge.stop()
     if research_scheduler is not None:
