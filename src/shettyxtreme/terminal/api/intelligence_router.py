@@ -33,6 +33,10 @@ class DataEntitlementError(Exception):
     """Raised when the data adapter reports a missing Data-API entitlement (806)."""
 
 
+class DataAdapterUnavailable(Exception):
+    """Raised when no data adapter is wired — chain data cannot be fetched."""
+
+
 def _security_id(symbol: str) -> str:
     return _SYMBOL_SECURITY_ID.get(symbol.upper(), symbol)
 
@@ -82,10 +86,14 @@ async def _fetch_chain_with_spot(
     ``data`` is the chain list directly or a dict with an ``option_chain``
     key. Raises DataEntitlementError on 806 so callers surface the missing
     Data-API entitlement instead of silently returning an empty chain.
+    Raises DataAdapterUnavailable when no adapter is wired — an empty chain
+    must never be presented as data.
     """
     adapter = request.app.state.data_adapter
     if adapter is None:
-        return [], None
+        raise DataAdapterUnavailable(
+            "market data adapter not available — check credentials / Dhan feed"
+        )
     result = await adapter.get_option_chain(
         underlying_scrip=_security_id(symbol),
         exchange_segment="NSE_FNO",
@@ -222,6 +230,8 @@ async def get_options(
         chain, spot = await _fetch_chain_with_spot(request, symbol, expiry)
     except DataEntitlementError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except DataAdapterUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     contracts = _enrich_chain(chain, spot)
     return OptionsChainResponse(underlying=symbol, expiry=expiry or "", contracts=contracts)
 
@@ -233,6 +243,8 @@ async def get_strategy_hint(request: Request) -> StrategyHintResponse:
     try:
         chain, chain_spot = await _fetch_chain_with_spot(request, "NIFTY", None)
     except DataEntitlementError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except DataAdapterUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     current_price = chain_spot
     if current_price is None:

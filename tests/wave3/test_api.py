@@ -157,20 +157,45 @@ async def test_get_voters(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_get_options(client: AsyncClient) -> None:
+    """Without a data adapter the chain is unavailable — 503, never an empty chain."""
     resp = await client.get("/api/intelligence/options?symbol=NIFTY")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["underlying"] == "NIFTY"
-    assert "contracts" in data
+    assert resp.status_code == 503
+    assert "not available" in resp.json()["detail"]
 
 
 @pytest.mark.asyncio
 async def test_get_strategy_hint(client: AsyncClient) -> None:
+    """Without a data adapter the chain is unavailable — 503, never an empty chain."""
     resp = await client.get("/api/intelligence/strategy-hint")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "direction" in data
-    assert "rationale" in data
+    assert resp.status_code == 503
+    assert "not available" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_get_strategy_hint_with_adapter(client: AsyncClient) -> None:
+    """Strategy hint is computed from a live adapter chain + projection signal."""
+    class FakeAdapter:
+        async def get_option_chain(self, underlying_scrip: str, exchange_segment: str, expiry: str) -> dict:
+            return {
+                "status": "success",
+                "data": {
+                    "underlying_ltp": 19500.0,
+                    "option_chain": [
+                        {"strike": 19500, "option_type": "CE", "ltp": 150.0, "iv": 12.0},
+                        {"strike": 19500, "option_type": "PE", "ltp": 120.0, "iv": 11.0},
+                    ],
+                },
+            }
+
+    app.state.data_adapter = FakeAdapter()
+    try:
+        resp = await client.get("/api/intelligence/strategy-hint")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "direction" in data
+        assert "rationale" in data
+    finally:
+        app.state.data_adapter = None
 
 
 @pytest.mark.asyncio
