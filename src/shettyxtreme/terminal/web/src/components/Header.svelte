@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { createEventDispatcher } from "svelte";
-  import { get } from "../lib/api";
+  import { authStatus, get, type AuthStatus } from "../lib/api";
   import KillSwitch from "./KillSwitch.svelte";
   import ModeSwitcher from "./ModeSwitcher.svelte";
 
@@ -28,9 +28,11 @@
 
   let health: HealthResponse | null = null;
   let session: Session | null = null;
+  let credStatus: AuthStatus | null = null;
 
   onMount(() => {
     load();
+    loadCreds();
   });
 
   async function load(): Promise<void> {
@@ -43,6 +45,14 @@
       session = s;
     } catch {
       /* header degrades silently — panels show their own errors */
+    }
+  }
+
+  async function loadCreds(): Promise<void> {
+    try {
+      credStatus = await authStatus();
+    } catch {
+      credStatus = null;
     }
   }
 
@@ -99,6 +109,22 @@
       <span class="mono session-time">{session.current_time_ist?.slice(11, 16) ?? ""}</span>
     {/if}
   </div>
+
+  {#if credStatus}
+    {#if credStatus.connected}
+      <a class="cred-chip ok" href="#/settings" title="Credentials connected — manage in settings">
+        <span class="dot"></span>CONNECTED
+      </a>
+    {:else if credStatus.has_token && !credStatus.token_valid}
+      <a class="cred-chip warn" href="#/settings" title="Token expired — re-authenticate in settings">
+        <span class="dot"></span>REAUTH
+      </a>
+    {:else}
+      <a class="cred-chip mute" href="#/setup" title="Set up Dhan credentials">
+        <span class="dot"></span>SETUP
+      </a>
+    {/if}
+  {/if}
 
   <button class="drawer-btn" class:active={drawerOpen} on:click={toggleDrawer} title="Toggle logs drawer">
     LOGS
@@ -188,6 +214,52 @@
     overflow: hidden;
     text-overflow: ellipsis;
     flex: none;
+  }
+  .cred-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 3px 8px;
+    white-space: nowrap;
+    text-decoration: none;
+    flex: none;
+  }
+  .cred-chip .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  .cred-chip.ok {
+    background: color-mix(in srgb, var(--success) 14%, transparent);
+    border: 1px solid var(--success);
+    color: var(--success);
+  }
+  .cred-chip.ok .dot {
+    background: var(--success);
+  }
+  .cred-chip.warn {
+    background: color-mix(in srgb, var(--warning) 14%, transparent);
+    border: 1px solid var(--warning);
+    color: var(--warning);
+  }
+  .cred-chip.warn .dot {
+    background: var(--warning);
+  }
+  .cred-chip.mute {
+    background: var(--surface-card);
+    border: 1px solid var(--hairline-strong);
+    color: var(--muted);
+  }
+  .cred-chip.mute .dot {
+    background: var(--faint);
+  }
+  .cred-chip:hover {
+    color: var(--accent-active);
+    border-color: var(--accent);
   }
   .session {
     display: flex;

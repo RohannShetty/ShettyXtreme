@@ -9,6 +9,8 @@
   import PositionsRiskStrip from "./components/PositionsRiskStrip.svelte";
   import ResearchPanel from "./components/ResearchPanel.svelte";
   import ScannerPanel from "./components/ScannerPanel.svelte";
+  import SettingsView from "./components/SettingsView.svelte";
+  import SetupWizard from "./components/SetupWizard.svelte";
   import Watchlist from "./components/Watchlist.svelte";
   import { connect, stop } from "./lib/ws";
 
@@ -70,26 +72,10 @@
     </div>
     <PositionsRiskStrip />
   </div>
-{:else if route === "/settings"}
-  <div class="simple-view">
-    <h1>Settings</h1>
-    <p>Credential and token management lives in the Python service layer — see the <code class="mono">/api/settings</code> and <code class="mono">/api/auth</code> endpoints.</p>
-    <a href="#/">← Back to terminal</a>
-  </div>
-{:else if route === "/setup"}
-  <div class="simple-view">
-    <h1>Setup</h1>
-    {#if query && query.get("connected") === "true"}
-      <div class="banner banner-ok" role="status">Connected — credentials saved. Close this tab and return to the terminal.</div>
-    {:else if query && query.get("error")}
-      <div class="banner banner-err" role="alert">
-        {query.get("error")} <a href="#/settings">Retry</a>
-      </div>
-    {:else}
-      <p>Configure your Dhan credentials, exchange segments, and watchlist through the setup endpoints (<code class="mono">/api/settings</code>).</p>
-    {/if}
-    <a href="#/">← Back to terminal</a>
-  </div>
+  {:else if route === "/settings"}
+    <SettingsView />
+  {:else if route === "/setup"}
+    <SetupWizard {query} />
 {:else}
   <div class="simple-view">
     <h1>404</h1>
@@ -166,27 +152,6 @@
   }
   .simple-view a:hover {
     text-decoration: underline;
-  }
-  .banner {
-    max-width: 560px;
-    font-size: 13px;
-    line-height: 1.6;
-    border-radius: 4px;
-    padding: 10px 14px;
-  }
-  .banner a {
-    margin-left: 8px;
-    white-space: nowrap;
-  }
-  .banner-ok {
-    background: color-mix(in srgb, var(--success) 14%, transparent);
-    border: 1px solid var(--success);
-    color: var(--success);
-  }
-  .banner-err {
-    background: color-mix(in srgb, var(--danger) 14%, transparent);
-    border: 1px solid var(--danger);
-    color: var(--danger);
   }
 
   @media (max-width: 1439px) {
