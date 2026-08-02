@@ -132,6 +132,10 @@ export type ResearchScoringItem = {
 // --- Knowledge layer (Phase 4) ---
 
 export type KnowledgeTag = { tag: string; kind: string };
+export type KnowledgeNoteRequest = {
+  title: string;
+  body: string;
+};
 export type KnowledgeDoc = {
   doc_id: string;
   kind: string;

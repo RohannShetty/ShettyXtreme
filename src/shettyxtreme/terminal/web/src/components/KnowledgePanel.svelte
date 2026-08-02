@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { get, post } from "../lib/api";
+  import { get, post, postBody } from "../lib/api";
   import { onMessage } from "../lib/ws";
   import type {
     KnowledgeDoc,
+    KnowledgeNoteRequest,
     KnowledgeSearchHit,
     KnowledgeSearchResponse,
     KnowledgeStatusResponse,
@@ -21,6 +22,9 @@
   let syncing = false;
   let activating = false;
   let syncResult = "";
+  let noteTitle = "";
+  let noteBody = "";
+  let saving = false;
   let debounceTimer: number | undefined;
 
   function strField(payload: Record<string, unknown>, key: string): string {
@@ -171,6 +175,26 @@
     }
   }
 
+  async function saveNote(): Promise<void> {
+    if (saving || !noteTitle.trim()) return;
+    saving = true;
+    error = "";
+    try {
+      await postBody<KnowledgeDoc>("/api/knowledge/notes", {
+        title: noteTitle.trim(),
+        body: noteBody,
+      } satisfies KnowledgeNoteRequest);
+      noteTitle = "";
+      noteBody = "";
+      await loadStatus();
+      await search();
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    } finally {
+      saving = false;
+    }
+  }
+
   function fmtTs(ts: string | null): string {
     if (!ts) return "—";
     return ts.replace("T", " ").replace(/\.\d+Z$/, "Z");
@@ -192,6 +216,13 @@
     <input class="query mono" type="text" placeholder="Search knowledge…" bind:value={query} on:input={onInput} on:keydown={onKeydown} />
     <button class="run-btn" on:click={search} disabled={searching}>{searching ? "Searching…" : "Search"}</button>
     <button class="run-btn sync" on:click={sync} disabled={syncing}>{syncing ? "Syncing…" : "Sync"}</button>
+  </div>
+  <div class="note-box">
+    <input class="query mono" type="text" placeholder="Note title…" bind:value={noteTitle} />
+    <textarea class="note-body mono" rows="2" placeholder="Note body — symbols/regimes auto-tagged…" bind:value={noteBody}></textarea>
+    <button class="run-btn" on:click={saveNote} disabled={saving || !noteTitle.trim()}>
+      {saving ? "Saving…" : "Save note"}
+    </button>
   </div>
   {#if syncResult}
     <p class="sync-result mono">{syncResult}</p>
@@ -281,6 +312,8 @@
   .sync { border-color: var(--hairline); color: var(--muted); }
   .activate { align-self: flex-start; margin-top: 8px; }
   .controls { display: flex; gap: 6px; padding: 8px 10px; align-items: center; }
+  .note-box { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--hairline); }
+  .note-body { background: var(--surface); border: 1px solid var(--hairline); border-radius: 4px; color: var(--body); font-size: 11px; padding: 4px 6px; resize: vertical; }
   .query { flex: 1; background: var(--surface); border: 1px solid var(--hairline); border-radius: 4px; color: var(--body); font-size: 11px; padding: 4px 6px; }
   .query:focus { outline: none; border-color: var(--hairline-strong); }
   .sync-result { margin: 0 10px 6px; font-size: 10px; color: var(--muted); }

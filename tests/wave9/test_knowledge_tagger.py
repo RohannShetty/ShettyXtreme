@@ -45,3 +45,17 @@ def test_word_boundaries() -> None:
     tags2 = tag_document("market flat, event risk")
     assert "range_bound" in {t["tag"] for t in tags2 if t["kind"] == "regime"}
     assert "EVENT_RISK" in {t["tag"] for t in tags2 if t["kind"] == "risk"}
+
+
+def test_tag_document_uses_aliases() -> None:
+    tags = tag_document("BNF trending up with tail risk")
+    keys = {(t["tag"], t["kind"]) for t in tags}
+    assert ("BANKNIFTY", "symbol") in keys
+
+
+def test_tag_document_sorted_deterministic() -> None:
+    a = tag_document("NIFTY expiry event risk, NIFTY trending up")
+    b = tag_document("NIFTY expiry event risk, NIFTY trending up")
+    assert a == b
+    kinds = [t["kind"] for t in a]
+    assert kinds == sorted(kinds)
