@@ -168,6 +168,9 @@ class RiskProjection:
 
 # ── Alert Projection ─────────────────────────────────────────────────────────
 
+_DEDUP_WINDOW_SECONDS = 30.0
+
+
 class AlertProjection:
     """Subscribes to RISK_ALERT / SYSTEM_STATUS, manages alert queue."""
 
@@ -175,9 +178,16 @@ class AlertProjection:
 
     def __init__(self) -> None:
         self._alerts: list[dict[str, Any]] = []
+        self._last_key: tuple[str, str] | None = None
+        self._last_ts: datetime | None = None
 
     async def on_alert(self, event: Event) -> None:
         d = event.data
+        key = (str(d.get("alert_type", "system")), str(d.get("message", "")))
+        now = event.timestamp
+        if key == self._last_key and self._last_ts is not None and (now - self._last_ts).total_seconds() < _DEDUP_WINDOW_SECONDS:
+            return
+        self._last_key, self._last_ts = key, now
         self._alerts.append({
             "alert_type": d.get("alert_type", "system"),
             "severity": d.get("severity", "LOW"),

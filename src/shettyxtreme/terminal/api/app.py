@@ -25,6 +25,8 @@ from shettyxtreme.auth.validator import CredentialValidator
 from shettyxtreme.core.event_bus.event_bus import EventBus
 from shettyxtreme.core.storage.time_series_store import TimeSeriesStore
 from shettyxtreme.data.ingestion import IngestionPipeline
+from shettyxtreme.execution.ledger import TradeLedger
+from shettyxtreme.execution.ledger_recorder import LedgerRecorder
 from shettyxtreme.integration.dhan.data_adapter import DhanDataAdapter
 from shettyxtreme.integration.dhan.trading_adapter import DhanTradingAdapter
 from shettyxtreme.knowledge.store import KnowledgeStore
@@ -199,6 +201,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _session_id = session_log.start(session_mode)
     logger.info("session %s started (mode=%s)", _session_id, session_mode)
 
+    trade_ledger = TradeLedger("data/ledger.db")
+    app.state.trade_ledger = trade_ledger
+    app.state.current_session_id = _session_id
+    _ledger_recorder = LedgerRecorder(
+        trade_ledger, lambda: getattr(app.state, "current_session_id", None)
+    )
+    _ledger_recorder.subscribe(_event_bus)
+
     # ── Seed watchlist from YAML FIRST (before pipeline needs it) ───────────
     watchlist_path = Path(__file__).resolve().parent.parent.parent.parent.parent / "configs" / "default_watchlist.yaml"
     if watchlist_path.exists():
@@ -287,6 +297,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.exception("session end failed")
     knowledge_store.close()
+    trade_ledger.close()
     if _ingestion_pipeline:
         await _ingestion_pipeline.stop()
     if _data_adapter:
@@ -303,7 +314,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="ShettyXtreme Terminal",
-    version="0.10.0",
+    version="0.11.0",
     lifespan=lifespan,
 )
 

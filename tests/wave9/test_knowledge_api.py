@@ -101,3 +101,32 @@ async def test_broadcast_on_activate(client: AsyncClient, kstore) -> None:
     await client.post("/api/knowledge/docs/d1/activate")
     assert any(e["event"] == "activated" for e in events)
     kr.init_knowledge(store=None, broadcast_fn=None)
+
+
+@pytest.mark.asyncio
+async def test_create_note_ingests_proposed(client: AsyncClient, kstore) -> None:
+    resp = await client.post("/api/knowledge/notes", json={
+        "title": "NIFTY setup", "body": "NIFTY trending up, elevated iv",
+    })
+    assert resp.status_code == 200
+    doc = resp.json()
+    assert doc["kind"] == "operator_note"
+    assert doc["status"] == "proposed"
+    tags = {t["tag"] for t in doc["tags"]}
+    assert "NIFTY" in tags and "trending_up" in tags
+
+
+@pytest.mark.asyncio
+async def test_create_note_empty_title_422(client: AsyncClient) -> None:
+    resp = await client.post("/api/knowledge/notes", json={"title": "", "body": "x"})
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_note_activate_flow(client: AsyncClient, kstore) -> None:
+    created = (await client.post("/api/knowledge/notes", json={
+        "title": "T", "body": "range bound NIFTY",
+    })).json()
+    activated = await client.post(f"/api/knowledge/docs/{created['doc_id']}/activate")
+    assert activated.status_code == 200
+    assert activated.json()["status"] == "activated"

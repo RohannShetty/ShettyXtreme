@@ -47,4 +47,7 @@ def tag_document(text: str) -> list[dict]:
         symbol = normalize_symbol(token)
         if symbol is not None:
             tags[(symbol, "symbol")] = None
-    return [{"tag": tag, "kind": kind} for (tag, kind) in tags][:_MAX_TAGS]
+    return sorted(
+        [{"tag": tag, "kind": kind} for (tag, kind) in tags],
+        key=lambda t: (t["kind"], t["tag"]),
+    )[:_MAX_TAGS]

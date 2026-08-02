@@ -13,11 +13,13 @@ from collections.abc import Callable
 from fastapi import APIRouter, HTTPException, Query
 
 from shettyxtreme.knowledge.ingest import ingest_decided_briefs
+from shettyxtreme.knowledge.notes import ingest_note
 from shettyxtreme.knowledge.store import KnowledgeStore
 from shettyxtreme.research.store import ResearchStore
 from shettyxtreme.terminal.api.knowledge_models import (
     KnowledgeDocResponse,
     KnowledgeListResponse,
+    KnowledgeNoteRequest,
     KnowledgeSearchHitResponse,
     KnowledgeSearchResponse,
     KnowledgeStatusResponse,
@@ -166,4 +168,15 @@ async def activate(doc_id: str) -> KnowledgeDocResponse:
         logger.warning("Knowledge activate failed: %s", exc)
         raise HTTPException(status_code=500, detail="activate failed") from exc
     _broadcast({"event": "activated", "data": _doc_response(doc).model_dump()})
+    return _doc_response(doc)
+
+
+@router.post("/notes", response_model=KnowledgeDocResponse)
+async def create_note(req: KnowledgeNoteRequest) -> KnowledgeDocResponse:
+    """Ingest an operator note (proposed; activate to make it a research source)."""
+    try:
+        doc = ingest_note(_store(), req.title, req.body)
+    except Exception as exc:
+        logger.warning("Knowledge note failed: %s", exc)
+        raise HTTPException(status_code=500, detail="note ingest failed") from exc
     return _doc_response(doc)

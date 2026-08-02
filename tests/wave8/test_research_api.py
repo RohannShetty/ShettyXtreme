@@ -21,6 +21,16 @@ async def client() -> AsyncIterator[AsyncClient]:
         yield ac
 
 
+_IMPORT_STATE = (rr.RESEARCH_DB_PATH, rr._ORCHESTRATOR)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _restore_research_globals():
+    yield
+    rr.RESEARCH_DB_PATH, rr._ORCHESTRATOR = _IMPORT_STATE
+    rr.init_research(broadcast_fn=None, scheduler=None)
+
+
 @pytest_asyncio.fixture
 def orchestrator(tmp_path) -> ResearchOrchestrator:
     store = ResearchStore(str(tmp_path / "research.db"))
@@ -294,3 +304,30 @@ async def test_broadcast_new_brief_and_decision(client: AsyncClient, tmp_path) -
     assert decision["data"]["brief_id"] == brief["brief_id"]
     assert decision["data"]["status"] == "approved"
     rr.init_research(broadcast_fn=None, scheduler=None)
+
+
+@pytest.mark.asyncio
+async def test_module_globals_restored() -> None:
+    assert (rr.RESEARCH_DB_PATH, rr._ORCHESTRATOR) == _IMPORT_STATE
+
+
+from shettyxtreme.terminal.api.research_router import _normalize_regime
+
+
+def test_normalize_regime_maps_names_and_values() -> None:
+    assert _normalize_regime("TRENDING_UP") == "trending_up"
+    assert _normalize_regime("trending_up") == "trending_up"
+    assert _normalize_regime("VOLATILE") == "volatile"
+    assert _normalize_regime("nonsense") is None
+    assert _normalize_regime(None) is None
+    assert _normalize_regime("") is None
+
+
+@pytest.mark.asyncio
+async def test_regime_normalized_at_decision(client, orchestrator, monkeypatch) -> None:
+    monkeypatch.setattr(rr, "_current_regime", lambda request: "TRENDING_UP")
+    resp = await client.post("/api/research/run", json={"lenses": ["oi_iv_flow"]})
+    brief = resp.json()["results"][0]["brief"]
+    await client.post(f"/api/research/briefs/{brief['brief_id']}/approve")
+    fetched = (await client.get(f"/api/research/briefs/{brief['brief_id']}")).json()
+    assert fetched["regime_at_decision"] == "trending_up"

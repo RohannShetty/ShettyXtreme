@@ -1,7 +1,12 @@
 """Response models for the knowledge API (Phase 4A)."""
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class KnowledgeNoteRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=0, max_length=5000)
 
 
 class KnowledgeTagResponse(BaseModel):

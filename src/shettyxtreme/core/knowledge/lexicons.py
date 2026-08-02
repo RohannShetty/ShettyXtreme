@@ -16,6 +16,15 @@ NSE_SYMBOLS: set[str] = {
     "NIFTYNXT50",
 }
 
+# Common colloquial tokens -> canonical symbols (disambiguation at tag time).
+SYMBOL_ALIASES: dict[str, str] = {
+    "BANK": "BANKNIFTY",
+    "BNF": "BANKNIFTY",
+    "FIN": "FINNIFTY",
+    "MIDCAP": "MIDCPNIFTY",
+    "NIFTYNEXT50": "NIFTYNXT50",
+}
+
 # Regime keyword -> normalized tag. Values are the lowercase
 # `intelligence.regime.regime_classifier.Regime` enum values (spec 4A §3.1).
 REGIME_TERMS: dict[str, str] = {
@@ -95,6 +104,7 @@ def normalize_symbol(token: str) -> str | None:
         if candidate.startswith(prefix):
             candidate = candidate[len(prefix):]
             break
+    candidate = SYMBOL_ALIASES.get(candidate, candidate)
     if candidate in SYMBOL_STOPWORDS:
         return None
     return candidate if candidate in NSE_SYMBOLS else None

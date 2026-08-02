@@ -36,3 +36,11 @@ def test_lexicon_values_normalized() -> None:
 
     for v in set(REGIME_TERMS.values()):
         assert v in {r.value for r in Regime}
+
+
+def test_normalize_symbol_alias_maps_to_canonical() -> None:
+    assert normalize_symbol("BNF") == "BANKNIFTY"
+    assert normalize_symbol("BANK") == "BANKNIFTY"
+    assert normalize_symbol("MIDCAP") == "MIDCPNIFTY"
+    assert normalize_symbol("NIFTY") == "NIFTY"
+    assert normalize_symbol("BANKNIFTY") == "BANKNIFTY"

@@ -12,12 +12,16 @@ from fastapi import APIRouter, Query
 from shettyxtreme.learning.sessions import SessionLog
 from shettyxtreme.research.store import ResearchStore
 from shettyxtreme.terminal.api.analytics_models import (
+    LedgerResponse,
+    LedgerSessionResponse,
+    LedgerFillResponse,
     RegimeRowResponse,
     ScorecardMetricResponse,
     ScorecardResponse,
     SessionsResponse,
 )
 from shettyxtreme.terminal.api.learning_router import _fit_calibration
+from shettyxtreme.execution.ledger import TradeLedger
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +30,8 @@ router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 RESEARCH_DB_PATH = "data/research.db"
 SESSIONS_DB_PATH = "data/sessions.db"
 LEARNING_DB_PATH = "data/learning.db"
+LEDGER_DB_PATH = "data/ledger.db"
+_COST_PER_FILL = 25.0
 
 
 def _metric(
@@ -194,9 +200,72 @@ async def scorecard() -> ScorecardResponse:
         )
     )
 
+    fills_total = 0
+    net_ev: float | None = None
+    try:
+        lstore = TradeLedger(LEDGER_DB_PATH)
+        try:
+            session_rows = lstore.per_session_summary()
+            fills_total = sum(s["fills"] for s in session_rows)
+            closed = [s for s in session_rows if s["realized_pnl"] != 0.0]
+            if closed:
+                net_ev = round(
+                    sum(s["realized_pnl"] for s in closed) - fills_total * _COST_PER_FILL,
+                    4,
+                )
+        finally:
+            lstore.close()
+    except Exception as exc:
+        logger.warning("Ledger stats unavailable: %s", exc)
+    metrics.append(
+        _metric(
+            "fills",
+            "Fills recorded",
+            fills_total,
+            fills_total > 0,
+            note=None if fills_total > 0 else "Recorded automatically from order fills (paper + postback).",
+            unit="fills",
+        )
+    )
+    metrics.append(
+        _metric(
+            "net_ev_per_session",
+            "Net EV per session",
+            net_ev,
+            net_ev is not None,
+            note=None
+            if net_ev is not None
+            else "Needs closed fill pairs (entry+exit) in the ledger.",
+        )
+    )
+
     return ScorecardResponse(
         reliable_calibration=reliable_calibration,
         metrics=metrics,
         by_regime=regime_rows,
         calibration=calibration_points,
     )
+
+
+@router.get("/ledger", response_model=LedgerResponse)
+async def ledger(
+    session_id: str | None = None,
+    symbol: str | None = None,
+    limit: int = Query(200, ge=1, le=1000),
+) -> LedgerResponse:
+    """Trade fills + per-session aggregates; missing DB -> empty payload."""
+    try:
+        store = TradeLedger(LEDGER_DB_PATH)
+    except Exception as exc:
+        logger.warning("Ledger unavailable: %s", exc)
+        return LedgerResponse()
+    try:
+        return LedgerResponse(
+            fills=[LedgerFillResponse(**f) for f in store.list(session_id=session_id, symbol=symbol, limit=limit)],
+            sessions=[LedgerSessionResponse(**s) for s in store.per_session_summary()],
+        )
+    except Exception as exc:
+        logger.warning("Ledger read failed: %s", exc)
+        return LedgerResponse()
+    finally:
+        store.close()

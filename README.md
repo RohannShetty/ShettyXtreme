@@ -2,7 +2,7 @@
 
 **India-first options intelligence workstation** — a standalone, Dhan-connected terminal for NSE/BSE index options (NIFTY/BANKNIFTY weeklies), with equities as market breadth.
 
-v0.7.0 · Python 3.11 + FastAPI + Svelte 5 · 527 tests passing · [Changelog](CHANGELOG.md)
+v0.11.0 · Python 3.11 + FastAPI + Svelte 5 · 731 tests passing · [Changelog](CHANGELOG.md)
 
 ShettyXtreme turns live Dhan market data into a single cockpit: option chain with greeks and IV, strategy hints with expected-value line items, regime and signal intelligence, positions/risk, and OBSERVER-first execution — the platform watches and proposes; you approve.
 
@@ -100,6 +100,7 @@ OpenAlgo execution plumbing is vendored into `vendor/openalgo/` (origin-stamped,
 | 2 — Usable MVP: pipeline completion + Svelte terminal | **DONE** |
 | 3 — Advanced intelligence | **3A done** (session-gated shadow graduation, calibration→sizing, correlation caps, D/P/G live, walkforward breakdowns, `/api/learning/*`); **3B done** (DeepSeek briefer harness — OI/IV-flow, directional-momentum, tail-risk lenses → schema-validated briefs, human approve/reject, `/api/research/*`); **3C done** (read-only data tools w/ mid-run function calling, env-config scheduler, ResearchPanel + WS live updates, outcome scoring + decided_at) |
 | 4 — Maturity (knowledge layer, analytics, optional multi-broker) | **4A/4B done (v1)** — D12 knowledge layer (FTS5 store + tagger + activation → `knowledge_search` tool), scorecard dashboards + recording track; multi-broker + backtest depth deferred |
+| Post-4 — v0.11.0 | **DONE** — trades ledger (fill recording + net-EV/cost scorecard metrics), knowledge v2 (operator notes + symbol aliases), hygiene wave |
 
 Full detail: [`docs/architecture/v2/sections/17-delivery-roadmap.md`](docs/architecture/v2/sections/17-delivery-roadmap.md).
 

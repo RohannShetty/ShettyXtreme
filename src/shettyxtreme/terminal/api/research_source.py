@@ -17,8 +17,25 @@ class ProjectionDataSource:
         self._state = app_state
 
     def chain_summary(self, symbol: str) -> str | None:
-        # No chain text renderer exists yet — honest best-effort.
-        return None
+        proj = getattr(self._state, "watchlist_projection", None)
+        if proj is None:
+            return None
+        try:
+            watch = proj.get() or {}
+        except Exception:
+            return None
+        key = str(symbol).upper()
+        info = watch.get(key) or next(
+            (v for k, v in watch.items() if str(k).upper() == key), None
+        )
+        if not info:
+            return None
+        ltp = info.get("ltp")
+        if ltp is None:
+            return None
+        chg = info.get("change_pct")
+        chg_txt = f"{chg:+.2f}%" if isinstance(chg, (int, float)) else "n/a"
+        return f"{key} ltp={ltp} change={chg_txt}"
 
     def regime_summary(self) -> str | None:
         proj = getattr(self._state, "intelligence_projection", None)
