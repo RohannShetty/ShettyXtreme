@@ -4,6 +4,7 @@ Mocks the dhanhq DhanContext and dhanhq client module so no real API calls.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from unittest.mock import MagicMock, patch
 
@@ -277,19 +278,19 @@ class TestFeedRequestCodes:
             "shettyxtreme.integration.dhan.data_adapter.DhanContext"
         ) as mock_ctx_cls, patch(
             "shettyxtreme.integration.dhan.data_adapter.DhanHQClient"
-        ) as mock_client_cls, patch(
-            "shettyxtreme.integration.dhan.data_adapter.MarketFeed"
-        ) as mock_feed_cls:
+        ) as mock_client_cls:
             mock_ctx_cls.return_value = MagicMock()
             mock_client_cls.return_value = _make_mock_dhanhq()
             adapter = DhanDataAdapter(client_id=MOCK_CLIENT_ID, access_token=MOCK_API_KEY)
             adapter._dhan = mock_client_cls.return_value
 
-            ok = await adapter.subscribe_ticks(["11536"], lambda t: None)
+            loop = asyncio.get_running_loop()
+            with patch.object(loop, "run_in_executor") as mock_rie:
+                ok = await adapter.subscribe_ticks(["11536"], lambda t: None)
 
             assert ok is True
-            _, kwargs = mock_feed_cls.call_args
-            instruments = kwargs["instruments"]
+            supervisor, instruments = mock_rie.call_args.args[1:]
+            assert supervisor == adapter._feed_supervisor
             assert ("NSE_EQ", "11536", 15) in instruments
 
     @pytest.mark.asyncio
@@ -298,20 +299,35 @@ class TestFeedRequestCodes:
             "shettyxtreme.integration.dhan.data_adapter.DhanContext"
         ) as mock_ctx_cls, patch(
             "shettyxtreme.integration.dhan.data_adapter.DhanHQClient"
-        ) as mock_client_cls, patch(
-            "shettyxtreme.integration.dhan.data_adapter.MarketFeed"
-        ) as mock_feed_cls:
+        ) as mock_client_cls:
             mock_ctx_cls.return_value = MagicMock()
             mock_client_cls.return_value = _make_mock_dhanhq()
             adapter = DhanDataAdapter(client_id=MOCK_CLIENT_ID, access_token=MOCK_API_KEY)
             adapter._dhan = mock_client_cls.return_value
 
-            ok = await adapter.subscribe_bars(["11536"], "1", lambda b: None)
+            loop = asyncio.get_running_loop()
+            with patch.object(loop, "run_in_executor") as mock_rie:
+                ok = await adapter.subscribe_bars(["11536"], "1", lambda b: None)
 
             assert ok is True
-            _, kwargs = mock_feed_cls.call_args
-            instruments = kwargs["instruments"]
+            supervisor, instruments = mock_rie.call_args.args[1:]
+            assert supervisor == adapter._feed_supervisor
             assert ("NSE_EQ", "11536", 21) in instruments
+
+    @pytest.mark.asyncio
+    async def test_start_ws_feed_blocked_by_entitlement_error(self) -> None:
+        """806 entitlement must gate feed start — never loop."""
+        with patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanContext"
+        ) as mock_ctx_cls, patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanHQClient"
+        ) as mock_client_cls:
+            mock_ctx_cls.return_value = MagicMock()
+            mock_client_cls.return_value = _make_mock_dhanhq()
+            adapter = DhanDataAdapter(client_id=MOCK_CLIENT_ID, access_token=MOCK_API_KEY)
+            adapter.entitlement_error = True
+            ok = await adapter.subscribe_ticks(["11536"], lambda t: None)
+            assert ok is False
 
 
 class TestDataAccessTokenFallback:
@@ -406,3 +422,200 @@ class TestDataAccessTokenFallback:
         )
         assert data_adapter.entitlement_error is True
         assert data_adapter.last_error == "subscribe to Data APIs"
+
+
+class _ScriptedFeed:
+    """Minimal MarketFeed stand-in that drives the adapter's SDK callbacks.
+
+    `default_events` is a shared list of (kind, code) steps consumed by each
+    constructed instance; instances after the first see whatever remains.
+    """
+
+    default_events: list = []
+    instances: list = []
+
+    def __init__(self, **kwargs: object) -> None:
+        self.on_connect = kwargs["on_connect"]
+        self.on_message = kwargs["on_message"]
+        self.on_close = kwargs["on_close"]
+        self.on_error = kwargs["on_error"]
+        self.last_disconnect_code: int | None = None
+        self._running: bool = True
+        self.run_calls: int = 0
+        self.events: list = _ScriptedFeed.default_events
+        _ScriptedFeed.instances.append(self)
+
+    def run(self) -> None:
+        self.run_calls += 1
+        if not self.events:
+            return
+        kind, code = self.events.pop(0)
+        if kind == "close":
+            self.last_disconnect_code = code
+            self.on_close(self)
+        elif kind == "error":
+            self.last_disconnect_code = code
+            self.on_error(self, RuntimeError("ws dropped"))
+
+
+class TestDisconnectCodePolicy:
+    """Task 2: disconnect-code-aware reconnect policy for the WS feed."""
+
+    def test_classify_disconnect_codes(self) -> None:
+        assert DhanDataAdapter._classify_disconnect(806) == "entitlement"
+        assert DhanDataAdapter._classify_disconnect(807) == "renew"
+        assert DhanDataAdapter._classify_disconnect(805) == "retry"
+        assert DhanDataAdapter._classify_disconnect(808) == "retry"
+        assert DhanDataAdapter._classify_disconnect(809) == "retry"
+        assert DhanDataAdapter._classify_disconnect(None) == "retry"
+
+    def test_reconnect_delay_backoff_caps(self) -> None:
+        with patch(
+            "shettyxtreme.integration.dhan.data_adapter.random.uniform",
+            return_value=0.0,
+        ):
+            assert DhanDataAdapter._reconnect_delay(1) == 1.0
+            assert DhanDataAdapter._reconnect_delay(2) == 2.0
+            assert DhanDataAdapter._reconnect_delay(3) == 4.0
+            assert DhanDataAdapter._reconnect_delay(4) == 8.0
+            assert DhanDataAdapter._reconnect_delay(5) == 8.0
+            assert DhanDataAdapter._reconnect_delay(10) == 8.0
+        with patch(
+            "shettyxtreme.integration.dhan.data_adapter.random.uniform",
+            return_value=0.5,
+        ):
+            assert DhanDataAdapter._reconnect_delay(4) == 8.5
+
+    def test_supervisor_stops_on_806_entitlement(self, data_adapter) -> None:
+        """806 must stop the reconnect loop — never re-create the feed."""
+        _ScriptedFeed.default_events = [("close", 806)]
+        _ScriptedFeed.instances = []
+        with patch(
+            "shettyxtreme.integration.dhan.data_adapter._DisconnectAwareFeed",
+            _ScriptedFeed,
+        ):
+            data_adapter._feed_active = True
+            data_adapter._feed_supervisor([("NSE_EQ", "11536", 15)])
+        assert data_adapter.entitlement_error is True
+        assert data_adapter.last_error == "subscribe to Data APIs"
+        assert len(_ScriptedFeed.instances) == 1
+        assert _ScriptedFeed.instances[0].run_calls == 1
+        assert data_adapter._feed is None
+
+    def test_supervisor_routes_807_to_token_renewal(self, data_adapter) -> None:
+        """807 must trigger the renewal path instead of blind reconnect."""
+        _ScriptedFeed.default_events = [("close", 807)]
+        _ScriptedFeed.instances = []
+        renewed = MagicMock(return_value=True)
+        data_adapter._renew_token_sync = renewed
+        data_adapter._reconnect_delay = lambda attempt: 1.0 * attempt
+        waits: list[float] = []
+
+        def _wait(delay: float) -> bool:
+            waits.append(delay)
+            return len(waits) >= 2
+
+        data_adapter._feed_stop.wait = _wait
+        with patch(
+            "shettyxtreme.integration.dhan.data_adapter._DisconnectAwareFeed",
+            _ScriptedFeed,
+        ):
+            data_adapter._feed_active = True
+            data_adapter._feed_supervisor([("NSE_EQ", "11536", 15)])
+        renewed.assert_called_once()
+        assert data_adapter.entitlement_error is False
+        # Reconnects happened with backoff waits (not a blind 1s loop).
+        assert waits == [1.0, 2.0]
+        assert data_adapter._feed is None
+
+    def test_supervisor_backs_off_on_transient_drop(self, data_adapter) -> None:
+        """805 + plain drops must reconnect with backoff, not flap on 806."""
+        _ScriptedFeed.default_events = [("close", 805), ("error", None)]
+        _ScriptedFeed.instances = []
+        data_adapter._reconnect_delay = lambda attempt: 1.0 * attempt
+        delays: list[float] = []
+
+        def _wait(delay: float) -> bool:
+            delays.append(delay)
+            return len(delays) >= 2
+
+        data_adapter._feed_stop.wait = _wait
+        with patch(
+            "shettyxtreme.integration.dhan.data_adapter._DisconnectAwareFeed",
+            _ScriptedFeed,
+        ):
+            data_adapter._feed_active = True
+            data_adapter._feed_supervisor([("NSE_EQ", "11536", 15)])
+        assert delays == [1.0, 2.0]
+        assert data_adapter.entitlement_error is False
+        assert len(_ScriptedFeed.instances) == 2
+
+    def test_local_close_is_not_treated_as_flapping(self, data_adapter) -> None:
+        """Client-initiated close must not stop the loop or classify codes."""
+
+        class _PlainFeed:
+            def __init__(self) -> None:
+                self._running = True
+
+        feed = _PlainFeed()
+        data_adapter._local_close = True
+        data_adapter._on_close_cb(feed)
+        assert feed._running is True
+        assert data_adapter._ws_connected is False
+        data_adapter._local_close = False
+        data_adapter._on_close_cb(feed)
+        assert feed._running is False
+
+
+class TestDataTokenRenewal:
+    """Task 3: data-side 807 renewal mints + persists a fresh token."""
+
+    def test_renew_token_sync_persists_primary(self, data_adapter) -> None:
+        store = MagicMock()
+        data_adapter._credential_store = store
+        with patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanLogin"
+        ) as mock_login_cls:
+            mock_login_cls.return_value.renew_token.return_value = {
+                "accessToken": "renewed_primary_1",
+            }
+            ok = data_adapter._renew_token_sync()
+        assert ok is True
+        assert data_adapter._access_token == "renewed_primary_1"
+        store.update_token.assert_called_once_with(
+            "renewed_primary_1", "", MOCK_CLIENT_ID
+        )
+
+    def test_renew_token_sync_persists_data_token(self, data_adapter) -> None:
+        """The token IN USE (data fallback) is the one renewed."""
+        store = MagicMock()
+        data_adapter._data_access_token = "data_old_token"
+        data_adapter._credential_store = store
+        with patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanLogin"
+        ) as mock_login_cls:
+            mock_login_cls.return_value.renew_token.return_value = {
+                "accessToken": "renewed_data_2",
+            }
+            ok = data_adapter._renew_token_sync()
+        assert ok is True
+        assert data_adapter._data_access_token == "renewed_data_2"
+        assert data_adapter._access_token == MOCK_API_KEY
+        store.update_data_token.assert_called_once_with("renewed_data_2", "")
+        store.update_token.assert_not_called()
+
+    def test_renew_token_sync_failure_returns_false(self, data_adapter) -> None:
+        with patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanLogin"
+        ) as mock_login_cls:
+            mock_login_cls.return_value.renew_token.side_effect = RuntimeError("boom")
+            assert data_adapter._renew_token_sync() is False
+
+    def test_renew_token_sync_no_token_in_response(self, data_adapter) -> None:
+        with patch(
+            "shettyxtreme.integration.dhan.data_adapter.DhanLogin"
+        ) as mock_login_cls:
+            mock_login_cls.return_value.renew_token.return_value = {
+                "status": "failure",
+            }
+            assert data_adapter._renew_token_sync() is False

@@ -9,15 +9,17 @@ DhanHQ-py sync HTTP has no auto-refresh; this wrapper handles that.
 """
 from __future__ import annotations
 
+import asyncio
+import base64
+import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import asyncio
 from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
 
-from dhanhq import DhanContext
+from dhanhq import DhanContext, DhanLogin
 from dhanhq import dhanhq as DhanHQClient
 
 from shettyxtreme.core.interfaces.account_info import (
@@ -65,23 +67,58 @@ VALIDITY_MAP: dict[str, str] = {
 }
 
 
+def _extract_access_token(resp: Any) -> str | None:
+    """Pull the accessToken out of a DhanLogin response (flat or data-nested)."""
+    if not isinstance(resp, dict):
+        return None
+    token: Any = resp.get("accessToken") or resp.get("access_token")
+    if token is None:
+        data: Any = resp.get("data")
+        if isinstance(data, dict):
+            token = data.get("accessToken") or data.get("access_token")
+    return str(token) if token else None
+
+
+def _jwt_expiry(token: str) -> str:
+    """Extract the JWT `exp` claim as ISO-8601 UTC ('' when absent/unparseable)."""
+    try:
+        payload: str = token.split(".")[1] + "=="
+        exp: Any = json.loads(base64.urlsafe_b64decode(payload)).get("exp")
+        if not exp:
+            return ""
+        return datetime.fromtimestamp(int(exp), tz=timezone.utc).isoformat()
+    except Exception:
+        return ""
+
+
 class SessionHealth:
     """Monitors and manages Dhan session token health.
 
     DhanHQ-py sync HTTP has no auto-refresh. Dhan tokens expire ~3AM IST daily.
-    This wrapper detects expiry and triggers re-authentication.
+    refresh() mints a NEW token via DhanLogin.renew_token (with a PIN/TOTP
+    generate_token fallback) instead of rebuilding DhanContext with the same
+    possibly-expired token, and persists it via the credential store when one
+    is attached.
     """
 
-    def __init__(self, client_id: str, access_token: str) -> None:
+    def __init__(
+        self, client_id: str, access_token: str,
+        credential_store: Any = None,
+        pin: str | None = None, totp: str | None = None,
+    ) -> None:
         self._client_id: str = client_id
         self._access_token: str = access_token
+        self._credential_store: Any = credential_store
+        self._pin: str | None = pin
+        self._totp: str | None = totp
+        self.last_refresh_error: str | None = None
         self._context: DhanContext | None = None
         self._last_success_time: float = 0.0
         self._refresh_threshold_hours: float = 20.0
         self._init_context()
 
     def _init_context(self) -> None:
-        """Initialize or reinitialize the DhanContext."""
+        """Initialize or reinitialize the DhanContext with the current token."""
         self._context = DhanContext(
             client_id=self._client_id,
             access_token=self._access_token,
@@ -90,9 +127,9 @@ class SessionHealth:
 
     @property
     def context(self) -> DhanContext:
-        """Return the current DhanContext, refreshing if stale."""
+        """Return the current DhanContext, refreshing (minting) if stale."""
         if self._context is None or self._is_stale():
-            self._init_context()
+            self.refresh()
         return self._context  # type: ignore[return-value]
 
     def _is_stale(self) -> bool:
@@ -106,16 +143,59 @@ class SessionHealth:
         """Record a successful API call timestamp."""
         self._last_success_time = time.time()
 
-    def refresh(self) -> None:
-        """Force re-initialization of the DhanContext."""
+    def _mint_token(self) -> str | None:
+        """Mint a NEW Dhan access token: renewal first, PIN/TOTP as fallback.
+
+        Never raises; failures are logged and surfaced via last_refresh_error.
+        """
+        try:
+            resp: Any = DhanLogin(self._client_id).renew_token(self._access_token)
+            new_token: str | None = _extract_access_token(resp)
+            if new_token:
+                self.last_refresh_error = None
+                return new_token
+            logger.warning("Dhan token renewal returned no accessToken")
+        except Exception as exc:
+            logger.warning("Dhan token renewal failed: %s", exc)
+        if self._pin is not None and self._totp is not None:
+            try:
+                resp = DhanLogin(self._client_id).generate_token(self._pin, self._totp)
+                new_token = _extract_access_token(resp)
+                if new_token:
+                    self.last_refresh_error = None
+                    return new_token
+                logger.warning("Dhan PIN/TOTP token generation returned no accessToken")
+            except Exception as exc:
+                logger.warning("Dhan PIN/TOTP token generation failed: %s", exc)
+        else:
+            logger.warning(
+                "Dhan token renewal failed and PIN/TOTP unavailable — re-auth via setup wizard"
+            )
+        self.last_refresh_error = "Dhan token refresh failed — re-authentication required"
+        return None
+
+    def refresh(self) -> bool:
+        """Mint a NEW access token and rebuild DhanContext with it.
+
+        Returns True when a fresh token was minted (persisted via the
+        credential store when one is attached). Never raises: renewal failures
+        are logged and surfaced via last_refresh_error.
+        """
+        new_token: str | None = self._mint_token()
+        if new_token is not None and new_token != self._access_token:
+            self._access_token = new_token
+            if self._credential_store is not None:
+                self._credential_store.update_token(
+                    new_token, _jwt_expiry(new_token), self._client_id
+                )
         self._init_context()
+        return new_token is not None
 
     def check_and_refresh(self) -> bool:
-        """Check staleness and refresh if needed. Returns True if refreshed."""
+        """Check staleness and refresh (minting a NEW token) if needed."""
         if self._is_stale():
             logger.info("Dhan trading session stale, refreshing.")
-            self._init_context()
-            return True
+            return self.refresh()
         return False
 
 
@@ -132,10 +212,16 @@ class DhanTradingAdapter:
 
     broker_name: str = "dhan-trading"
 
-    def __init__(self, client_id: str, access_token: str, event_bus: EventBus | None = None) -> None:
+    def __init__(
+        self, client_id: str, access_token: str,
+        event_bus: EventBus | None = None,
+        credential_store: Any = None,
+    ) -> None:
         self._client_id: str = client_id
         self._access_token: str = access_token
-        self._session: SessionHealth = SessionHealth(client_id, access_token)
+        self._session: SessionHealth = SessionHealth(
+            client_id, access_token, credential_store=credential_store,
+        )
         self._dhan: DhanHQClient | None = None
         self._connected: bool = False
         self._event_bus: EventBus | None = event_bus

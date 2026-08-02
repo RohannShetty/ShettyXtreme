@@ -10,27 +10,34 @@ error 806). Includes staleness detection for data feed.
 Dhan WS binary protocol — two distinct code sets:
   Subscription REQUEST codes (v2 JSON, validated to 15/17/21):
     Ticker=15, Quote=17, Full=21; unsubscribe = request code + 1.
-  Response feed codes (parsing):
-    2 = ticker, 4 = quote, 5 = order data,
-    8 = full quote, 41 = OHLC, 51 = market depth
+  Response feed codes (inbound first-byte dispatch, SDK marketfeed.process_data):
+    2 = ticker, 3 = depth, 4 = quote, 5 = OI, 6 = prev close,
+    7 = status, 8 = full quote, 50 = server disconnect (code at <BHBIH index 4:
+    805 = connections exceeded, 806 = Data-API entitlement missing,
+    807 = access token expired, 808 = invalid client id, 809 = auth failed).
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import struct
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from dhanhq import DhanContext, MarketFeed
+from dhanhq import DhanContext, DhanLogin, MarketFeed
 from dhanhq import dhanhq as DhanHQClient
 
 from shettyxtreme.core.interfaces.market_data_stream import (
-    Bar,
     BarCallback,
     Tick,
     TickCallback,
+)
+from shettyxtreme.integration.dhan.trading_adapter import (
+    _extract_access_token,
+    _jwt_expiry,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,18 +49,47 @@ EXCHANGE_MAP: dict[str, str] = {
     "BFO": "BSE_FNO", "MCX": "MCX", "IDX": "IDX_I",
 }
 
-# Subscription REQUEST codes — v2 accepts only 15/17/21 (corrected fact 2)
+# Subscription REQUEST codes — v2 accepts only 15/17/21
 REQUEST_CODE_TICKER: int = 15
 REQUEST_CODE_QUOTE: int = 17
 REQUEST_CODE_FULL: int = 21
-# Response feed codes (used by _process_ws_tick parsing)
+# Inbound response feed codes (first byte; SDK marketfeed.process_data)
 FEED_CODE_TICKER: int = 2
+FEED_CODE_DEPTH: int = 3
 FEED_CODE_QUOTE: int = 4
-FEED_CODE_ORDER: int = 5
+FEED_CODE_OI: int = 5
+FEED_CODE_PREV_CLOSE: int = 6
+FEED_CODE_STATUS: int = 7
 FEED_CODE_FULL_QUOTE: int = 8
-FEED_CODE_OHLC: int = 41
-FEED_CODE_MARKET_DEPTH: int = 51
+FEED_CODE_DISCONNECT: int = 50
+# Server disconnect codes (50-packet <BHBIH index 4)
+DISCONNECT_ENTITLEMENT: int = 806
+DISCONNECT_TOKEN_EXPIRED: int = 807
+# Reconnect policy for 805/transient drops: 1s->2s->4s->8s capped, +jitter
+RECONNECT_BASE_DELAY: float = 1.0
+RECONNECT_MAX_DELAY: float = 8.0
+RECONNECT_JITTER_MAX: float = 0.5
 STALENESS_THRESHOLD_SEC: float = 30.0
+
+
+class _DisconnectAwareFeed(MarketFeed):
+    """MarketFeed that records the server disconnect code (805-809).
+
+    The upstream SDK prints the code from the 50-packet and drops it; the
+    adapter needs it to classify 806 (entitlement) vs 807 (token expired)
+    vs transient drops.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.last_disconnect_code: int | None = None
+
+    def server_disconnection(self, data: bytes) -> None:
+        try:
+            self.last_disconnect_code = struct.unpack_from("<BHBIH", data, 0)[4]
+        except (struct.error, IndexError, ValueError):
+            self.last_disconnect_code = None
+        return super().server_disconnection(data)
 
 
 class DhanDataAdapter:
@@ -70,10 +106,12 @@ class DhanDataAdapter:
     def __init__(
         self, client_id: str, access_token: str,
         data_access_token: str | None = None,
+        credential_store: Any = None,
     ) -> None:
         self._client_id: str = client_id
         self._access_token: str = access_token
         self._data_access_token: str | None = data_access_token
+        self._credential_store: Any = credential_store
         self._context: DhanContext | None = None
         self._dhan: DhanHQClient | None = None
         self._feed: MarketFeed | None = None
@@ -84,6 +122,11 @@ class DhanDataAdapter:
         self._last_tick_time: float = 0.0
         self.last_error: str | None = None
         self.entitlement_error: bool = False
+        self._feed_active: bool = False
+        self._feed_attempt: int = 0
+        self._local_close: bool = False
+        self._feed_stop: threading.Event = threading.Event()
+        self._feed_future: Any = None
         self._init_context()
 
     def _init_context(self) -> None:
@@ -169,12 +212,20 @@ class DhanDataAdapter:
             return False
 
     async def disconnect(self) -> bool:
-        """Disconnect from Dhan data API."""
+        """Disconnect from Dhan data API (local close — no reconnect)."""
+        self._local_close = True
+        self._feed_active = False
+        self._feed_stop.set()
         if self._feed is not None:
             try:
-                self._feed.disconnect()
+                self._feed.close_connection()
             except Exception as exc:
                 logger.warning("Dhan WS disconnect error: %s", exc)
+        if self._feed_future is not None:
+            try:
+                await asyncio.wait_for(self._feed_future, timeout=2.0)
+            except Exception:
+                pass
         self._ws_connected = False
         self._connected = False
         self._dhan = None
@@ -219,7 +270,7 @@ class DhanDataAdapter:
         return True
 
     async def _start_ws_feed(self, instruments: list[tuple[str, str, int]]) -> bool:
-        """Start the Dhan WebSocket feed in a background thread."""
+        """Start the Dhan WS feed with a supervised, disconnect-code-aware loop."""
         if self.entitlement_error:
             logger.error(
                 "Dhan WS feed not started: subscribe to Data APIs to continue"
@@ -227,38 +278,134 @@ class DhanDataAdapter:
             return False
         if self._context is None:
             self._init_context()
+        self._feed_active = True
+        self._feed_stop.clear()
+        loop: asyncio.AbstractEventLoop = asyncio.get_running_loop()
+        self._feed_future = loop.run_in_executor(
+            None, self._feed_supervisor, instruments
+        )
+        return True
 
-        def _on_ticks(tick_data: Any) -> None:
-            self._process_ws_tick(tick_data)
+    def _feed_supervisor(self, instruments: list[tuple[str, str, int]]) -> None:
+        """Blocking feed loop (executor thread): connect, supervise, reconnect.
 
-        def _on_connect() -> None:
-            self._ws_connected = True
-            logger.info("Dhan WS feed connected.")
-
-        def _on_close() -> None:
-            self._ws_connected = False
-            self._mark_ws_error(Exception("Dhan WS feed closed"))
-            logger.warning("Dhan WS feed closed.")
-
-        def _on_error(err: Any) -> None:
-            self._mark_ws_error(Exception(str(err)))
-            logger.error("Dhan WS feed error: %s", err)
-
-        try:
-            self._feed = MarketFeed(
+        The SDK's own reconnect is a blind 1s retry; the close/error callbacks
+        stop it (feed._running=False) and this supervisor owns the policy:
+        806 = stop (entitlement), 807 = renew token, else backoff + jitter.
+        """
+        while self._feed_active:
+            feed = _DisconnectAwareFeed(
                 dhan_context=self._context, instruments=instruments,
-                version="v2", on_connect=_on_connect, on_message=_on_ticks,
-                on_close=_on_close, on_error=_on_error, on_ticks=_on_ticks,
+                version="v2", on_connect=self._on_connect_cb,
+                on_message=self._on_ticks_cb, on_close=self._on_close_cb,
+                on_error=self._on_error_cb,
             )
-            loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._feed.run_forever)
-            return True
+            self._feed = feed
+            try:
+                feed.run()
+            except Exception as exc:
+                self._mark_ws_error(exc)
+            self._ws_connected = False
+            if not self._feed_active:
+                break
+            action: str = self._classify_disconnect(feed.last_disconnect_code)
+            if action == "entitlement" or self.entitlement_error:
+                self.entitlement_error = True
+                self.last_error = "subscribe to Data APIs"
+                logger.error("Dhan WS feed stopped: Data-API entitlement missing (806)")
+                break
+            if action == "renew":
+                logger.warning("Dhan WS feed: access token expired (807) — renewing token")
+                if self._renew_token_sync():
+                    self._feed_attempt = 0
+                    continue
+                self.last_error = "Dhan WS token renewal failed"
+                break
+            self._feed_attempt = min(self._feed_attempt + 1, 5)
+            delay: float = self._reconnect_delay(self._feed_attempt)
+            logger.warning(
+                "Dhan WS feed dropped (code=%s) — reconnect in %.2fs",
+                feed.last_disconnect_code, delay,
+            )
+            if self._feed_stop.wait(delay):
+                break
+        self._feed = None
+
+    @staticmethod
+    def _classify_disconnect(code: int | None) -> str:
+        """Classify a server disconnect code: entitlement / renew / retry."""
+        if code == DISCONNECT_ENTITLEMENT:
+            return "entitlement"
+        if code == DISCONNECT_TOKEN_EXPIRED:
+            return "renew"
+        return "retry"
+
+    @staticmethod
+    def _reconnect_delay(attempt: int) -> float:
+        """Exponential backoff with jitter, capped at RECONNECT_MAX_DELAY."""
+        base: float = min(
+            RECONNECT_BASE_DELAY * (2 ** max(attempt - 1, 0)),
+            RECONNECT_MAX_DELAY,
+        )
+        return base + random.uniform(0.0, RECONNECT_JITTER_MAX)
+
+    def _renew_token_sync(self) -> bool:
+        """Renew the effective WS token (runs on the feed thread). Returns True on success."""
+        old_token: str = self._data_access_token or self._access_token
+        try:
+            resp: Any = DhanLogin(self._client_id).renew_token(old_token)
         except Exception as exc:
-            logger.error("Dhan WS feed start failed: %s", exc)
+            logger.warning("Dhan WS token renewal failed: %s", exc)
             return False
+        new_token: str | None = _extract_access_token(resp)
+        if not new_token:
+            logger.warning("Dhan WS token renewal returned no accessToken")
+            return False
+        if self._data_access_token:
+            self._data_access_token = new_token
+            if self._credential_store is not None:
+                self._credential_store.update_data_token(
+                    new_token, _jwt_expiry(new_token)
+                )
+        else:
+            self._access_token = new_token
+            if self._credential_store is not None:
+                self._credential_store.update_token(
+                    new_token, _jwt_expiry(new_token), self._client_id
+                )
+        self._init_context()
+        logger.info("Dhan WS token renewed (masked %s****)", new_token[:4])
+        return True
+
+    def _on_connect_cb(self, feed: MarketFeed) -> None:
+        """SDK on_connect(feed): mark connected and reset the backoff counter."""
+        self._ws_connected = True
+        self._feed_attempt = 0
+        logger.info("Dhan WS feed connected.")
+
+    def _on_ticks_cb(self, feed: MarketFeed, tick_data: Any) -> None:
+        """SDK on_message(feed, data): dispatch parsed ticks/bars."""
+        self._process_ws_tick(tick_data)
+
+    def _on_close_cb(self, feed: MarketFeed) -> None:
+        """SDK on_close(feed): stop the blind 1s loop; the supervisor reconnects."""
+        self._ws_connected = False
+        if self._local_close:
+            return
+        feed._running = False
+
+    def _on_error_cb(self, feed: MarketFeed, err: Any) -> None:
+        """SDK on_error(feed, err): flag entitlement; stop blind loop on drops."""
+        self._mark_ws_error(err)
+        logger.error("Dhan WS feed error: %s", err)
+        if not self._local_close:
+            feed._running = False
 
     def _process_ws_tick(self, tick_data: Any) -> None:
         """Process incoming WebSocket tick data and dispatch callbacks."""
+        if tick_data is None:
+            # 50-packet disconnect: the SDK routes it via on_close, not here.
+            return
         self._last_tick_time = time.time()
         if isinstance(tick_data, (bytes, bytearray)):
             tick: Tick | None = self._parse_binary_tick(tick_data)
@@ -270,22 +417,12 @@ class DhanDataAdapter:
                         asyncio.ensure_future(result)
         elif isinstance(tick_data, dict):
             symbol: str = str(tick_data.get("security_id", tick_data.get("symbol", "")))
-            feed_code: int = int(tick_data.get("feed_code", 0))
-            if feed_code == FEED_CODE_OHLC:
-                bar: Bar | None = self._parse_dict_bar(symbol, tick_data)
-                if bar is not None:
-                    bc_entry: tuple[str, BarCallback] | None = self._bar_callbacks.get(symbol)
-                    if bc_entry is not None:
-                        result_b = bc_entry[1](bar)
-                        if asyncio.iscoroutine(result_b):
-                            asyncio.ensure_future(result_b)
-            else:
-                tick_obj: Tick = self._parse_dict_tick(symbol, tick_data)
-                cb2: TickCallback | None = self._tick_callbacks.get(symbol)
-                if cb2 is not None:
-                    result_t = cb2(tick_obj)
-                    if asyncio.iscoroutine(result_t):
-                        asyncio.ensure_future(result_t)
+            tick_obj: Tick = self._parse_dict_tick(symbol, tick_data)
+            cb2: TickCallback | None = self._tick_callbacks.get(symbol)
+            if cb2 is not None:
+                result_t = cb2(tick_obj)
+                if asyncio.iscoroutine(result_t):
+                    asyncio.ensure_future(result_t)
 
     @staticmethod
     def _parse_binary_tick(data: bytes) -> Tick | None:

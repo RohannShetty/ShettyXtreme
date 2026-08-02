@@ -101,7 +101,12 @@ class TestSessionHealth:
     def test_check_and_refresh_triggers_refresh_when_stale(self) -> None:
         with patch(
             "shettyxtreme.integration.dhan.trading_adapter.DhanContext"
-        ) as mock_ctx_cls:
+        ) as mock_ctx_cls, patch(
+            "shettyxtreme.integration.dhan.trading_adapter.DhanLogin"
+        ) as mock_login_cls:
+            mock_login_cls.return_value.renew_token.return_value = {
+                "accessToken": "fresh_token_abc",
+            }
             mock_ctx1 = MagicMock()
             mock_ctx2 = MagicMock()
             mock_ctx_cls.side_effect = [mock_ctx1, mock_ctx2]
@@ -111,18 +116,110 @@ class TestSessionHealth:
             assert result is True
             assert health._context is mock_ctx2
             assert mock_ctx_cls.call_count == 2
+            _, kwargs = mock_ctx_cls.call_args
+            assert kwargs["access_token"] == "fresh_token_abc"
 
-    def test_refresh_force_reinit(self) -> None:
+    def test_refresh_mints_new_token_and_rebuilds_context(self) -> None:
+        """refresh must mint a NEW token (not reuse the stored one)."""
         with patch(
             "shettyxtreme.integration.dhan.trading_adapter.DhanContext"
-        ) as mock_ctx_cls:
+        ) as mock_ctx_cls, patch(
+            "shettyxtreme.integration.dhan.trading_adapter.DhanLogin"
+        ) as mock_login_cls:
+            mock_login = mock_login_cls.return_value
+            mock_login.renew_token.return_value = {"accessToken": "fresh_token_xyz"}
             mock_ctx1 = MagicMock()
             mock_ctx2 = MagicMock()
             mock_ctx_cls.side_effect = [mock_ctx1, mock_ctx2]
             health = SessionHealth(MOCK_CLIENT_ID, MOCK_ACCESS_TOKEN)
-            health.refresh()
+            result = health.refresh()
+            assert result is True
+            mock_login.renew_token.assert_called_once_with(MOCK_ACCESS_TOKEN)
             assert health._context is mock_ctx2
-            assert mock_ctx_cls.call_count == 2
+            _, kwargs = mock_ctx_cls.call_args
+            assert kwargs["access_token"] == "fresh_token_xyz"
+            assert health._access_token == "fresh_token_xyz"
+
+    def test_refresh_persists_new_token_via_credential_store(self) -> None:
+        """A fresh token must be persisted via CredentialStore.update_token."""
+        store = MagicMock()
+        with patch(
+            "shettyxtreme.integration.dhan.trading_adapter.DhanContext"
+        ) as mock_ctx_cls, patch(
+            "shettyxtreme.integration.dhan.trading_adapter.DhanLogin"
+        ) as mock_login_cls:
+            mock_ctx_cls.return_value = MagicMock()
+            mock_login_cls.return_value.renew_token.return_value = {
+                "accessToken": "fresh_token_123",
+            }
+            health = SessionHealth(
+                MOCK_CLIENT_ID, MOCK_ACCESS_TOKEN, credential_store=store,
+            )
+            result = health.refresh()
+            assert result is True
+            store.update_token.assert_called_once()
+            call_args = store.update_token.call_args.args
+            assert call_args[0] == "fresh_token_123"
+            assert call_args[2] == MOCK_CLIENT_ID
+
+    def test_refresh_accepts_nested_access_token(self) -> None:
+        """RenewToken may nest the token under a `data` key."""
+        with patch(
+            "shettyxtreme.integration.dhan.trading_adapter.DhanContext"
+        ) as mock_ctx_cls, patch(
+            "shettyxtreme.integration.dhan.trading_adapter.DhanLogin"
+        ) as mock_login_cls:
+            mock_ctx_cls.return_value = MagicMock()
+            mock_login_cls.return_value.renew_token.return_value = {
+                "status": "success",
+                "data": {"accessToken": "nested_token_456"},
+            }
+            health = SessionHealth(MOCK_CLIENT_ID, MOCK_ACCESS_TOKEN)
+            result = health.refresh()
+            assert result is True
+            assert health._access_token == "nested_token_456"
+
+    def test_refresh_falls_back_to_pin_totp_when_renewal_fails(self) -> None:
+        """Renewal failure must fall back to DhanLogin.generate_token(pin, totp)."""
+        with patch(
+            "shettyxtreme.integration.dhan.trading_adapter.DhanContext"
+        ) as mock_ctx_cls, patch(
+            "shettyxtreme.integration.dhan.trading_adapter.DhanLogin"
+        ) as mock_login_cls:
+            mock_login = mock_login_cls.return_value
+            mock_login.renew_token.side_effect = RuntimeError("token dead")
+            mock_login.generate_token.return_value = {"accessToken": "pin_token_789"}
+            mock_ctx_cls.return_value = MagicMock()
+            health = SessionHealth(
+                MOCK_CLIENT_ID, MOCK_ACCESS_TOKEN,
+                pin="1234", totp="123456",
+            )
+            result = health.refresh()
+            assert result is True
+            mock_login.generate_token.assert_called_once_with("1234", "123456")
+            assert health._access_token == "pin_token_789"
+
+    def test_refresh_failure_surfaces_error_and_does_not_crash(self) -> None:
+        """Total renewal failure must log/surface, not raise."""
+        with patch(
+            "shettyxtreme.integration.dhan.trading_adapter.DhanContext"
+        ) as mock_ctx_cls, patch(
+            "shettyxtreme.integration.dhan.trading_adapter.DhanLogin"
+        ) as mock_login_cls:
+            mock_login = mock_login_cls.return_value
+            mock_login.renew_token.side_effect = RuntimeError("network down")
+            mock_ctx1 = MagicMock()
+            mock_ctx2 = MagicMock()
+            mock_ctx_cls.side_effect = [mock_ctx1, mock_ctx2]
+            health = SessionHealth(MOCK_CLIENT_ID, MOCK_ACCESS_TOKEN)
+            result = health.refresh()
+            assert result is False
+            assert health.last_refresh_error is not None
+            assert "re-authentication" in health.last_refresh_error
+            # Context rebuilt with the OLD token — session still usable.
+            assert health._context is mock_ctx2
+            _, kwargs = mock_ctx_cls.call_args
+            assert kwargs["access_token"] == MOCK_ACCESS_TOKEN
 
 
 class TestTradingAdapterOrderPlacement:
