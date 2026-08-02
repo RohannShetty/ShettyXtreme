@@ -233,6 +233,12 @@ async def get_options(
     except DataAdapterUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     contracts = _enrich_chain(chain, spot)
+    # Cache the RAW rows (pre-enrichment) so the research layer's
+    # options_posture tool can derive IV/PCR/OI posture from live data.
+    request.app.state.options_chain = {
+        **getattr(request.app.state, "options_chain", {}),
+        symbol: {"spot": spot, "contracts": chain},
+    }
     return OptionsChainResponse(underlying=symbol, expiry=expiry or "", contracts=contracts)
 
 

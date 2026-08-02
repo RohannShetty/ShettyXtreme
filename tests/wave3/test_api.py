@@ -12,6 +12,7 @@ from httpx import AsyncClient, ASGITransport
 from shettyxtreme.core.event_bus.event_bus import EventBus
 from shettyxtreme.terminal.api import execution_router
 from shettyxtreme.terminal.api.app import app
+from shettyxtreme.terminal.api.research_source import ProjectionDataSource
 from shettyxtreme.terminal.projections import (
     AlertProjection,
     HealthProjection,
@@ -224,6 +225,41 @@ async def test_get_options_with_adapter(client: AsyncClient) -> None:
         assert data["contracts"][0]["option_type"] == "CE"
     finally:
         app.state.data_adapter = None
+
+
+@pytest.mark.asyncio
+async def test_get_options_caches_chain_for_research(client: AsyncClient) -> None:
+    """A successful chain fetch populates app.state.options_chain so the
+    research options_posture tool is sourced from live data (not [UNSOURCED])."""
+    class FakeAdapter:
+        async def get_option_chain(self, underlying_scrip: str, exchange_segment: str, expiry: str) -> dict:
+            return {
+                "status": "success",
+                "data": {
+                    "underlying_ltp": 19500.0,
+                    "option_chain": [
+                        {"strike": 19500, "option_type": "CE", "ltp": 150.0, "iv": 12.0, "oi": 120000},
+                        {"strike": 19500, "option_type": "PE", "ltp": 120.0, "iv": 11.0, "oi": 130000},
+                    ],
+                },
+            }
+
+    app.state.data_adapter = FakeAdapter()
+    try:
+        resp = await client.get("/api/intelligence/options?symbol=NIFTY")
+        assert resp.status_code == 200
+        cache = getattr(app.state, "options_chain", None)
+        assert cache is not None
+        assert "NIFTY" in cache
+        assert cache["NIFTY"]["spot"] == 19500.0
+        assert cache["NIFTY"]["contracts"][0]["option_type"] == "CE"
+        assert ProjectionDataSource(app.state).options_summary() is not None
+    finally:
+        app.state.data_adapter = None
+        try:
+            del app.state.options_chain
+        except AttributeError:
+            pass
 
 
 @pytest.mark.asyncio

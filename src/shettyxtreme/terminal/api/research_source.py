@@ -30,9 +30,15 @@ def render_options_posture(
     for row in contracts or []:
         if not isinstance(row, dict):
             continue
-        opt_type = str(row.get("option_type", "")).upper()
+        raw_type = row.get("option_type")
+        if raw_type is None:
+            raw_type = row.get("drv_option_type")
+        opt_type = str(raw_type or "").upper()
         try:
-            strike = float(row.get("strike"))
+            raw_strike = row.get("strike")
+            if raw_strike is None:
+                raw_strike = row.get("strike_price")
+            strike = float(raw_strike)
             oi = int(row.get("oi", 0) or 0)
         except (TypeError, ValueError):
             continue
