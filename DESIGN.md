@@ -3,22 +3,25 @@ project: ShettyXtreme
 type: design-contract
 governs: terminal UI (Svelte + Vite, D9)
 status: binding
+themes:
+  default: dark
+  light: opt-in (operator chooses; never the default)
 colors:
-  canvas: "#0a0b0d"
-  canvas-raised: "#111317"
-  surface-card: "#15181d"
-  surface-elevated: "#1b1f26"
-  surface-overlay: "#1e232b"
-  hairline: "#232830"
-  hairline-strong: "#2f3640"
-  ink: "#f2f5f9"
-  body: "#c3cbd6"
-  muted: "#8b94a1"
-  faint: "#5c6470"
-  accent: "#35c8ff"
-  accent-active: "#5fd6ff"
-  accent-disabled: "#14404f"
-  on-accent: "#06121a"
+  canvas: "#0d0c0a"
+  canvas-raised: "#141210"
+  surface-card: "#181613"
+  surface-elevated: "#1e1b17"
+  surface-overlay: "#221f19"
+  hairline: "#26221c"
+  hairline-strong: "#322d25"
+  ink: "#f4f0e7"
+  body: "#c6bfb1"
+  muted: "#948b7c"
+  faint: "#5f584c"
+  accent: "#f5b942"
+  accent-active: "#ffce6b"
+  accent-disabled: "#5c4712"
+  on-accent: "#1a1405"
   price-up: "#f6525c"
   price-up-strong: "#ff7a82"
   price-up-soft: "rgba(246,82,92,0.12)"
@@ -31,15 +34,54 @@ colors:
   warning: "#ffb020"
   danger: "#e5484d"
   info: "#3b82f6"
-  focus-ring: "#35c8ff"
-  row-hover: "#1b2129"
-  row-selected: "#12283a"
+  focus-ring: "#f5b942"
+  row-hover: "#211d17"
+  row-selected: "#2b2210"
   scrim: "rgba(0,0,0,0.6)"
   candle-up: "#f6525c"
   candle-down: "#2ebd85"
-  volume: "#3a4250"
-  grid-line: "#1c2129"
-  crosshair: "#8b94a1"
+  volume: "#3b362c"
+  grid-line: "#211d17"
+  crosshair: "#948b7c"
+  watermark: "#26221c"
+light:
+  canvas: "#f7f5f1"
+  canvas-raised: "#efede6"
+  surface-card: "#ffffff"
+  surface-elevated: "#f2efe9"
+  surface-overlay: "#faf8f4"
+  hairline: "#e0dcd2"
+  hairline-strong: "#c9c4b8"
+  ink: "#1a1a18"
+  body: "#3f3d38"
+  muted: "#6f6a60"
+  faint: "#9a948a"
+  accent: "#a16207"
+  accent-active: "#7c4a03"
+  accent-disabled: "#d8c6a3"
+  on-accent: "#ffffff"
+  price-up: "#f6525c"
+  price-up-strong: "#f6525c"
+  price-up-soft: "rgba(246,82,92,0.12)"
+  price-down: "#1e9e6b"
+  price-down-strong: "#2ebd85"
+  price-down-soft: "rgba(30,158,107,0.12)"
+  flash-up: "rgba(246,82,92,0.16)"
+  flash-down: "rgba(30,158,107,0.16)"
+  success: "#15803d"
+  warning: "#92400e"
+  danger: "#c62828"
+  info: "#1e40af"
+  focus-ring: "#a16207"
+  row-hover: "#f1eee8"
+  row-selected: "#f4e9cf"
+  scrim: "rgba(23,20,14,0.4)"
+  candle-up: "#f6525c"
+  candle-down: "#1e9e6b"
+  volume: "#d6d0c4"
+  grid-line: "#e6e2d8"
+  crosshair: "#6f6a60"
+  watermark: "#e0dcd2"
 typography:
   sans: "Inter, system-ui, sans-serif"
   mono: "JetBrains Mono, IBM Plex Mono, ui-monospace, monospace"
@@ -63,35 +105,45 @@ Design contract for the ShettyXtreme terminal — a dark, data-dense, operator-g
 A near-black canvas `{colors.canvas}` carrying dense instrument panels. The chrome (borders, titles, tabs, scrollbars) recedes so the data dominates; the only animated elements are price flashes on tick, the pulsing LIVE indicator, and the selected row's accent edge. Everything reads as calibrated equipment — zero playfulness, zero decoration.
 
 **Key Characteristics (never violate):**
-- Near-black, cool-neutral canvas; never pure black, never a light mode.
+- Warm near-black canvas `{colors.canvas}` (`#0d0c0a` family) carrying dense instrument panels; never pure black, never pure white. Dark is the default and the operator norm; a warm-paper light theme exists as an opt-in companion (see §2.1 Themes Contract).
 - High information density with a fixed 4px grid — density is the product.
 - Elevation is carried exclusively by hairline borders and surface steps; no drop shadows, no glassmorphism, no gradients.
-- One accent color for the few moments that need attention (interactive, live, selected); every other hue is semantic.
-- Indian price convention is law: **red = rise, green = fall** — the exact inverse of international convention. Never "fix" this.
+- One accent color (warm amber) for the few moments that need attention (interactive, live, selected); every other hue is semantic.
+- Indian price convention is law in BOTH themes: **red = rise, green = fall** — the exact inverse of international convention. Never "fix" this, never invert it.
 - Every numeral renders in the mono face with tabular figures; labels and chrome render in the sans face.
 - Status colors never appear in price columns; price colors never appear in status badges.
 
 ## 2. Color Palette & Roles
 
-### 2.1 Token reference table
+### 2.1 Themes Contract
+
+The terminal ships **two themes**:
+
+- **Dark (default, operator norm)** — the warm near-black palette in §2.2. `data-theme="dark"` on `<html>`. This is what the operator runs in; light is never the default, and `--mode OBSERVER`-style behavior is theme-independent.
+- **Light (opt-in)** — the warm paper palette in §2.3. The operator may switch via the header toggle; the choice persists (`sx-theme` in `localStorage`) and applies before first paint.
+- Both themes pass **WCAG AA for text** (contrast ≥ 4.5:1 for body text; the price tokens are the single documented exception — see below).
+- **Red = rise, green = fall in BOTH themes. Never invert.** The price convention law holds in dark and light alike; `{colors.price-up}` / `{colors.price-down}` keep their hex in dark and may only *darken* in light for AA (green may darken to `#1e9e6b`; the red `#f6525c` is kept as-is and is the one accepted sub-AA text usage at ~3.5:1 on paper, used in 600-weight data numerals only).
+- Theme selection changes tokens only — never layout, density, typography, or component structure.
+
+### 2.2 Token reference — dark (warm amber)
 
 | Token | Hex | Role |
 |---|---|---|
-| `{colors.canvas}` | `#0a0b0d` | App background. The only full-screen surface. |
-| `{colors.canvas-raised}` | `#111317` | Header bars, tab strips, status strips sitting on canvas. |
-| `{colors.surface-card}` | `#15181d` | Panels, cards, tables, dialogs' body background. |
-| `{colors.surface-elevated}` | `#1b1f26` | Hovered panels, dropdowns, tooltips, floating summary strips. |
-| `{colors.surface-overlay}` | `#1e232b` | Modals, drawers, command palette. Always under `{colors.scrim}`. |
-| `{colors.hairline}` | `#232830` | 1px borders between panels and on canvas. Default border. |
-| `{colors.hairline-strong}` | `#2f3640` | Borders of interactive/active elements, table header underline, divider inside cards. |
-| `{colors.ink}` | `#f2f5f9` | Primary text — LTP hero, panel titles, values of consequence. |
-| `{colors.body}` | `#c3cbd6` | Regular text, table cell text. |
-| `{colors.muted}` | `#8b94a1` | Secondary labels, non-numeric captions, icon strokes. |
-| `{colors.faint}` | `#5c6470` | Placeholders, empty states, disabled text, timestamps. |
-| `{colors.accent}` | `#35c8ff` | THE single accent — electric cyan. Live indicators, active tab, selected controls, links, focus. |
-| `{colors.accent-active}` | `#5fd6ff` | Accent hover / pressed glow. |
-| `{colors.accent-disabled}` | `#14404f` | Accent controls in disabled state. |
-| `{colors.on-accent}` | `#06121a` | Text on accent fills (inverse-contrast). |
+| `{colors.canvas}` | `#0d0c0a` | App background. The only full-screen surface. |
+| `{colors.canvas-raised}` | `#141210` | Header bars, tab strips, status strips sitting on canvas. |
+| `{colors.surface-card}` | `#181613` | Panels, cards, tables, dialogs' body background. |
+| `{colors.surface-elevated}` | `#1e1b17` | Hovered panels, dropdowns, tooltips, floating summary strips. |
+| `{colors.surface-overlay}` | `#221f19` | Modals, drawers, command palette. Always under `{colors.scrim}`. |
+| `{colors.hairline}` | `#26221c` | 1px borders between panels and on canvas. Default border. |
+| `{colors.hairline-strong}` | `#322d25` | Borders of interactive/active elements, table header underline, divider inside cards. |
+| `{colors.ink}` | `#f4f0e7` | Primary text — LTP hero, panel titles, values of consequence. |
+| `{colors.body}` | `#c6bfb1` | Regular text, table cell text. |
+| `{colors.muted}` | `#948b7c` | Secondary labels, non-numeric captions, icon strokes. |
+| `{colors.faint}` | `#5f584c` | Placeholders, empty states, disabled text, timestamps. |
+| `{colors.accent}` | `#f5b942` | THE single accent — warm amber. Live indicators, active tab, selected controls, links, focus. |
+| `{colors.accent-active}` | `#ffce6b` | Accent hover / pressed glow (brightens on dark). |
+| `{colors.accent-disabled}` | `#5c4712` | Accent controls in disabled state. |
+| `{colors.on-accent}` | `#1a1405` | Text on accent fills (inverse-contrast). |
 | `{colors.price-up}` | `#f6525c` | **Price rose.** All rising-market values: LTP up, up-change, bid-ask up side, red candles. |
 | `{colors.price-up-strong}` | `#ff7a82` | Brighter red for LTP flash text, candle bodies. |
 | `{colors.price-up-soft}` | `rgba(246,82,92,0.12)` | Up-side column tint, soft up backgrounds (never text). |
@@ -104,23 +156,67 @@ A near-black canvas `{colors.canvas}` carrying dense instrument panels. The chro
 | `{colors.warning}` | `#ffb020` | Stale data, margin near limit, OI spike, regime change alert, unsaved config. |
 | `{colors.danger}` | `#e5484d` | Risk states: margin breach, feed disconnect, order rejection, kill-switch armed, session error. Crimson — NOT `{colors.price-up}`. |
 | `{colors.info}` | `#3b82f6` | System/operator info: background sync, scheduled task, informational toast. |
-| `{colors.focus-ring}` | `#35c8ff` | Keyboard focus ring. 2px, offset 2px, only on `:focus-visible`. |
-| `{colors.row-hover}` | `#1b2129` | Table row hover background. |
-| `{colors.row-selected}` | `#12283a` | Selected row background; combined with a 2px `{colors.accent}` left edge inset. |
+| `{colors.focus-ring}` | `#f5b942` | Keyboard focus ring. 2px, offset 2px, only on `:focus-visible`. |
+| `{colors.row-hover}` | `#211d17` | Table row hover background. |
+| `{colors.row-selected}` | `#2b2210` | Selected row background; combined with a 2px `{colors.accent}` left edge inset. |
 | `{colors.scrim}` | `rgba(0,0,0,0.6)` | Modal/drawer overlay scrim. |
 | `{colors.candle-up}` | `#f6525c` | Bull candle (Indian convention). |
 | `{colors.candle-down}` | `#2ebd85` | Bear candle. |
-| `{colors.volume}` | `#3a4250` | Volume bars (neutral); tinted `{colors.candle-*}` per bar direction. |
-| `{colors.grid-line}` | `#1c2129` | Chart grid lines. |
-| `{colors.crosshair}` | `#8b94a1` | Chart crosshair. |
-| `{colors.watermark}` | `#232830` | Chart watermark / background annotations. |
+| `{colors.volume}` | `#3b362c` | Volume bars (neutral); tinted `{colors.candle-*}` per bar direction. |
+| `{colors.grid-line}` | `#211d17` | Chart grid lines. |
+| `{colors.crosshair}` | `#948b7c` | Chart crosshair. |
+| `{colors.watermark}` | `#26221c` | Chart watermark / background annotations. |
 
-### 2.2 Palette rules
+### 2.3 Token reference — light (warm paper)
 
-- **Price semantics — Indian convention (binding):** `price-up` is red `#f6525c`, `price-down` is green `#2ebd85`. This is the NSE/BSE terminal convention and inverts Binance-style international mapping. Agents must treat "red = rise" as a law, not a suggestion.
+Same roles as §2.2 — only the hex differs. The price law holds unchanged: `{colors.price-up}` red, `{colors.price-down}` green (darkened to `#1e9e6b` for AA on paper; hue stays green, never swapped).
+
+| Token | Hex | Role |
+|---|---|---|
+| `{colors.canvas}` | `#f7f5f1` | App background. Warm paper. |
+| `{colors.canvas-raised}` | `#efede6` | Header bars, tab strips, status strips. |
+| `{colors.surface-card}` | `#ffffff` | Panels, cards, tables, dialogs' body background. |
+| `{colors.surface-elevated}` | `#f2efe9` | Hovered panels, dropdowns, tooltips, floating strips. |
+| `{colors.surface-overlay}` | `#faf8f4` | Modals, drawers, command palette. Under `{colors.scrim}`. |
+| `{colors.hairline}` | `#e0dcd2` | 1px borders. Default border. |
+| `{colors.hairline-strong}` | `#c9c4b8` | Borders of interactive/active elements, dividers. |
+| `{colors.ink}` | `#1a1a18` | Primary text. |
+| `{colors.body}` | `#3f3d38` | Regular text, table cell text. |
+| `{colors.muted}` | `#6f6a60` | Secondary labels, captions, icon strokes. |
+| `{colors.faint}` | `#9a948a` | Placeholders, empty states, disabled text, timestamps. |
+| `{colors.accent}` | `#a16207` | The single accent — dark amber (AA on paper). |
+| `{colors.accent-active}` | `#7c4a03` | Accent hover / pressed (darkens on light). |
+| `{colors.accent-disabled}` | `#d8c6a3` | Accent controls in disabled state. |
+| `{colors.on-accent}` | `#ffffff` | Text on accent fills. |
+| `{colors.price-up}` | `#f6525c` | **Price rose.** Same hex as dark — law. |
+| `{colors.price-up-strong}` | `#f6525c` | LTP flash / candle body tone; on paper the law-red is already the strongest readable tone, so "strong" equals the base. |
+| `{colors.price-up-soft}` | `rgba(246,82,92,0.12)` | Up-side column tint, soft up backgrounds. |
+| `{colors.price-down}` | `#1e9e6b` | **Price fell.** Darkened from `#2ebd85` for AA on paper; hue stays green. |
+| `{colors.price-down-strong}` | `#2ebd85` | LTP flash / candle body tone; equals the dark-theme green. |
+| `{colors.price-down-soft}` | `rgba(30,158,107,0.12)` | Down-side column tint, soft down backgrounds. |
+| `{colors.flash-up}` | `rgba(246,82,92,0.16)` | Transient row-flash on tick up; 150ms fade. |
+| `{colors.flash-down}` | `rgba(30,158,107,0.16)` | Transient row-flash on tick down. |
+| `{colors.success}` | `#15803d` | Status-only success (darkened for AA on paper). |
+| `{colors.warning}` | `#92400e` | Stale data, margin near limit, OI spike, alerts. |
+| `{colors.danger}` | `#c62828` | Risk states (darkened for AA on paper). |
+| `{colors.info}` | `#1e40af` | System/operator info (darkened for AA on paper). |
+| `{colors.focus-ring}` | `#a16207` | Keyboard focus ring. 2px, offset 2px, `:focus-visible` only. |
+| `{colors.row-hover}` | `#f1eee8` | Table row hover background. |
+| `{colors.row-selected}` | `#f4e9cf` | Selected row background + 2px accent left edge. |
+| `{colors.scrim}` | `rgba(23,20,14,0.4)` | Modal/drawer overlay scrim (lighter than dark). |
+| `{colors.candle-up}` | `#f6525c` | Bull candle (Indian convention). |
+| `{colors.candle-down}` | `#1e9e6b` | Bear candle. |
+| `{colors.volume}` | `#d6d0c4` | Volume bars (neutral). |
+| `{colors.grid-line}` | `#e6e2d8` | Chart grid lines. |
+| `{colors.crosshair}` | `#6f6a60` | Chart crosshair. |
+| `{colors.watermark}` | `#e0dcd2` | Chart watermark / background annotations. |
+
+### 2.4 Palette rules
+
+- **Price semantics — Indian convention (binding, both themes):** `price-up` is red `#f6525c`, `price-down` is green `#2ebd85` (light: `#1e9e6b`). This is the NSE/BSE terminal convention and inverts Binance-style international mapping. Agents must treat "red = rise" as a law, not a suggestion. **Red = rise, green = fall in BOTH themes. Never invert.**
 - Price tokens are **text and data-viz colors only**: never button fills, never card backgrounds, never badge backgrounds. The only permitted background usages are the `*-soft` tints and `flash-*` transient tick flashes.
 - Price colors are never repurposed for success/error; status colors are never used to render a price.
-- `{colors.accent}` is the single brand accent. Do not introduce a second accent (no purple, no magenta). Reserve accent for: active tab, live indicator, selected row edge, primary CTA, focus ring, links.
+- `{colors.accent}` is the single brand accent (warm amber in dark, dark amber in light). Do not introduce a second accent (no purple, no magenta). Reserve accent for: active tab, live indicator, selected row edge, primary CTA, focus ring, links.
 - `{colors.success}` is emerald, `{colors.price-down}` is green — deliberately adjacent hues. They must never be confused: success appears only in labeled status chips ("SYNCED", "ACCEPTED"); price appears only in numeric/data columns.
 - Market-hours status (closed / pre-open / continuous / halt) is a *semantic status* rendered with status tokens + text label — never with price tokens.
 - Depth (order book) bid/ask columns use `{colors.price-down}` / `{colors.price-up}` for the best-bid/best-ask values (they are market data), with `*-soft` column tints for the quantity bars.
@@ -161,6 +257,8 @@ A near-black canvas `{colors.canvas}` carrying dense instrument panels. The chro
 ## 4. Component Stylings
 
 All radii: controls 4px, panels 6px, badges 2px (never pills except status chips). Hover states documented per component; transitions ≤ 120ms (except price flash 150ms fade).
+
+**Component contract (P5a):** components are built from **shadcn-style primitives** (`$lib/components/ui/*`, Tailwind v4 + bits-ui + cva) on top of the design tokens in §2. Every primitive documents its four interaction states — **default / hover / active / disabled**, plus a 2px `{colors.focus-ring}` **focus-ring** state on `:focus-visible` — using the exact token roles in the table below. Primitives map to tokens via the shadcn alias layer (`primary` → `{colors.accent}`, `background` → `{colors.canvas}`, `card` → `{colors.surface-card}`, `border` → `{colors.hairline}`, `ring` → `{colors.focus-ring}`, etc.); the mapping lives in `src/lib/app.css` and never hard-codes hex. The drop-shadow ban (§6) applies to primitives with full force; one known violation — the LogDrawer's `box-shadow` — is tracked and fixed in the component-migration task.
 
 | Component | Default | Hover | Active / Selected | Disabled |
 |---|---|---|---|---|
@@ -205,7 +303,7 @@ All radii: controls 4px, panels 6px, badges 2px (never pills except status chips
 
 ## 6. Depth & Elevation
 
-Flat color-block elevation only. No drop shadows, no blur, no glassmorphism, no gradients anywhere.
+Flat color-block elevation only. No drop shadows, no blur, no glassmorphism, no gradients anywhere. (Re-affirmed under the P5a component contract: shadcn primitives inherit this ban; the pre-existing `box-shadow` on the LogDrawer is a known violation fixed in the component-migration task.)
 
 | Level | Treatment | Use |
 |---|---|---|
@@ -231,13 +329,13 @@ Focus is depth: 2px `{colors.focus-ring}` on `:focus-visible`, offset 2px, never
 - Right-align time columns in mono `number-sm` (HH:MM:SS, local IST + market session context).
 
 **Don't:**
-- Don't use light themes, light mode, or any full-white surface. The terminal never leaves dark.
+- Don't introduce ad-hoc surfaces outside the two theme palettes (§2.2 dark / §2.3 light) — no full-white surfaces in dark, no full-black surfaces in light, no theme drift colors.
 - Don't use emoji in data UI — no emoji in prices, tables, badges, toasts, or headers. Text labels only.
 - Don't introduce chart-library chrome (toolbars, watermark logos, default palette, floating legends) — charts are ink-only: candles, grid, crosshair, volume; all other chrome comes from this contract.
 - Don't use drop shadows, gradients, glows, or glassmorphism — on anything, ever.
 - Don't bury the kill switch, mode indicator, or disconnect alert.
 - Don't repurpose price colors as button fills, card backgrounds, or status; don't use success/error for prices.
-- Don't invert the Indian red-up/green-down mapping to "match international platforms."
+- Don't invert the Indian red-up/green-down mapping to "match international platforms" — in either theme.
 - Don't add a second accent, decorative illustrations, mascots, or atmospheric backdrops.
 - Don't let numbers wrap, shrink, or switch to proportional numerals.
 - Don't use weight 400 for display-scale text.
@@ -261,13 +359,21 @@ Rules:
 
 ## 9. Agent Prompt Guide
 
-**Quick hex reference:**
-- Canvas `#0a0b0d` · Surface card `#15181d` · Surface elevated `#1b1f26` · Hairline `#232830`
-- Ink `#f2f5f9` · Body `#c3cbd6` · Muted `#8b94a1`
-- Accent cyan `#35c8ff` · Focus ring `#35c8ff`
+**Quick hex reference — dark (default):**
+- Canvas `#0d0c0a` · Surface card `#181613` · Surface elevated `#1e1b17` · Hairline `#26221c`
+- Ink `#f4f0e7` · Body `#c6bfb1` · Muted `#948b7c`
+- Accent amber `#f5b942` · Focus ring `#f5b942`
 - **Rise (red)** `#f6525c` · **Fall (green)** `#2ebd85` · Flash tints `rgba(246,82,92,0.16)` / `rgba(46,189,133,0.16)`
 - Success `#22c55e` · Warning `#ffb020` · Danger `#e5484d` · Info `#3b82f6`
-- Row hover `#1b2129` · Row selected `#12283a` + accent left edge
+- Row hover `#211d17` · Row selected `#2b2210` + accent left edge
+
+**Quick hex reference — light (opt-in):**
+- Canvas `#f7f5f1` · Surface card `#ffffff` · Surface elevated `#f2efe9` · Hairline `#e0dcd2`
+- Ink `#1a1a18` · Body `#3f3d38` · Muted `#6f6a60`
+- Accent amber `#a16207` · Focus ring `#a16207`
+- **Rise (red)** `#f6525c` · **Fall (green)** `#1e9e6b` (AA-darkened; hue stays green)
+- Success `#15803d` · Warning `#92400e` · Danger `#c62828` · Info `#1e40af`
+- Row hover `#f1eee8` · Row selected `#f4e9cf` + accent left edge
 
 **Prompt templates:**
 
@@ -279,7 +385,7 @@ Rules:
 
 4. *"Build the positions/risk strip: 240px tall bottom panel, per-position rows (symbol `ticker`, qty + avg + LTP mono right-aligned, unrealized P&L in `{colors.price-up}`/`{colors.price-down}` by sign), margin-used vs limit with `{colors.warning}` when > 80%, a `{colors.danger}` breach chip when exceeded, and an always-visible kill switch in the header strip with `Ctrl+Shift+K`."*
 
-**Anti-pattern reminder for agents:** light theme, emoji, drop shadows, gradients, second accent, sans-serif numerals, left-aligned numbers, wrapping numbers, price colors as button fills, buried kill switch, chart-library chrome, green-for-up.
+**Anti-pattern reminder for agents:** ad-hoc theme colors, emoji, drop shadows, gradients, second accent, sans-serif numerals, left-aligned numbers, wrapping numbers, price colors as button fills, buried kill switch, chart-library chrome, green-for-up.
 
 ---
 
