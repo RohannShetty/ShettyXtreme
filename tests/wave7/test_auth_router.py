@@ -11,6 +11,7 @@ from shettyxtreme.auth.credential_store import CredentialStore
 from shettyxtreme.auth.dhan_oauth import ConsentResult, ConsumeResult, DhanOAuthHelper
 from shettyxtreme.auth.validator import CredentialValidator, ValidationResult
 from shettyxtreme.terminal.api.auth_router import (
+    _get_store,
     init_auth,
     router,
 )
@@ -142,3 +143,27 @@ def test_auth_status_with_creds() -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert data["has_api_key"] is True
+
+
+def test_post_direct_token() -> None:
+    import base64
+    import json as _json
+
+    payload = {"dhanClientId": "DHAN123", "exp": 1780000000}
+    body = base64.urlsafe_b64encode(_json.dumps(payload).encode()).decode().rstrip("=")
+    token = f"header.{body}.signature"
+    app = _make_app()
+    client = TestClient(app)
+    resp = client.post("/auth/token", json={"access_token": token})
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+    assert _get_store().client_id == "DHAN123"
+    assert _get_store().access_token == token
+    assert _get_store().token_expiry.startswith("2026-")
+
+
+def test_post_direct_token_invalid() -> None:
+    app = _make_app()
+    client = TestClient(app)
+    resp = client.post("/auth/token", json={"access_token": "garbage"})
+    assert resp.status_code == 400

@@ -58,6 +58,10 @@ class CredentialBody(BaseModel):
     api_secret: str
 
 
+class TokenBody(BaseModel):
+    access_token: str
+
+
 def _split_combined_key(api_key: str) -> tuple[str, str]:
     """Split the combined `client_id:::api_key` format used by the setup UI.
 
@@ -108,6 +112,25 @@ async def save_credentials(body: CredentialBody) -> SaveResult:
         store.client_id = client_id
     store.save()
     return SaveResult(success=True, message="Credentials saved")
+
+
+@router.post("/token", response_model=SaveResult)
+async def save_direct_token(body: TokenBody) -> SaveResult:
+    store = _get_store()
+    client_id = CredentialStore._extract_client_id_from_token(body.access_token)
+    expiry = CredentialStore._extract_exp_from_token(body.access_token)
+    if not client_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid access token: could not extract client ID (expected a Dhan JWT).",
+        )
+    store.update_token(
+        access_token=body.access_token,
+        expiry=expiry,
+        client_id=client_id,
+    )
+    store.save()
+    return SaveResult(success=True, message="Access token saved")
 
 
 @router.post("/start-consent", response_model=ConsentStartResponse)
