@@ -2,6 +2,8 @@
   import { onDestroy, onMount } from "svelte";
   import { get } from "../lib/api";
   import { onMessage } from "../lib/ws";
+  import { Button } from "$lib/components/ui/button";
+  import { X } from "@lucide/svelte";
 
   type LogEntry = {
     log_type: string;
@@ -10,10 +12,10 @@
     timestamp: string | null;
   };
 
-  export let open = false;
+  let { open = $bindable(false) }: { open?: boolean } = $props();
 
-  let logs: LogEntry[] = [];
-  let error = "";
+  let logs: LogEntry[] = $state([]);
+  let error = $state("");
   let timer: number | undefined;
 
   const MAX_LOGS = 200;
@@ -71,7 +73,9 @@
 <aside class="drawer" class:open>
   <header class="drawer-head">
     <h2>Logs</h2>
-    <button class="close" on:click={() => (open = false)} title="Close">×</button>
+    <Button variant="ghost" size="icon" class="size-7 text-faint hover:text-ink" onclick={() => (open = false)} aria-label="Close logs drawer">
+      <X class="size-4" />
+    </Button>
   </header>
   <div class="log-list">
     {#each logs as log (log.timestamp + log.message)}
@@ -113,7 +117,8 @@
       z-index: 30;
       width: min(380px, 88vw);
       border-left: 1px solid var(--hairline-strong);
-      box-shadow: -8px 0 24px rgba(0, 0, 0, 0.45);
+      /* Level-3 overlay: surface-overlay + scrim, no drop shadow (DESIGN.md §6) */
+      background: var(--surface-overlay);
       transform: translateX(100%);
       transition: transform 120ms ease-out;
       display: flex;
@@ -137,17 +142,6 @@
     letter-spacing: 0.08em;
     color: var(--muted);
     text-transform: uppercase;
-  }
-  .close {
-    background: none;
-    border: none;
-    color: var(--faint);
-    font-size: 16px;
-    cursor: pointer;
-    padding: 0 4px;
-  }
-  .close:hover {
-    color: var(--ink);
   }
   .log-list {
     flex: 1;

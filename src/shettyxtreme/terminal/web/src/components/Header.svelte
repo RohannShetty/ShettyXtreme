@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { createEventDispatcher } from "svelte";
   import { authStatus, get, type AuthStatus } from "../lib/api";
   import { applyTheme, getTheme, type Theme } from "../lib/theme";
   import { Button } from "$lib/components/ui/button";
@@ -30,9 +29,13 @@
     next_event: string;
   };
 
-  const dispatch = createEventDispatcher<{ drawer: { open: boolean } }>();
-
-  let { drawerOpen = false }: { drawerOpen?: boolean } = $props();
+  let {
+    drawerOpen = $bindable(false),
+    onDrawer = () => {},
+  }: {
+    drawerOpen?: boolean;
+    onDrawer?: (event: { open: boolean }) => void;
+  } = $props();
 
   let health: HealthResponse | null = $state(null);
   let session: Session | null = $state(null);
@@ -87,7 +90,7 @@
   }
 
   function toggleDrawer(): void {
-    dispatch("drawer", { open: !drawerOpen });
+    onDrawer({ open: !drawerOpen });
   }
 </script>
 

@@ -1,9 +1,17 @@
 <script lang="ts">
   import type { ResearchBrief } from "../lib/api";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Button } from "$lib/components/ui/button";
 
-  export let brief: ResearchBrief;
-  export let busy = false;
-  export let onDecide: (status: "approved" | "rejected") => void = () => {};
+  let {
+    brief,
+    busy = false,
+    onDecide = (_status: "approved" | "rejected") => {},
+  }: {
+    brief: ResearchBrief;
+    busy?: boolean;
+    onDecide?: (status: "approved" | "rejected") => void;
+  } = $props();
 
   function dirBadgeClass(direction: number): string {
     return direction === 1 ? "price-up" : direction === -1 ? "price-down" : "dir-flat";
@@ -13,17 +21,17 @@
     return direction === 1 ? "+1" : direction === -1 ? "−1" : "0";
   }
 
-  function statusClass(status: string): string {
-    return status === "approved" ? "ok" : status === "rejected" ? "bad" : "pending";
+  function statusVariant(status: string): "success" | "danger" | "warning" {
+    return status === "approved" ? "success" : status === "rejected" ? "danger" : "warning";
   }
 </script>
 
 <div class="detail">
   <div class="detail-head">
-    <span class="tag">{brief.lens}</span>
+    <Badge variant="outline">{brief.lens}</Badge>
     <span class="num {dirBadgeClass(brief.direction)}">{dirLabel(brief.direction)}</span>
     <span class="conf mono">{(brief.confidence * 100).toFixed(0)}% confidence</span>
-    <span class="tag {statusClass(brief.status)}">{brief.status}</span>
+    <Badge variant={statusVariant(brief.status)}>{brief.status}</Badge>
   </div>
   <p class="thesis">{brief.thesis}</p>
   <p class="rationale">{brief.rationale}</p>
@@ -58,40 +66,18 @@
   </div>
   {#if brief.status === "proposed" && !brief.expired}
     <div class="decision">
-      <button class="approve" on:click={() => onDecide("approved")} disabled={busy}>Approve</button>
-      <button class="reject" on:click={() => onDecide("rejected")} disabled={busy}>Reject</button>
+      <Button variant="outline" class="flex-1 text-success border-success hover:border-success" onclick={() => onDecide("approved")} disabled={busy}>Approve</Button>
+      <Button variant="danger" class="flex-1" onclick={() => onDecide("rejected")} disabled={busy}>Reject</Button>
     </div>
   {/if}
 </div>
 
 <style>
-  .tag {
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted);
-    border: 1px solid var(--hairline-strong);
-    border-radius: 4px;
-    padding: 1px 5px;
-    white-space: nowrap;
-  }
-  .tag.ok {
-    color: var(--success);
-    border-color: var(--success);
-  }
-  .tag.bad {
-    color: var(--danger);
-    border-color: var(--danger);
-  }
-  .tag.pending {
-    color: var(--warning);
-    border-color: var(--warning);
+  .conf {
+    color: var(--faint);
   }
   .dir-flat {
     color: var(--muted);
-  }
-  .conf {
-    color: var(--faint);
   }
   .detail-head {
     display: flex;
@@ -138,6 +124,7 @@
     padding-left: 16px;
     font-size: 11px;
     color: var(--warning);
+    margin: 0;
   }
   .meta {
     display: flex;
@@ -151,26 +138,5 @@
     display: flex;
     gap: 8px;
     margin-top: 10px;
-  }
-  .decision button {
-    flex: 1;
-    border-radius: 4px;
-    border: 1px solid var(--hairline-strong);
-    background: none;
-    padding: 5px 0;
-    font-size: 11px;
-    cursor: pointer;
-  }
-  .decision button:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-  .approve {
-    color: var(--success);
-    border-color: var(--success) !important;
-  }
-  .reject {
-    color: var(--danger);
-    border-color: var(--danger) !important;
   }
 </style>

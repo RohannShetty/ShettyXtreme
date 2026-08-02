@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { activeTab, type CenterTabId } from "./lib/activeTab";
   import AnalyticsPanel from "./components/AnalyticsPanel.svelte";
   import ChainGrid from "./components/ChainGrid.svelte";
   import Header from "./components/Header.svelte";
@@ -12,11 +13,12 @@
   import SettingsView from "./components/SettingsView.svelte";
   import SetupWizard from "./components/SetupWizard.svelte";
   import Watchlist from "./components/Watchlist.svelte";
+  import { Tabs, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
   import { connect, stop } from "./lib/ws";
 
-  let route = currentRoute();
-  let query: URLSearchParams | null = null;
-  let drawerOpen = false;
+  let route = $state(currentRoute());
+  let query: URLSearchParams | null = $state(null);
+  let drawerOpen = $state(false);
 
   function currentRoute(): string {
     const hash = window.location.hash;
@@ -45,37 +47,59 @@
   onDestroy(() => {
     stop();
   });
-
-  function onDrawer(event: CustomEvent<{ open: boolean }>): void {
-    drawerOpen = event.detail.open;
-  }
 </script>
 
 {#if route === "/"}
   <div class="app-grid">
-    <Header on:drawer={onDrawer} drawerOpen={drawerOpen} />
+    <Header bind:drawerOpen={drawerOpen} onDrawer={(e) => (drawerOpen = e.open)} />
     <div class="workspace">
       <div class="rail">
         <Watchlist />
       </div>
       <div class="center">
-        <ChainGrid />
-        <HintsPanel />
-        <AnalyticsPanel />
+        <Tabs
+          value={$activeTab}
+          onValueChange={(v) => activeTab.set(v as CenterTabId)}
+          class="flex h-full min-h-0 flex-col overflow-hidden rounded-[6px] border border-hairline bg-surface-card"
+        >
+          <TabsList class="w-full flex-none justify-start">
+            <TabsTrigger value="chain">CHAIN</TabsTrigger>
+            <TabsTrigger value="scanner">SCANNER</TabsTrigger>
+            <TabsTrigger value="hints">HINTS</TabsTrigger>
+            <TabsTrigger value="analytics">ANALYTICS</TabsTrigger>
+          </TabsList>
+          <div class="tab-panel" class:hidden={$activeTab !== "chain"}>
+            <ChainGrid />
+          </div>
+          {#if $activeTab === "scanner"}
+            <div class="tab-panel">
+              <ScannerPanel />
+            </div>
+          {/if}
+          {#if $activeTab === "hints"}
+            <div class="tab-panel">
+              <HintsPanel />
+            </div>
+          {/if}
+          {#if $activeTab === "analytics"}
+            <div class="tab-panel">
+              <AnalyticsPanel />
+            </div>
+          {/if}
+        </Tabs>
       </div>
       <div class="right-col">
         <ResearchPanel />
         <KnowledgePanel />
-        <ScannerPanel />
         <LogDrawer bind:open={drawerOpen} />
       </div>
     </div>
     <PositionsRiskStrip />
   </div>
   {:else if route === "/settings"}
-    <SettingsView />
+  <SettingsView />
   {:else if route === "/setup"}
-    <SetupWizard {query} />
+  <SetupWizard {query} />
 {:else}
   <div class="simple-view">
     <h1>404</h1>
@@ -109,10 +133,20 @@
     overflow: hidden;
   }
   .center {
-    display: grid;
-    grid-template-columns: minmax(720px, 5fr) minmax(320px, 2fr);
-    gap: 8px;
+    display: flex;
+    flex-direction: column;
     min-width: 0;
+    min-height: 0;
+  }
+  .tab-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .tab-panel > :global(*) {
+    flex: 1;
+    min-height: 0;
   }
   .right-col {
     display: flex;

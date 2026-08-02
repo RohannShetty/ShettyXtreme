@@ -3,6 +3,11 @@
   import { get, post, postBody } from "../lib/api";
   import { onMessage } from "../lib/ws";
   import ResearchBriefDetail from "./ResearchBriefDetail.svelte";
+  import { Button } from "$lib/components/ui/button";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Checkbox } from "$lib/components/ui/checkbox";
+  import { Textarea } from "$lib/components/ui/textarea";
+  import { RotateCw } from "@lucide/svelte";
   import type {
     ResearchBrief,
     ResearchBriefListResponse,
@@ -12,20 +17,20 @@
     ResearchToolDef,
   } from "../lib/api";
 
-  let lenses: ResearchLens[] = [];
-  let tools: ResearchToolDef[] = [];
-  let briefs: ResearchBrief[] = [];
-  let selected: ResearchBrief | null = null;
-  let selectedId = "";
-  let selectedLenses: string[] = [];
-  let selectedTools: string[] = [];
-  let contextText = "";
-  let running = false;
-  let runChips: { lens: string; ok: boolean; error: string }[] = [];
-  let statusFilter = "All";
-  let lensFilter = "All";
-  let error = "";
-  let deciding = false;
+  let lenses: ResearchLens[] = $state([]);
+  let tools: ResearchToolDef[] = $state([]);
+  let briefs: ResearchBrief[] = $state([]);
+  let selected: ResearchBrief | null = $state(null);
+  let selectedId = $state("");
+  let selectedLenses = $state<string[]>([]);
+  let selectedTools = $state<string[]>([]);
+  let contextText = $state("");
+  let running = $state(false);
+  let runChips: { lens: string; ok: boolean; error: string }[] = $state([]);
+  let statusFilter = $state("All");
+  let lensFilter = $state("All");
+  let error = $state("");
+  let deciding = $state(false);
 
   const statuses = ["All", "Proposed", "Approved", "Rejected"];
 
@@ -136,21 +141,33 @@
     return direction === 1 ? "+1" : direction === -1 ? "−1" : "0";
   }
 
-  function statusClass(status: string): string {
-    return status === "approved" ? "ok" : status === "rejected" ? "bad" : "pending";
+  function statusVariant(status: string): "success" | "danger" | "warning" {
+    return status === "approved" ? "success" : status === "rejected" ? "danger" : "warning";
   }
 
-  $: filtered = briefs.filter(
-    (b) =>
-      (statusFilter === "All" || b.status === statusFilter.toLowerCase()) &&
-      (lensFilter === "All" || b.lens === lensFilter),
+  function toggleLens(name: string, checked: boolean): void {
+    selectedLenses = checked ? [...selectedLenses, name] : selectedLenses.filter((l) => l !== name);
+  }
+
+  function toggleToolState(name: string, checked: boolean): void {
+    selectedTools = checked ? [...selectedTools, name] : selectedTools.filter((t) => t !== name);
+  }
+
+  let filtered = $derived(
+    briefs.filter(
+      (b) =>
+        (statusFilter === "All" || b.status === statusFilter.toLowerCase()) &&
+        (lensFilter === "All" || b.lens === lensFilter),
+    ),
   );
 </script>
 
 <section class="panel research">
   <header class="panel-head">
     <h2>Research</h2>
-    <button class="refresh" on:click={loadAll} title="Refresh">↻</button>
+    <Button variant="ghost" size="icon" class="size-7 text-muted-foreground hover:text-ink" onclick={loadAll} aria-label="Refresh research">
+      <RotateCw class="size-3.5" />
+    </Button>
   </header>
 
   {#if error}
@@ -160,35 +177,35 @@
   <div class="run-bar">
     <h3>Run briefers</h3>
     <div class="lens-row">
-      {#each lenses as l}
+      {#each lenses as l (l.name)}
         <label class="check">
-          <input type="checkbox" value={l.name} bind:group={selectedLenses} disabled={running} />
+          <Checkbox checked={selectedLenses.includes(l.name)} onCheckedChange={(c) => toggleLens(l.name, c)} disabled={running} />
           <span>{l.name}</span>
         </label>
       {/each}
     </div>
     <div class="tool-row">
       <span class="tool-label">Tools</span>
-      {#each tools as t}
+      {#each tools as t (t.name)}
         <label class="check">
-          <input type="checkbox" checked={selectedTools.includes(t.name)} on:change={() => toggleTool(t.name)} disabled={running} />
+          <Checkbox checked={selectedTools.includes(t.name)} onCheckedChange={(c) => toggleToolState(t.name, c)} disabled={running} />
           <span>{t.name}</span>
         </label>
       {/each}
     </div>
-    <textarea
-      class="context mono"
+    <Textarea
+      class="context mono min-h-11"
       placeholder="Optional context for this run…"
       bind:value={contextText}
       disabled={running}
-    ></textarea>
+    ></Textarea>
     <div class="run-row">
-      <button class="run-btn" on:click={run} disabled={running || selectedLenses.length === 0}>
+      <Button size="sm" onclick={run} disabled={running || selectedLenses.length === 0}>
         {running ? "Running…" : "Run"}
-      </button>
+      </Button>
       <div class="chips">
         {#each runChips as chip (chip.lens)}
-          <span class="chip {chip.ok ? 'chip-ok' : 'chip-bad'}">{chip.lens}: {chip.ok ? "ok" : chip.error}</span>
+          <Badge variant={chip.ok ? "success" : "danger"}>{chip.lens}: {chip.ok ? "ok" : chip.error}</Badge>
         {/each}
       </div>
     </div>
@@ -204,19 +221,25 @@
         </select>
         <select bind:value={lensFilter} aria-label="Lens filter">
           <option value="All">All lenses</option>
-          {#each lenses as l}
+          {#each lenses as l (l.name)}
             <option value={l.name}>{l.name}</option>
           {/each}
         </select>
       </div>
       <ul>
         {#each filtered as b (b.brief_id)}
-          <li class:sel={b.brief_id === selectedId} on:click={() => select(b.brief_id)}>
-            <span class="tag">{b.lens}</span>
-            <span class="num {dirBadgeClass(b.direction)}">{dirLabel(b.direction)}</span>
-            <span class="conf mono">{(b.confidence * 100).toFixed(0)}%</span>
-            <span class="thesis">{b.thesis}</span>
-            <span class="tag {statusClass(b.status)}">{b.status}{b.expired ? " · expired" : ""}</span>
+          <li class="brief-row">
+            <button
+              type="button"
+              class={b.brief_id === selectedId ? "brief-btn sel" : "brief-btn"}
+              onclick={() => select(b.brief_id)}
+            >
+              <Badge variant="outline">{b.lens}</Badge>
+              <span class="num {dirBadgeClass(b.direction)}">{dirLabel(b.direction)}</span>
+              <span class="conf mono">{(b.confidence * 100).toFixed(0)}%</span>
+              <span class="thesis">{b.thesis}</span>
+              <Badge variant={statusVariant(b.status)}>{b.status}{b.expired ? " · expired" : ""}</Badge>
+            </button>
           </li>
         {/each}
         {#if filtered.length === 0}
@@ -261,29 +284,6 @@
     color: var(--muted);
     text-transform: uppercase;
   }
-  .refresh,
-  .run-btn {
-    background: none;
-    border: 1px solid var(--hairline);
-    border-radius: 4px;
-    color: var(--muted);
-    cursor: pointer;
-    padding: 2px 8px;
-    font-size: 13px;
-  }
-  .refresh:hover,
-  .run-btn:hover {
-    color: var(--ink);
-    border-color: var(--hairline-strong);
-  }
-  .run-btn {
-    border-color: var(--accent);
-    color: var(--accent-active);
-  }
-  .run-btn:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
   .run-bar {
     padding: 8px 10px;
     border-bottom: 1px solid var(--hairline);
@@ -319,18 +319,6 @@
     color: var(--body);
     cursor: pointer;
   }
-  .context {
-    width: 100%;
-    box-sizing: border-box;
-    resize: vertical;
-    min-height: 44px;
-    background: var(--surface);
-    border: 1px solid var(--hairline);
-    border-radius: 4px;
-    color: var(--body);
-    font-size: 11px;
-    padding: 4px 6px;
-  }
   .run-row {
     display: flex;
     align-items: center;
@@ -341,20 +329,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-  }
-  .chip {
-    font-size: 9px;
-    padding: 1px 5px;
-    border-radius: 4px;
-    border: 1px solid var(--hairline-strong);
-  }
-  .chip-ok {
-    color: var(--success);
-    border-color: var(--success);
-  }
-  .chip-bad {
-    color: var(--danger);
-    border-color: var(--danger);
   }
   .cols {
     flex: 1;
@@ -376,7 +350,7 @@
     margin-bottom: 6px;
   }
   .filters select {
-    background: var(--surface);
+    background: var(--surface-elevated);
     border: 1px solid var(--hairline);
     border-radius: 4px;
     color: var(--body);
@@ -388,40 +362,28 @@
     margin: 0;
     padding: 0;
   }
-  li {
+  .brief-row {
+    border-bottom: 1px solid var(--hairline);
+  }
+  .brief-btn {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 0;
+    width: 100%;
+    padding: 4px 2px;
     font-size: 11px;
-    border-bottom: 1px solid var(--hairline);
     cursor: pointer;
+    background: none;
+    border: none;
+    text-align: left;
     min-height: 28px;
+    color: inherit;
   }
-  li.sel {
+  .brief-btn:hover {
+    background: var(--row-hover);
+  }
+  .brief-btn.sel {
     background: color-mix(in srgb, var(--accent) 10%, transparent);
-  }
-  .tag {
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted);
-    border: 1px solid var(--hairline-strong);
-    border-radius: 4px;
-    padding: 1px 5px;
-    white-space: nowrap;
-  }
-  .tag.ok {
-    color: var(--success);
-    border-color: var(--success);
-  }
-  .tag.bad {
-    color: var(--danger);
-    border-color: var(--danger);
-  }
-  .tag.pending {
-    color: var(--warning);
-    border-color: var(--warning);
   }
   .dir-flat {
     color: var(--muted);
