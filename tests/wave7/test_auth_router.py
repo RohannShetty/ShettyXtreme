@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from shettyxtreme.auth.credential_store import CredentialStore
 from shettyxtreme.auth.dhan_oauth import ConsentResult, ConsumeResult, DhanOAuthHelper
 from shettyxtreme.auth.validator import CredentialValidator, ValidationResult
+import shettyxtreme.terminal.api.auth_router as _auth_router
 from shettyxtreme.terminal.api.auth_router import (
     _get_store,
     init_auth,
@@ -167,3 +168,43 @@ def test_post_direct_token_invalid() -> None:
     client = TestClient(app)
     resp = client.post("/auth/token", json={"access_token": "garbage"})
     assert resp.status_code == 400
+
+
+def test_pin_totp_success() -> None:
+    _auth_router._oauth.generate_access_token = AsyncMock(
+        return_value=ConsumeResult(
+            consent=ConsentResult(
+                access_token="tok_pintotp",
+                expiry_time="2026-12-31T23:59:59",
+                client_id="DHAN123",
+                client_name="PIN User",
+                ddpi_status=True,
+            )
+        )
+    )
+    app = _make_app()
+    client = TestClient(app)
+    resp = client.post(
+        "/auth/token/pin-totp",
+        json={"client_id": "DHAN123", "pin": "1234", "totp": "567890"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+    assert _get_store().access_token == "tok_pintotp"
+    assert _get_store().client_id == "DHAN123"
+
+
+def test_pin_totp_bad_credentials() -> None:
+    _auth_router._oauth.generate_access_token = AsyncMock(
+        return_value=ConsumeResult(
+            error="Dhan API 401: Invalid client id. Re-enter credentials in Step 1."
+        )
+    )
+    app = _make_app()
+    client = TestClient(app)
+    resp = client.post(
+        "/auth/token/pin-totp",
+        json={"client_id": "X", "pin": "0", "totp": "0"},
+    )
+    assert resp.status_code == 400
+    assert "401" in resp.json()["detail"]

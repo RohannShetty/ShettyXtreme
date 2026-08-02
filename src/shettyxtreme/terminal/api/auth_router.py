@@ -62,6 +62,12 @@ class TokenBody(BaseModel):
     access_token: str
 
 
+class PinTotpBody(BaseModel):
+    client_id: str
+    pin: str
+    totp: str
+
+
 def _split_combined_key(api_key: str) -> tuple[str, str]:
     """Split the combined `client_id:::api_key` format used by the setup UI.
 
@@ -131,6 +137,31 @@ async def save_direct_token(body: TokenBody) -> SaveResult:
     )
     store.save()
     return SaveResult(success=True, message="Access token saved")
+
+
+@router.post("/token/pin-totp", response_model=SaveResult)
+async def save_pin_totp(body: PinTotpBody) -> SaveResult:
+    store = _get_store()
+    assert _oauth is not None
+    result = await _oauth.generate_access_token(
+        client_id=body.client_id,
+        pin=body.pin,
+        totp=body.totp,
+    )
+    if not result.ok:
+        error = result.error or "Failed to generate access token"
+        if "Connection error" in error:
+            raise HTTPException(status_code=502, detail=error)
+        raise HTTPException(status_code=400, detail=error)
+    consent = result.consent
+    assert consent is not None
+    store.update_token(
+        access_token=consent.access_token,
+        expiry=consent.expiry_time,
+        client_id=consent.client_id,
+    )
+    store.save()
+    return SaveResult(success=True, message="Access token generated and saved")
 
 
 @router.post("/start-consent", response_model=ConsentStartResponse)
