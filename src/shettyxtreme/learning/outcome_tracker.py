@@ -7,6 +7,7 @@ intelligence/ or execution/.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
@@ -19,6 +20,8 @@ from shettyxtreme.intelligence.signals.signal_engine import (
     SignalDirection,
     Vote,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class OutcomeLabel(Enum):
@@ -77,7 +80,7 @@ class OutcomeTracker:
     """Persist signal decisions, execution attempts, and outcomes."""
 
     def __init__(self, db_path: str) -> None:
-        self._conn = sqlite3.connect(db_path)
+        self._conn = sqlite3.connect(db_path, timeout=5.0)
         self._conn.row_factory = sqlite3.Row
         self._init_schema()
 
@@ -161,6 +164,65 @@ class OutcomeTracker:
             (outcome.value, decision_id),
         )
         self._conn.commit()
+
+    def record_decision_with_id(
+        self, decision_id: str, signal: Signal, strategy_hint: dict | None = None
+    ) -> str:
+        """Store a decision under an explicit id; repeat calls are no-ops.
+
+        Runtime wiring (shadow loop, research decisions) keys rows by a
+        caller-owned id (e.g. ``research:<brief_id>``) instead of a generated
+        uuid so outcomes can be linked back without a lookup table.
+        """
+        cur = self._conn.cursor()
+        cur.execute(
+            "INSERT OR IGNORE INTO signal_decisions "
+            "(id, signal_json, timestamp, strategy_hint, outcome) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                decision_id,
+                _serialize_signal(signal),
+                signal.timestamp.isoformat(),
+                json.dumps(strategy_hint, default=str)
+                if strategy_hint is not None
+                else None,
+                None,
+            ),
+        )
+        self._conn.commit()
+        return decision_id
+
+    def record_outcome_idempotent(
+        self, decision_id: str, outcome: OutcomeLabel
+    ) -> bool:
+        """Record an outcome unless one is already set; returns True if written.
+
+        Unlike ``record_outcome`` this never raises: repeat recording of the
+        same outcome is a silent no-op, a conflicting one is logged and
+        ignored, and unknown ids return False. Runtime callers (research
+        outcome endpoint, session-end evaluation) must not fail on replay.
+        """
+        cur = self._conn.cursor()
+        row = cur.execute(
+            "SELECT outcome FROM signal_decisions WHERE id = ?", (decision_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        if row["outcome"] is not None:
+            if row["outcome"] != outcome.value:
+                logger.warning(
+                    "outcome %s already recorded for %s; ignoring %s",
+                    row["outcome"],
+                    decision_id,
+                    outcome.value,
+                )
+            return False
+        cur.execute(
+            "UPDATE signal_decisions SET outcome = ? WHERE id = ?",
+            (outcome.value, decision_id),
+        )
+        self._conn.commit()
+        return True
 
     def get_decision(self, decision_id: str) -> SignalDecision | None:
         """Return the SignalDecision for an id, or None."""

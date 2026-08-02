@@ -10,9 +10,15 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
+from shettyxtreme.intelligence.signals.signal_engine import (
+    Signal,
+    SignalDirection,
+)
+from shettyxtreme.learning.outcome_tracker import OutcomeLabel, OutcomeTracker
 from shettyxtreme.research.briefs import ResearchBrief
 from shettyxtreme.research.lenses import list_lenses
 from shettyxtreme.research.orchestrator import ResearchOrchestrator
@@ -47,6 +53,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/research", tags=["research"])
 
 RESEARCH_DB_PATH = "data/research.db"
+LEARNING_DB_PATH = "data/learning.db"
 _ORCHESTRATOR: ResearchOrchestrator | None = None
 _broadcast_fn: Callable[[dict], None] | None = None
 _SCHEDULER: ResearchScheduler | None = None
@@ -254,6 +261,69 @@ def _current_regime(request: Request) -> str | None:
     return _normalize_regime(value)
 
 
+def _record_brief_decision(brief: ResearchBrief) -> None:
+    """Mirror an approved brief into the learning store (best-effort).
+
+    Learning is a side effect of research: a failure here is logged and
+    never changes the research response. Decisions key on ``research:<id>``
+    so the outcome endpoint can link WIN/LOSS back without a lookup table.
+    """
+    if brief.status != "approved":
+        return
+    direction = {1: SignalDirection.UP, -1: SignalDirection.DOWN, 0: SignalDirection.NEUTRAL}.get(
+        brief.direction, SignalDirection.NEUTRAL
+    )
+    try:
+        decided_at = (
+            datetime.fromisoformat(brief.decided_at)
+            if brief.decided_at
+            else datetime.now(UTC)
+        )
+    except ValueError:
+        decided_at = datetime.now(UTC)
+    signal = Signal(
+        direction=direction,
+        conviction=brief.confidence,
+        voters=[],
+        timestamp=decided_at,
+    )
+    try:
+        tracker = OutcomeTracker(LEARNING_DB_PATH)
+        try:
+            tracker.record_decision_with_id(
+                f"research:{brief.brief_id}",
+                signal,
+                {
+                    "kind": "research",
+                    "brief_id": brief.brief_id,
+                    "lens": brief.lens,
+                    "status": brief.status,
+                    "direction": brief.direction,
+                    "regime_at_decision": brief.regime_at_decision,
+                },
+            )
+        finally:
+            tracker.close()
+    except Exception as exc:
+        logger.warning("learning decision recording failed for %s: %s", brief.brief_id, exc)
+
+
+def _record_brief_outcome(brief: ResearchBrief) -> None:
+    """Mirror a realized research outcome into the learning store (best-effort)."""
+    if not brief.outcome or brief.outcome not in ("WIN", "LOSS"):
+        return
+    try:
+        tracker = OutcomeTracker(LEARNING_DB_PATH)
+        try:
+            tracker.record_outcome_idempotent(
+                f"research:{brief.brief_id}", OutcomeLabel(brief.outcome.lower())
+            )
+        finally:
+            tracker.close()
+    except Exception as exc:
+        logger.warning("learning outcome recording failed for %s: %s", brief.brief_id, exc)
+
+
 def _decide(request: Request, brief_id: str, decision: str) -> ResearchDecisionResponse:
     try:
         store = _open_store()
@@ -276,6 +346,7 @@ def _decide(request: Request, brief_id: str, decision: str) -> ResearchDecisionR
     _broadcast(
         {"event": "decision", "data": {"brief_id": brief.brief_id, "status": brief.status}}
     )
+    _record_brief_decision(brief)
     return ResearchDecisionResponse(brief_id=brief.brief_id, status=brief.status)
 
 
@@ -303,6 +374,7 @@ async def set_outcome(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         store.close()
+    _record_brief_outcome(brief)
     return ResearchOutcomeResponse(
         brief_id=brief.brief_id, outcome=brief.outcome or ""
     )

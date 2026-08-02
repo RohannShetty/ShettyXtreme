@@ -131,3 +131,51 @@ def test_get_decisions_by_date(tmp_data_dir: str) -> None:
     assert decision_id in ids
     assert other not in ids
     assert len(same_day) == 1
+
+
+def test_record_decision_with_id_is_idempotent(tmp_data_dir: str) -> None:
+    db = os.path.join(tmp_data_dir, "ot.db")
+    tracker = OutcomeTracker(db)
+    first = tracker.record_decision_with_id("research:b1", _make_signal(0.6), {"kind": "research"})
+    again = tracker.record_decision_with_id("research:b1", _make_signal(0.9), {"kind": "research"})
+    tracker.close()
+    assert first == "research:b1" == again
+
+    tracker2 = OutcomeTracker(db)
+    decisions = tracker2.get_all_decisions()
+    tracker2.close()
+    assert len(decisions) == 1
+    assert decisions[0].id == "research:b1"
+    assert decisions[0].signal.conviction == pytest.approx(0.6)
+    assert decisions[0].strategy_hint == {"kind": "research"}
+
+
+def test_record_outcome_idempotent(tmp_data_dir: str) -> None:
+    db = os.path.join(tmp_data_dir, "ot.db")
+    tracker = OutcomeTracker(db)
+    did = tracker.record_decision_with_id("research:b1", _make_signal(0.6))
+    assert tracker.record_outcome_idempotent(did, OutcomeLabel.WIN) is True
+    assert tracker.record_outcome_idempotent(did, OutcomeLabel.WIN) is False
+    assert tracker.record_outcome_idempotent("research:unknown", OutcomeLabel.WIN) is False
+    tracker.close()
+
+    tracker2 = OutcomeTracker(db)
+    d = tracker2.get_decision(did)
+    tracker2.close()
+    assert d is not None
+    assert d.outcome == OutcomeLabel.WIN
+
+
+def test_record_outcome_idempotent_conflict_is_ignored(tmp_data_dir: str) -> None:
+    db = os.path.join(tmp_data_dir, "ot.db")
+    tracker = OutcomeTracker(db)
+    did = tracker.record_decision_with_id("research:b1", _make_signal(0.6))
+    assert tracker.record_outcome_idempotent(did, OutcomeLabel.WIN) is True
+    assert tracker.record_outcome_idempotent(did, OutcomeLabel.LOSS) is False
+    tracker.close()
+
+    tracker2 = OutcomeTracker(db)
+    d = tracker2.get_decision(did)
+    tracker2.close()
+    assert d is not None
+    assert d.outcome == OutcomeLabel.WIN

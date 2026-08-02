@@ -22,12 +22,15 @@ async def client() -> AsyncIterator[AsyncClient]:
 
 
 _IMPORT_STATE = (rr.RESEARCH_DB_PATH, rr._ORCHESTRATOR)
+_IMPORT_LEARNING_DB = rr.LEARNING_DB_PATH
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def _restore_research_globals():
+async def _restore_research_globals(tmp_path):
+    rr.LEARNING_DB_PATH = str(tmp_path / "learning.db")
     yield
     rr.RESEARCH_DB_PATH, rr._ORCHESTRATOR = _IMPORT_STATE
+    rr.LEARNING_DB_PATH = _IMPORT_LEARNING_DB
     rr.init_research(broadcast_fn=None, scheduler=None)
 
 
@@ -331,3 +334,66 @@ async def test_regime_normalized_at_decision(client, orchestrator, monkeypatch) 
     await client.post(f"/api/research/briefs/{brief['brief_id']}/approve")
     fetched = (await client.get(f"/api/research/briefs/{brief['brief_id']}")).json()
     assert fetched["regime_at_decision"] == "trending_up"
+
+
+@pytest.mark.asyncio
+async def test_approve_records_decision_into_learning_store(
+    client, orchestrator, tmp_path
+) -> None:
+    """Approving a brief must populate learning.db (P4c outcome wiring)."""
+    from shettyxtreme.learning.outcome_tracker import OutcomeTracker
+
+    resp = await client.post("/api/research/run", json={"lenses": ["oi_iv_flow"]})
+    brief = resp.json()["results"][0]["brief"]
+    assert brief is not None
+    await client.post(f"/api/research/briefs/{brief['brief_id']}/approve")
+
+    tracker = OutcomeTracker(rr.LEARNING_DB_PATH)
+    decisions = tracker.get_all_decisions()
+    tracker.close()
+    assert len(decisions) == 1
+    d = decisions[0]
+    assert d.id == f"research:{brief['brief_id']}"
+    assert d.signal.conviction == pytest.approx(brief["confidence"])
+    assert d.strategy_hint["kind"] == "research"
+    assert d.strategy_hint["lens"] == "oi_iv_flow"
+    assert d.outcome is None
+
+
+@pytest.mark.asyncio
+async def test_outcome_records_into_learning_store(
+    client, orchestrator, tmp_path
+) -> None:
+    """The outcome endpoint must link WIN/LOSS back to the recorded decision."""
+    from shettyxtreme.learning.outcome_tracker import OutcomeLabel, OutcomeTracker
+
+    resp = await client.post("/api/research/run", json={"lenses": ["oi_iv_flow"]})
+    brief = resp.json()["results"][0]["brief"]
+    assert brief is not None
+    await client.post(f"/api/research/briefs/{brief['brief_id']}/approve")
+    r_out = await client.post(
+        f"/api/research/briefs/{brief['brief_id']}/outcome", json={"outcome": "WIN"}
+    )
+    assert r_out.status_code == 200
+
+    tracker = OutcomeTracker(rr.LEARNING_DB_PATH)
+    d = tracker.get_decision(f"research:{brief['brief_id']}")
+    tracker.close()
+    assert d is not None
+    assert d.outcome == OutcomeLabel.WIN
+
+
+@pytest.mark.asyncio
+async def test_rejected_brief_not_recorded(client, orchestrator, tmp_path) -> None:
+    """Rejected briefs produce no trade — nothing enters the learning store."""
+    from shettyxtreme.learning.outcome_tracker import OutcomeTracker
+
+    resp = await client.post("/api/research/run", json={"lenses": ["oi_iv_flow"]})
+    brief = resp.json()["results"][0]["brief"]
+    assert brief is not None
+    await client.post(f"/api/research/briefs/{brief['brief_id']}/reject")
+
+    tracker = OutcomeTracker(rr.LEARNING_DB_PATH)
+    decisions = tracker.get_all_decisions()
+    tracker.close()
+    assert decisions == []
