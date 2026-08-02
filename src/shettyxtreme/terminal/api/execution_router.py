@@ -1,16 +1,18 @@
-"""Execution router — positions, risk, mode, kill switch."""
+"""Execution router — positions, risk, mode, kill switch, proposals."""
 from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from shettyxtreme.terminal.api.models import (
     KillSwitchResponse,
     ModeResponse,
     PositionResponse,
+    ProposalResponse,
     RiskResponse,
 )
 
@@ -38,6 +40,53 @@ def _save_mode(mode: str) -> None:
 
 _current_mode: str = _load_mode()
 _kill_switch_path: str = ""
+
+
+def get_mode_value() -> str:
+    """Current execution mode (OBSERVER / PAPER / LIVE)."""
+    return _current_mode
+
+
+def is_kill_switch_armed() -> bool:
+    """True when the file-based kill switch is armed (blocks placement)."""
+    return bool(_kill_switch_path) and os.path.exists(_kill_switch_path)
+
+
+def _engine(request: Request) -> Any | None:
+    return getattr(request.app.state, "execution_engine", None)
+
+
+def _enum_str(value: Any) -> str:
+    """Coerce an enum-or-str value to its plain string form."""
+    if value is None:
+        return ""
+    return value.value if hasattr(value, "value") else str(value)
+
+
+def _proposal_response(approval: Any) -> ProposalResponse:
+    """Serialize a PendingApproval into the API response model."""
+    hint: dict[str, Any] = approval.strategy_hint or {}
+    direction = str(approval.signal.direction.name).upper()
+    side = "BUY" if direction == "UP" else "SELL" if direction == "DOWN" else "NEUTRAL"
+    return ProposalResponse(
+        id=approval.id,
+        symbol=str(hint.get("symbol", "")),
+        exchange=str(hint.get("exchange", "NSE")),
+        side=side,
+        quantity=int(hint.get("quantity", 0)),
+        price=hint.get("price"),
+        order_type=_enum_str(hint.get("order_type")) or "MARKET",
+        product=_enum_str(hint.get("product")) or "MIS",
+        conviction=approval.signal.conviction,
+        D=approval.signal.D,
+        P=approval.signal.P,
+        G=str(approval.signal.G),
+        source="signal_v2",
+        signal_id=approval.signal_id,
+        status=approval.status,
+        reason=approval.failure_reason or "",
+        timestamp=approval.timestamp,
+    )
 
 
 @router.get("/positions", response_model=list[PositionResponse])
@@ -135,3 +184,78 @@ async def activate_kill_switch(activate: bool = True) -> KillSwitchResponse:
     else:
         Path(_kill_switch_path).unlink(missing_ok=True)
         return KillSwitchResponse(active=False)
+
+
+# ── Proposals (OBSERVER propose→approve flow, D10) ─────────────────────────
+
+@router.get("/proposals", response_model=list[ProposalResponse])
+async def list_proposals(request: Request, status: str | None = None) -> list[ProposalResponse]:
+    """List proposals; optional status filter (PENDING/APPROVED/REJECTED/EXPIRED)."""
+    engine = _engine(request)
+    if engine is None:
+        return []
+    engine.expire_stale()
+    approvals = engine.get_all_approvals()
+    if status:
+        wanted = status.upper()
+        approvals = [a for a in approvals if a.status == wanted]
+    return [_proposal_response(a) for a in approvals]
+
+
+@router.post("/proposals/{proposal_id}/approve", response_model=ProposalResponse)
+async def approve_proposal(
+    request: Request,
+    proposal_id: str,
+    confirm: bool = False,
+) -> ProposalResponse:
+    """Approve a proposal: risk check → validate → route per mode (D10).
+
+    OBSERVER never places; LIVE requires an explicit confirm=true on top of
+    the mode-switch gate; an armed kill switch blocks placement.
+    """
+    engine = _engine(request)
+    if engine is None:
+        raise HTTPException(status_code=503, detail="execution engine not initialized")
+    mode = get_mode_value()
+    if mode == "OBSERVER":
+        raise HTTPException(
+            status_code=400,
+            detail="OBSERVER mode never places orders - switch to PAPER or LIVE",
+        )
+    if mode == "LIVE" and not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="LIVE placement requires explicit confirmation (confirm=true)",
+        )
+    if is_kill_switch_armed():
+        raise HTTPException(status_code=400, detail="kill switch armed - placement blocked")
+    try:
+        await engine.approve(proposal_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    approval = engine.get_approval(proposal_id)
+    if approval is None:
+        raise HTTPException(status_code=404, detail=f"unknown proposal: {proposal_id}")
+    return _proposal_response(approval)
+
+
+@router.post("/proposals/{proposal_id}/reject", response_model=ProposalResponse)
+async def reject_proposal(
+    request: Request,
+    proposal_id: str,
+    reason: str = "",
+) -> ProposalResponse:
+    """Reject a proposal; no order is placed."""
+    engine = _engine(request)
+    if engine is None:
+        raise HTTPException(status_code=503, detail="execution engine not initialized")
+    try:
+        engine.reject(proposal_id, reason)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    approval = engine.get_approval(proposal_id)
+    if approval is None:
+        raise HTTPException(status_code=404, detail=f"unknown proposal: {proposal_id}")
+    return _proposal_response(approval)

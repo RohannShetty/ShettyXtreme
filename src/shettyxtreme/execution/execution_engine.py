@@ -55,6 +55,8 @@ class PendingApproval:
     status: str
     expires_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     order: Order | None = None
+    signal_id: str = ""
+    failure_reason: str | None = None
 
 
 class ExecutionEngine:
@@ -117,7 +119,12 @@ class ExecutionEngine:
             available_margin=0.0,
         )
 
-    def submit_signal(self, signal: Signal, strategy_hint: dict[str, Any]) -> str:
+    def submit_signal(
+        self,
+        signal: Signal,
+        strategy_hint: dict[str, Any],
+        signal_id: str = "",
+    ) -> str:
         """Create a PENDING approval and return its id."""
         now = datetime.now(UTC)
         approval_id = uuid4().hex
@@ -129,6 +136,7 @@ class ExecutionEngine:
             timestamp=now,
             status=ApprovalStatus.PENDING.value,
             expires_at=expires_at,
+            signal_id=signal_id,
         )
         self._approvals[approval_id] = approval
         self._db_upsert(approval)
@@ -148,15 +156,26 @@ class ExecutionEngine:
         decision: RiskDecision = self._risk_engine.check_entry(approval.signal, portfolio)
         if not decision.allowed:
             approval.status = ApprovalStatus.REJECTED.value
+            approval.failure_reason = decision.reason
             self._db_upsert(approval)
             raise RuntimeError(f"pre-execution risk check rejected: {decision.reason}")
 
         self._validator.validate(order)
 
-        await self._executor.place_order(order)
+        result = await self._executor.place_order(order)
+        approval.order = order
+        if result is not None:
+            status = getattr(result, "status", None)
+            status_name = getattr(status, "name", None) or str(status or "").upper()
+            if status_name in ("REJECTED", "CANCELLED"):
+                approval.status = ApprovalStatus.REJECTED.value
+                approval.failure_reason = (
+                    getattr(result, "message", "") or "order placement rejected"
+                )
+                self._db_upsert(approval)
+                raise RuntimeError(approval.failure_reason)
 
         approval.status = ApprovalStatus.APPROVED.value
-        approval.order = order
         self._db_upsert(approval)
         return order
 
@@ -166,6 +185,7 @@ class ExecutionEngine:
         if approval is None:
             raise KeyError(f"unknown approval_id: {approval_id}")
         approval.status = ApprovalStatus.REJECTED.value
+        approval.failure_reason = reason or "rejected by operator"
         self._db_upsert(approval)
 
     def expire_stale(self, now: datetime | None = None) -> int:
@@ -189,6 +209,14 @@ class ExecutionEngine:
     # ------------------------------------------------------------------
     def get_pending_approvals(self) -> list[PendingApproval]:
         return [a for a in self._approvals.values() if a.status == ApprovalStatus.PENDING.value]
+
+    def get_all_approvals(self) -> list[PendingApproval]:
+        """Return every approval, newest first (for proposal queue listing)."""
+        return sorted(
+            self._approvals.values(),
+            key=lambda a: a.timestamp,
+            reverse=True,
+        )
 
     def get_approval(self, approval_id: str) -> PendingApproval | None:
         return self._approvals.get(approval_id)

@@ -26,8 +26,12 @@ from shettyxtreme.auth.validator import CredentialValidator
 from shettyxtreme.core.event_bus.event_bus import EventBus
 from shettyxtreme.core.storage.time_series_store import TimeSeriesStore
 from shettyxtreme.data.ingestion import IngestionPipeline
+from shettyxtreme.execution.execution_engine import ExecutionEngine
 from shettyxtreme.execution.ledger import TradeLedger
 from shettyxtreme.execution.ledger_recorder import LedgerRecorder
+from shettyxtreme.execution.mode_router import ModeRoutingExecutor
+from shettyxtreme.execution.paper_trading import PaperTradingEngine
+from shettyxtreme.execution.signal_bridge import ExecutionSignalBridge
 from shettyxtreme.integration.dhan.data_adapter import DhanDataAdapter
 from shettyxtreme.integration.dhan.trading_adapter import DhanTradingAdapter
 from shettyxtreme.knowledge.store import KnowledgeStore
@@ -35,7 +39,11 @@ from shettyxtreme.learning.sessions import SessionLog
 from shettyxtreme.learning.shadow_loop import ShadowLoop, session_outcome_label
 from shettyxtreme.terminal.api.auth_router import init_auth
 from shettyxtreme.terminal.api.auth_router import router as auth_router
-from shettyxtreme.terminal.api.execution_router import router as execution_router
+from shettyxtreme.terminal.api.execution_router import (
+    get_mode_value,
+    is_kill_switch_armed,
+    router as execution_router,
+)
 from shettyxtreme.terminal.api.health_router import router as health_router
 from shettyxtreme.terminal.api.intelligence_router import router as intelligence_router
 from shettyxtreme.terminal.api.learning_router import router as learning_router
@@ -46,6 +54,7 @@ from shettyxtreme.terminal.api.research_router import build_orchestrator, init_r
 from shettyxtreme.terminal.api.research_source import ProjectionDataSource
 from shettyxtreme.intelligence.regime.bus_bridge import RegimeBusBridge
 from shettyxtreme.intelligence.risk.bus_bridge import RiskBusBridge
+from shettyxtreme.intelligence.risk.risk_engine import RiskEngine
 from shettyxtreme.intelligence.pipeline import IntelligencePipeline
 from shettyxtreme.terminal.api import postback_router
 from shettyxtreme.terminal.api import ws_bridge
@@ -255,6 +264,66 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     shadow_loop.subscribe(_event_bus)
     app.state.shadow_loop = shadow_loop
 
+    # ── Execution wiring (P4b): proposal queue + mode-routed placement ───────
+    # OBSERVER = proposals only; PAPER → PaperTradingEngine; LIVE → Dhan
+    # adapter (typed gate enforced at the mode endpoint, D10).
+    paper_engine = PaperTradingEngine(event_bus=_event_bus)
+    app.state.paper_engine = paper_engine
+
+    def _live_adapter_provider():
+        return getattr(app.state, "trading_adapter", None)
+
+    mode_executor = ModeRoutingExecutor(
+        paper_engine=paper_engine,
+        mode_provider=get_mode_value,
+        kill_switch_provider=is_kill_switch_armed,
+        live_provider=_live_adapter_provider,
+    )
+    app.state.mode_executor = mode_executor
+
+    def _portfolio_provider():
+        from shettyxtreme.core.data_models import Position
+        from shettyxtreme.intelligence.risk.risk_engine import Portfolio
+
+        pos_proj = getattr(app.state, "position_projection", None)
+        risk_proj = getattr(app.state, "risk_projection", None)
+        positions = []
+        if pos_proj is not None:
+            for p in pos_proj.get():
+                positions.append(Position(
+                    symbol=p.get("symbol", ""),
+                    exchange=p.get("exchange", "NSE"),
+                    quantity=p.get("quantity", 0),
+                    buy_avg=p.get("buy_avg", 0.0),
+                    sell_avg=p.get("sell_avg", 0.0),
+                    net_quantity=p.get("net_quantity", 0),
+                    m2m=p.get("m2m", 0.0),
+                    pnl=p.get("pnl", 0.0),
+                    product=p.get("product", "NRML"),
+                ))
+        risk = risk_proj.get() if risk_proj is not None else {}
+        return Portfolio(
+            positions=positions,
+            daily_pnl=risk.get("daily_pnl", 0.0),
+            total_margin_used=risk.get("margin_used", 0.0),
+            available_margin=risk.get("margin_available", 0.0),
+        )
+
+    execution_engine = ExecutionEngine(
+        executor=mode_executor,
+        risk_engine=RiskEngine(),
+        portfolio_provider=_portfolio_provider,
+    )
+    app.state.execution_engine = execution_engine
+
+    execution_bridge = ExecutionSignalBridge(
+        engine=execution_engine,
+        event_bus=_event_bus,
+    )
+    await execution_bridge.start()
+    app.state.execution_bridge = execution_bridge
+    logger.info("Execution layer wired: proposals + mode-routed placement")
+
     # ── Seed watchlist from YAML FIRST (before pipeline needs it) ───────────
     watchlist_path = Path(__file__).resolve().parent.parent.parent.parent.parent / "configs" / "default_watchlist.yaml"
     if watchlist_path.exists():
@@ -338,6 +407,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("ShettyXtreme Terminal shutting down...")
     if _intelligence_pipeline is not None:
         _intelligence_pipeline.unsubscribe()
+    try:
+        execution_bridge = getattr(app.state, "execution_bridge", None)
+        if execution_bridge is not None:
+            await execution_bridge.stop()
+    except Exception:
+        logger.exception("execution bridge stop failed")
     await regime_bridge.stop()
     await risk_bridge.stop()
     if research_scheduler is not None:

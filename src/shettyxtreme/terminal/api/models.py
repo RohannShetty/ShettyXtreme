@@ -108,6 +108,27 @@ class KillSwitchResponse(BaseModel):
     activated_at: datetime | None = None
 
 
+class ProposalResponse(BaseModel):
+    """An OBSERVER proposal awaiting (or having received) human action."""
+    id: str
+    symbol: str
+    exchange: str
+    side: str  # BUY / SELL
+    quantity: int = 0
+    price: float | None = None
+    order_type: str = "MARKET"
+    product: str = "MIS"
+    conviction: float = 0.0
+    D: float = 0.0
+    P: float = 1.0
+    G: str = "contested"
+    source: str = "signal_v2"
+    signal_id: str = ""
+    status: str = "PENDING"  # PENDING / APPROVED / REJECTED / EXPIRED
+    reason: str = ""
+    timestamp: datetime | None = None
+
+
 # ── Scanner ────────────────────────────────────────────────────────────────
 class GapResponse(BaseModel):
     symbol: str
