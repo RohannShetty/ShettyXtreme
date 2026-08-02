@@ -208,3 +208,27 @@ def test_pin_totp_bad_credentials() -> None:
     )
     assert resp.status_code == 400
     assert "401" in resp.json()["detail"]
+
+
+def test_save_data_token() -> None:
+    app = _make_app()
+    client = TestClient(app)
+    resp = client.post(
+        "/auth/data-token",
+        json={"access_token": "data_tok_1", "expiry": "2026-12-31T23:59:59"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+    assert _get_store().data_access_token == "data_tok_1"
+    assert _get_store().data_access_token_expiry == "2026-12-31T23:59:59"
+
+
+def test_status_data_token_fields() -> None:
+    app = _make_app()
+    client = TestClient(app)
+    resp = client.get("/auth/status")
+    data = resp.json()
+    assert "data_token_valid" in data
+    assert "data_token_expiry" in data
+    assert data["data_token_valid"] is False
+    assert data["data_token_expiry"] is None

@@ -41,6 +41,8 @@ class CredentialStatusResponse(BaseModel):
     setup_complete: bool = False
     client_name: str | None = None
     client_id: str | None = None
+    data_token_valid: bool = False
+    data_token_expiry: str | None = None
 
 
 class ConsentStartResponse(BaseModel):
@@ -66,6 +68,11 @@ class PinTotpBody(BaseModel):
     client_id: str
     pin: str
     totp: str
+
+
+class DataTokenBody(BaseModel):
+    access_token: str
+    expiry: str | None = None
 
 
 def _split_combined_key(api_key: str) -> tuple[str, str]:
@@ -95,6 +102,7 @@ def _get_store() -> CredentialStore:
 async def get_status() -> CredentialStatusResponse:
     store = _get_store()
     token_valid = store.is_token_valid() if store.access_token else False
+    data_token_valid = store.is_data_token_valid() if store.data_access_token else False
     connected = token_valid and bool(store.access_token)
     return CredentialStatusResponse(
         has_api_key=bool(store.api_key),
@@ -105,6 +113,8 @@ async def get_status() -> CredentialStatusResponse:
         setup_complete=connected,
         client_name=store.client_name,
         client_id=store.client_id,
+        data_token_valid=data_token_valid,
+        data_token_expiry=store.data_access_token_expiry,
     )
 
 
@@ -162,6 +172,14 @@ async def save_pin_totp(body: PinTotpBody) -> SaveResult:
     )
     store.save()
     return SaveResult(success=True, message="Access token generated and saved")
+
+
+@router.post("/data-token", response_model=SaveResult)
+async def save_data_token(body: DataTokenBody) -> SaveResult:
+    store = _get_store()
+    store.update_data_token(token=body.access_token, expiry=body.expiry)
+    store.save()
+    return SaveResult(success=True, message="Data access token saved")
 
 
 @router.post("/start-consent", response_model=ConsentStartResponse)
