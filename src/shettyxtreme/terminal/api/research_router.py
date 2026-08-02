@@ -230,6 +230,17 @@ async def reject(brief_id: str, request: Request) -> ResearchDecisionResponse:
     return _decide(request, brief_id, "rejected")
 
 
+_KNOWN_REGIMES = {"trending_up", "trending_down", "range_bound", "volatile", "transition"}
+
+
+def _normalize_regime(value: object) -> str | None:
+    """Lowercase enum value for regime strings; None for anything unknown."""
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    return text if text in _KNOWN_REGIMES else None
+
+
 def _current_regime(request: Request) -> str | None:
     """Best-effort current regime from the intelligence projection."""
     proj = getattr(request.app.state, "intelligence_projection", None)
@@ -240,7 +251,7 @@ def _current_regime(request: Request) -> str | None:
     except Exception:
         return None
     value = regime.get("regime")
-    return str(value) if value else None
+    return _normalize_regime(value)
 
 
 def _decide(request: Request, brief_id: str, decision: str) -> ResearchDecisionResponse:
@@ -251,7 +262,11 @@ def _decide(request: Request, brief_id: str, decision: str) -> ResearchDecisionR
         raise HTTPException(status_code=404, detail="brief not found") from exc
     try:
         try:
-            brief = store.decide(brief_id, decision, regime=_current_regime(request))
+            brief = store.decide(
+                brief_id,
+                decision,
+                regime=_normalize_regime(_current_regime(request)),
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="brief not found") from exc
         except AlreadyDecidedError as exc:

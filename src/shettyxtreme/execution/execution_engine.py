@@ -84,7 +84,7 @@ class ExecutionEngine:
     # ------------------------------------------------------------------
     def _init_db(self) -> None:
         assert self._db_path is not None
-        with sqlite3.connect(self._db_path) as conn:
+        with sqlite3.connect(self._db_path, timeout=5.0) as conn:
             conn.execute(
                 """CREATE TABLE IF NOT EXISTS pending_approvals (
                     id TEXT PRIMARY KEY,

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -254,3 +254,16 @@ async def test_regime_changed_dataclass_payload() -> None:
     state = proj.get_regime()
     assert state["regime"] == "trending"
     assert state["confidence"] == 0.8
+
+
+@pytest.mark.asyncio
+@patch("shettyxtreme.terminal.projections.ws_bridge.broadcast", new_callable=AsyncMock)
+async def test_duplicate_alert_suppressed_within_window(mock_broadcast) -> None:
+    proj = AlertProjection()
+    ev = Event(topic=Topic.RISK_ALERT, data={"alert_type": "gap", "severity": "HIGH", "message": "same"}, timestamp=datetime.now(UTC))
+    await proj.on_alert(ev)
+    await proj.on_alert(ev)
+    assert len(proj.get()) == 1
+    later = Event(topic=Topic.RISK_ALERT, data={"alert_type": "gap", "severity": "HIGH", "message": "same"}, timestamp=datetime.now(UTC) + timedelta(seconds=60))
+    await proj.on_alert(later)
+    assert len(proj.get()) == 2

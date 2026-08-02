@@ -57,6 +57,7 @@ dmypy.json
 gen_*.py
 write_*.py
 _*.py
+!**/__init__.py
 .skills/
 
 # Knowledge graph tooling (generated indices)

@@ -42,7 +42,7 @@ class ResearchStore:
 
     def __init__(self, db_path: str) -> None:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path)
+        self._conn = sqlite3.connect(db_path, timeout=5.0)
         self._conn.execute(_SCHEMA)
         self._conn.commit()
 
