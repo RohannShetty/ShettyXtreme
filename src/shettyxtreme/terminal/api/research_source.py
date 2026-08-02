@@ -10,6 +10,64 @@ from __future__ import annotations
 from typing import Any
 
 
+def render_options_posture(
+    contracts: list[dict[str, Any]],
+    spot: float | None = None,
+    symbol: str = "NIFTY",
+) -> str | None:
+    """Derive an IV/PCR/OI-buildup posture summary from an option chain.
+
+    Computes from a single chain snapshot (the data we have): put/call OI
+    ratio (PCR), the max-OI strike per side (the market's pin levels), and
+    the mean ATM implied volatility level. Returns None when the chain
+    carries no usable OI or IV data — a chain with no numbers is no data.
+    """
+    call_oi = 0
+    put_oi = 0
+    iv_values: list[float] = []
+    ce_pin: tuple[float, int] | None = None
+    pe_pin: tuple[float, int] | None = None
+    for row in contracts or []:
+        if not isinstance(row, dict):
+            continue
+        opt_type = str(row.get("option_type", "")).upper()
+        try:
+            strike = float(row.get("strike"))
+            oi = int(row.get("oi", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if opt_type in ("CE", "PE") and oi > 0 and strike > 0:
+            if opt_type == "CE":
+                call_oi += oi
+                if ce_pin is None or oi > ce_pin[1]:
+                    ce_pin = (strike, oi)
+            else:
+                put_oi += oi
+                if pe_pin is None or oi > pe_pin[1]:
+                    pe_pin = (strike, oi)
+        try:
+            iv = float(row.get("iv"))
+        except (TypeError, ValueError):
+            continue
+        if iv > 0:
+            iv_values.append(iv)
+
+    lines: list[str] = []
+    if call_oi or put_oi:
+        pcr = put_oi / call_oi if call_oi > 0 else 0.0
+        parts = [f"pcr={pcr:.2f}", f"put_oi={put_oi}", f"call_oi={call_oi}"]
+        if pe_pin:
+            parts.append(f"pe_pin={pe_pin[0]}")
+        if ce_pin:
+            parts.append(f"ce_pin={ce_pin[0]}")
+        lines.append(f"{symbol} options " + " ".join(parts))
+    if iv_values:
+        iv_avg = sum(iv_values) / len(iv_values)
+        level = "HIGH" if iv_avg >= 30.0 else ("LOW" if iv_avg < 20.0 else "NORMAL")
+        lines.append(f"{symbol} iv={iv_avg:.1f}% ({level})")
+    return "\n".join(lines) if lines else None
+
+
 class ProjectionDataSource:
     """DataSource backed by the running app's projections."""
 
@@ -68,8 +126,68 @@ class ProjectionDataSource:
         return "\n".join(lines)
 
     def options_summary(self) -> str | None:
-        # No options-posture renderer exists yet — honest best-effort.
-        return None
+        """IV-rank/PCR/OI-buildup posture from whatever options data exists.
+
+        Priority: (1) a wired IVRankCalculator / OITracker on app.state
+        (real rank + change-based buildup alerts), (2) a cached option chain
+        under ``app.state.options_chain`` ({symbol: {spot, contracts}}),
+        derived via render_options_posture. None when nothing is wired or
+        the chain carries no numbers — the tool layer renders that as
+        [UNSOURCED], which is the honest state while no chain is cached.
+        """
+        lines: list[str] = []
+        rank = getattr(self._state, "iv_rank_calculator", None)
+        if rank is not None:
+            try:
+                symbols = rank.symbols
+            except Exception:
+                symbols = []
+            for symbol in symbols:
+                try:
+                    result = rank.compute_iv_rank(symbol)
+                except Exception:
+                    continue
+                if result is None:
+                    continue
+                lines.append(
+                    f"{symbol} iv_rank={result.iv_rank:.1f}% "
+                    f"(iv={result.current_iv:.1f}%, {result.classification}, "
+                    f"n={result.num_data_points})"
+                )
+        tracker = getattr(self._state, "oi_tracker", None)
+        if tracker is not None:
+            try:
+                symbols = tracker.tracked_symbols
+                alerts = tracker.get_alerts(min_significance="MEDIUM")
+            except Exception:
+                symbols = []
+                alerts = []
+            for symbol in symbols:
+                try:
+                    pcr = tracker.get_pcr(symbol)
+                except Exception:
+                    continue
+                if pcr > 0.0:
+                    lines.append(f"{symbol} pcr={pcr:.2f}")
+            for alert in alerts[:5]:
+                lines.append(
+                    f"oi_buildup {alert.option_type} {alert.strike} "
+                    f"change={alert.oi_change_percent:+.1f}% "
+                    f"({alert.significance})"
+                )
+        chain = getattr(self._state, "options_chain", None)
+        if chain:
+            for symbol, cache in chain.items():
+                if not isinstance(cache, dict):
+                    continue
+                text = render_options_posture(
+                    cache.get("contracts") or [],
+                    spot=cache.get("spot"),
+                    symbol=str(symbol),
+                )
+                if text:
+                    lines.append(text)
+        return "\n".join(lines) if lines else None
 
     def knowledge_summary(self, query: str) -> str | None:
         """Top activated knowledge docs for a query (best-effort)."""
