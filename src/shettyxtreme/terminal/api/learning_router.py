@@ -29,12 +29,16 @@ LEARNING_DB_PATH = "data/learning.db"
 SHADOW_DB_PATH = "data/shadow.db"
 
 
-def _fit_calibration(db_path: str) -> tuple[bool, list[CalibrationPointResponse]]:
+def _fit_calibration(db_path: str) -> tuple[bool, list[dict]]:
     """Fit the calibration curve over recorded decisions.
 
-    Missing or unreadable databases return `(False, [])` — the exists()
-    guard matters: OutcomeTracker eagerly sqlite3.connect()s, which would
-    otherwise CREATE a database file for a path that never existed.
+    Returns transport-neutral point dicts (not model instances): the
+    scorecard router validates them into its own response models, and
+    pydantic v2 rejects instances of a *different* model class even with
+    identical fields. Missing or unreadable databases return
+    `(False, [])` — the exists() guard matters: OutcomeTracker eagerly
+    sqlite3.connect()s, which would otherwise CREATE a database file for
+    a path that never existed.
     """
     if not Path(db_path).exists():
         return False, []
@@ -42,15 +46,17 @@ def _fit_calibration(db_path: str) -> tuple[bool, list[CalibrationPointResponse]
         tracker = OutcomeTracker(db_path)
         try:
             decisions = tracker.get_all_decisions()
+            if not decisions:
+                return False, []
             curve = CalibrationCurve()
             curve.fit(decisions)
             points = [
-                CalibrationPointResponse(
-                    conviction_bin=list(p.conviction_bin),
-                    actual_win_rate=p.actual_win_rate,
-                    sample_size=p.sample_size,
-                    confidence_interval=list(p.confidence_interval),
-                )
+                {
+                    "conviction_bin": list(p.conviction_bin),
+                    "actual_win_rate": p.actual_win_rate,
+                    "sample_size": p.sample_size,
+                    "confidence_interval": list(p.confidence_interval),
+                }
                 for p in curve.get_curve()
             ]
             return curve.is_reliable(decisions), points
