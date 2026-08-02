@@ -2,6 +2,16 @@
   import { onMount } from "svelte";
   import { get } from "../lib/api";
   import { selectedSymbol } from "../lib/selection";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+  } from "$lib/components/ui/table";
 
   type Contract = {
     strike: number;
@@ -26,14 +36,14 @@
 
   type ChainRow = { strike: number; ce?: Contract; pe?: Contract };
 
-  let symbol = "NIFTY";
-  let expiry = "";
-  let expiries: string[] = [];
-  let contracts: Contract[] = [];
-  let loading = false;
-  let error = "";
+  let symbol = $state("NIFTY");
+  let expiry = $state("");
+  let expiries = $state<string[]>([]);
+  let contracts = $state<Contract[]>([]);
+  let loading = $state(false);
+  let error = $state("");
 
-  $: rows = buildRows(contracts);
+  let rows = $derived(buildRows(contracts));
 
   onMount(() => {
     load();
@@ -91,7 +101,7 @@
   <header class="panel-head">
     <h2>Option Chain</h2>
     <div class="controls">
-      <input class="sym-input mono" bind:value={symbol} placeholder="SYMBOL" />
+      <Input class="mono h-7 w-[110px]" bind:value={symbol} placeholder="SYMBOL" />
       {#if expiries.length > 0}
         <select class="expiry-select mono" bind:value={expiry}>
           {#each expiries as e (e)}
@@ -99,9 +109,9 @@
           {/each}
         </select>
       {:else}
-        <input class="sym-input mono" bind:value={expiry} placeholder="EXPIRY (optional)" />
+        <Input class="mono h-7 w-[130px]" bind:value={expiry} placeholder="EXPIRY (optional)" />
       {/if}
-      <button class="load-btn" on:click={load} disabled={loading}>{loading ? "…" : "LOAD"}</button>
+      <Button size="sm" onclick={load} disabled={loading}>{loading ? "Loading…" : "Load"}</Button>
     </div>
   </header>
 
@@ -110,37 +120,37 @@
   {/if}
 
   <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th class="strike-col">STRIKE</th>
-          <th colspan="3">CALL (CE)</th>
-          <th colspan="3">PUT (PE)</th>
-        </tr>
-        <tr>
-          <th></th>
-          <th>LTP</th>
-          <th>IV</th>
-          <th>OI</th>
-          <th>LTP</th>
-          <th>IV</th>
-          <th>OI</th>
-        </tr>
-      </thead>
-      <tbody>
+    <Table class="text-[12px]">
+      <TableHeader>
+        <TableRow class="hover:bg-transparent">
+          <TableHead class="font-semibold text-ink">Strike</TableHead>
+          <TableHead class="text-right" colspan={3}>Call (CE)</TableHead>
+          <TableHead class="text-right" colspan={3}>Put (PE)</TableHead>
+        </TableRow>
+        <TableRow class="hover:bg-transparent">
+          <TableHead class="font-semibold text-ink"></TableHead>
+          <TableHead class="text-right">LTP</TableHead>
+          <TableHead class="text-right">IV</TableHead>
+          <TableHead class="text-right">OI</TableHead>
+          <TableHead class="text-right">LTP</TableHead>
+          <TableHead class="text-right">IV</TableHead>
+          <TableHead class="text-right">OI</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
         {#each rows as row (row.strike)}
-          <tr>
-            <td class="num strike-col">{fmtNum(row.strike, 0)}</td>
-            <td class="num">{fmtNum(row.ce?.ltp)}</td>
-            <td class="num">{fmtNum(row.ce?.iv, 1)}</td>
-            <td class="num">{fmtOi(row.ce?.oi)}</td>
-            <td class="num">{fmtNum(row.pe?.ltp)}</td>
-            <td class="num">{fmtNum(row.pe?.iv, 1)}</td>
-            <td class="num">{fmtOi(row.pe?.oi)}</td>
-          </tr>
+          <TableRow class="h-6">
+            <TableCell class="font-mono text-right text-[12px] font-semibold text-ink tabular-nums">{fmtNum(row.strike, 0)}</TableCell>
+            <TableCell class="font-mono text-right text-[12px] tabular-nums">{fmtNum(row.ce?.ltp)}</TableCell>
+            <TableCell class="font-mono text-right text-[12px] tabular-nums">{fmtNum(row.ce?.iv, 1)}</TableCell>
+            <TableCell class="font-mono text-right text-[12px] tabular-nums">{fmtOi(row.ce?.oi)}</TableCell>
+            <TableCell class="font-mono text-right text-[12px] tabular-nums">{fmtNum(row.pe?.ltp)}</TableCell>
+            <TableCell class="font-mono text-right text-[12px] tabular-nums">{fmtNum(row.pe?.iv, 1)}</TableCell>
+            <TableCell class="font-mono text-right text-[12px] tabular-nums">{fmtOi(row.pe?.oi)}</TableCell>
+          </TableRow>
         {/each}
-      </tbody>
-    </table>
+      </TableBody>
+    </Table>
     {#if rows.length === 0 && !loading}
       <p class="empty">No chain data. {error ? "" : "Check the symbol or start the data pipeline."}</p>
     {/if}
@@ -177,19 +187,6 @@
     gap: 6px;
     align-items: center;
   }
-  .sym-input {
-    width: 110px;
-    background: var(--canvas-raised);
-    border: 1px solid var(--hairline);
-    border-radius: 4px;
-    color: var(--ink);
-    padding: 5px 8px;
-    font-size: 12px;
-  }
-  .sym-input:focus {
-    outline: none;
-    border-color: var(--focus-ring);
-  }
   .expiry-select {
     background: var(--canvas-raised);
     border: 1px solid var(--hairline);
@@ -199,71 +196,9 @@
     font-size: 12px;
     max-width: 150px;
   }
-  .load-btn {
-    background: var(--accent);
-    border: 1px solid var(--accent);
-    border-radius: 4px;
-    color: var(--on-accent);
-    font-weight: 700;
-    font-size: 11px;
-    padding: 5px 12px;
-    cursor: pointer;
-  }
-  .load-btn:disabled {
-    background: var(--accent-disabled);
-    border-color: var(--accent-disabled);
-    color: var(--muted);
-    cursor: default;
-  }
   .table-wrap {
     flex: 1;
     overflow: auto;
-  }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-  }
-  thead {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    background: var(--surface-elevated);
-  }
-  th {
-    color: var(--muted);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    padding: 4px 6px;
-    border-bottom: 1px solid var(--hairline-strong);
-    text-align: right;
-    white-space: nowrap;
-  }
-  th:nth-child(1),
-  th:nth-child(2) {
-    text-align: left;
-  }
-  td {
-    padding: 3px 6px;
-    text-align: right;
-    border-bottom: 1px solid var(--hairline);
-    height: 28px;
-    white-space: nowrap;
-  }
-  td:last-child {
-    text-align: right;
-  }
-  tbody tr:hover {
-    background: var(--row-hover);
-  }
-  .strike-col {
-    text-align: left !important;
-    color: var(--ink);
-    font-weight: 600;
-  }
-  .num {
-    font-size: 12px;
   }
   .empty {
     color: var(--faint);

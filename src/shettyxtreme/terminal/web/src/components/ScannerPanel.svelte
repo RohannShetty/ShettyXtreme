@@ -1,15 +1,18 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { get } from "../lib/api";
+  import { Button } from "$lib/components/ui/button";
+  import { Badge } from "$lib/components/ui/badge";
+  import { RotateCw } from "@lucide/svelte";
 
   type Gap = { symbol: string; gap_type: string; gap_percent: number; direction: string };
   type Cluster = { symbol: string; cluster_type: string; strength: number; source_count: number };
   type Alert = { alert_type: string; severity: string; message: string; timestamp: string };
 
-  let gaps: Gap[] = [];
-  let clusters: Cluster[] = [];
-  let alerts: Alert[] = [];
-  let error = "";
+  let gaps: Gap[] = $state([]);
+  let clusters: Cluster[] = $state([]);
+  let alerts: Alert[] = $state([]);
+  let error = $state("");
 
   onMount(() => {
     load();
@@ -31,9 +34,9 @@
     }
   }
 
-  function severityClass(severity: string): string {
+  function severityVariant(severity: string): "danger" | "warning" | "outline" {
     const s = String(severity).toUpperCase();
-    return s === "HIGH" ? "sev-high" : s === "MEDIUM" ? "sev-med" : "sev-low";
+    return s === "HIGH" ? "danger" : s === "MEDIUM" ? "warning" : "outline";
   }
 
   function dirClass(direction: string): string {
@@ -44,7 +47,9 @@
 <section class="panel scanner">
   <header class="panel-head">
     <h2>Scanner</h2>
-    <button class="refresh" on:click={load} title="Refresh">↻</button>
+    <Button variant="ghost" size="icon" class="size-7 text-muted-foreground hover:text-ink" onclick={load} aria-label="Refresh scanner">
+      <RotateCw class="size-3.5" />
+    </Button>
   </header>
 
   {#if error}
@@ -58,7 +63,7 @@
         {#each gaps as g (g.symbol + g.gap_type + g.gap_percent)}
           <li>
             <span class="ticker">{g.symbol}</span>
-            <span class="tag">{g.gap_type}</span>
+            <Badge variant="outline">{g.gap_type}</Badge>
             <span class="num {dirClass(g.direction)}">{g.gap_percent > 0 ? "+" : ""}{g.gap_percent.toFixed(2)}%</span>
           </li>
         {/each}
@@ -74,7 +79,7 @@
         {#each clusters as c (c.symbol + c.cluster_type)}
           <li>
             <span class="ticker">{c.symbol}</span>
-            <span class="tag">{c.cluster_type}</span>
+            <Badge variant="outline">{c.cluster_type}</Badge>
             <span class="num">{c.strength.toFixed(1)} / 10</span>
           </li>
         {/each}
@@ -89,7 +94,7 @@
       <ul>
         {#each alerts as a (a.message + a.timestamp)}
           <li>
-            <span class="tag {severityClass(a.severity)}">{a.severity}</span>
+            <Badge variant={severityVariant(a.severity)}>{a.severity}</Badge>
             <span class="msg">{a.message}</span>
           </li>
         {/each}
@@ -126,19 +131,6 @@
     letter-spacing: 0.08em;
     color: var(--muted);
     text-transform: uppercase;
-  }
-  .refresh {
-    background: none;
-    border: 1px solid var(--hairline);
-    border-radius: 4px;
-    color: var(--muted);
-    cursor: pointer;
-    padding: 2px 8px;
-    font-size: 13px;
-  }
-  .refresh:hover {
-    color: var(--ink);
-    border-color: var(--hairline-strong);
   }
   .cols {
     flex: 1;
@@ -177,26 +169,6 @@
     color: var(--ink);
     font-weight: 600;
     min-width: 70px;
-  }
-  .tag {
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted);
-    border: 1px solid var(--hairline-strong);
-    border-radius: 4px;
-    padding: 1px 5px;
-  }
-  .sev-high {
-    color: var(--danger);
-    border-color: var(--danger);
-  }
-  .sev-med {
-    color: var(--warning);
-    border-color: var(--warning);
-  }
-  .sev-low {
-    color: var(--muted);
   }
   .msg {
     color: var(--body);

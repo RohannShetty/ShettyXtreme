@@ -3,6 +3,9 @@
   import { del, get, post } from "../lib/api";
   import { selectedSymbol } from "../lib/selection";
   import { onMessage } from "../lib/ws";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Plus, X } from "@lucide/svelte";
 
   type WatchItem = {
     symbol: string;
@@ -12,11 +15,11 @@
     volume: number;
   };
 
-  let items: WatchItem[] = [];
-  let selected = "";
-  let newSymbol = "";
-  let newExchange = "NSE";
-  let error = "";
+  let items: WatchItem[] = $state([]);
+  let selected = $state("");
+  let newSymbol = $state("");
+  let newExchange = $state("NSE");
+  let error = $state("");
   const flashMap = new Map<string, "up" | "down">();
 
   onMount(() => {
@@ -82,6 +85,18 @@
   function fmtLtp(value: number): string {
     return value > 0 ? value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
   }
+
+  function onRowKeydown(event: KeyboardEvent, symbol: string): void {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      selectRow(symbol);
+    }
+  }
+
+  function selectRow(symbol: string): void {
+    selected = symbol;
+    selectedSymbol.set(symbol);
+  }
 </script>
 
 <section class="panel watchlist">
@@ -91,18 +106,20 @@
   </header>
 
   <div class="add-row">
-    <input
-      class="sym-input mono"
+    <Input
+      class="mono h-7"
       placeholder="SYMBOL"
       bind:value={newSymbol}
-      on:keydown={(e) => e.key === "Enter" && add()}
+      onkeydown={(e) => e.key === "Enter" && add()}
     />
     <select class="exch-select mono" bind:value={newExchange}>
       <option value="NSE">NSE</option>
       <option value="NSE_FNO">NFO</option>
       <option value="BSE">BSE</option>
     </select>
-    <button class="add-btn" on:click={add}>+</button>
+    <Button size="icon" class="size-7" onclick={add} aria-label="Add symbol">
+      <Plus class="size-3.5" />
+    </Button>
   </div>
 
   {#if error}
@@ -112,21 +129,10 @@
   <div class="list">
     {#each items as item (item.symbol)}
       <div
-        class="row"
+        class={flashClass(item.symbol) ? `row ${flashClass(item.symbol)}` : "row"}
         class:selected={selected === item.symbol}
-        class:flash-up={flashClass(item.symbol) === "flash-up"}
-        class:flash-down={flashClass(item.symbol) === "flash-down"}
-        on:click={() => {
-          selected = item.symbol;
-          selectedSymbol.set(item.symbol);
-        }}
-        on:keydown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            selected = item.symbol;
-            selectedSymbol.set(item.symbol);
-          }
-        }}
+        onclick={() => selectRow(item.symbol)}
+        onkeydown={(e) => onRowKeydown(e, item.symbol)}
         role="button"
         tabindex="0"
       >
@@ -136,7 +142,17 @@
         </div>
         <span class="num ltp {pnlClass(item.change_pct)}">{fmtLtp(item.ltp)}</span>
         <span class="num chg {pnlClass(item.change_pct)}">{item.change_pct > 0 ? "+" : ""}{item.change_pct.toFixed(2)}%</span>
-        <button class="rm" on:click|stopPropagation={() => remove(item.symbol)} title="Remove">×</button>
+        <button
+          class="rm"
+          onclick={(e) => {
+            e.stopPropagation();
+            remove(item.symbol);
+          }}
+          title="Remove"
+          aria-label={`Remove ${item.symbol}`}
+        >
+          <X class="size-3.5" />
+        </button>
       </div>
     {/each}
     {#if items.length === 0}
@@ -176,20 +192,6 @@
     gap: 4px;
     padding: 8px 10px;
   }
-  .sym-input {
-    flex: 1;
-    min-width: 0;
-    background: var(--canvas-raised);
-    border: 1px solid var(--hairline);
-    border-radius: 4px;
-    color: var(--ink);
-    padding: 5px 8px;
-    font-size: 12px;
-  }
-  .sym-input:focus {
-    outline: none;
-    border-color: var(--focus-ring);
-  }
   .exch-select {
     background: var(--canvas-raised);
     border: 1px solid var(--hairline);
@@ -197,15 +199,6 @@
     color: var(--body);
     padding: 5px 4px;
     font-size: 11px;
-  }
-  .add-btn {
-    background: var(--accent);
-    border: 1px solid var(--accent);
-    border-radius: 4px;
-    color: var(--on-accent);
-    font-weight: 700;
-    width: 28px;
-    cursor: pointer;
   }
   .list {
     flex: 1;
@@ -256,9 +249,9 @@
     background: none;
     border: none;
     color: var(--faint);
-    font-size: 14px;
     cursor: pointer;
-    padding: 0;
+    padding: 2px;
+    display: inline-flex;
   }
   .rm:hover {
     color: var(--danger);

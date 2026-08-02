@@ -2,13 +2,15 @@
   import { onMount } from "svelte";
   import { get } from "../lib/api";
   import type { CalibrationPoint, RegimeRow, ScorecardMetric, ScorecardResponse } from "../lib/api";
+  import { Button } from "$lib/components/ui/button";
+  import { RotateCw } from "@lucide/svelte";
 
-  let metrics: ScorecardMetric[] = [];
-  let byRegime: RegimeRow[] = [];
-  let calibration: CalibrationPoint[] = [];
-  let reliable = false;
-  let loading = true;
-  let error = "";
+  let metrics: ScorecardMetric[] = $state([]);
+  let byRegime: RegimeRow[] = $state([]);
+  let calibration: CalibrationPoint[] = $state([]);
+  let reliable = $state(false);
+  let loading = $state(true);
+  let error = $state("");
 
   onMount(() => {
     load();
@@ -75,7 +77,9 @@
 <section class="panel analytics">
   <header class="panel-head">
     <h2>Analytics</h2>
-    <button class="refresh" on:click={load} disabled={loading} title="Refresh">↻</button>
+    <Button variant="ghost" size="icon" class="size-7 text-muted-foreground hover:text-ink" onclick={load} disabled={loading} aria-label="Refresh analytics">
+      <RotateCw class="size-3.5" />
+    </Button>
   </header>
 
   {#if error}
@@ -85,7 +89,7 @@
   {#if !error}
     <div class="cards">
       {#each metrics as m (m.key)}
-        <div class="card" class:na={!m.available} title={m.available ? "" : m.note}>
+        <div class="card" class:na={!m.available} title={m.available ? "" : m.note ?? undefined}>
           <span class="card-label">{m.label}</span>
           <span class="card-value mono">{fmtValue(m)}</span>
         </div>
@@ -99,7 +103,7 @@
       <div class="block-head">
         <h3>Calibration</h3>
         {#if calibration.length > 0}
-          <span class="badge" class:reliable={reliable} class:unreliable={!reliable}>
+          <span class={reliable ? "badge badge-reliable" : "badge badge-unreliable"}>
             {reliable ? "reliable" : "unreliable"}
           </span>
         {/if}
@@ -120,7 +124,7 @@
             <li>
               <span class="regime-label mono">{r.regime}</span>
               <div class="bar-track">
-                <div class="bar" style:width={barWidth(r)}></div>
+                <div class="bar" style="width: {barWidth(r)}"></div>
               </div>
               <span class="regime-pct mono">{winPct(r)}%</span>
               <span class="regime-counts mono">d{r.decided}·o{r.with_outcome}</span>
@@ -161,23 +165,6 @@
     color: var(--muted);
     text-transform: uppercase;
   }
-  .refresh {
-    background: none;
-    border: 1px solid var(--hairline);
-    border-radius: 4px;
-    color: var(--muted);
-    cursor: pointer;
-    padding: 2px 8px;
-    font-size: 13px;
-  }
-  .refresh:hover {
-    color: var(--ink);
-    border-color: var(--hairline-strong);
-  }
-  .refresh:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
   .error {
     color: var(--danger);
     font-size: 11px;
@@ -197,7 +184,7 @@
     padding: 8px 10px;
     border: 1px solid var(--hairline);
     border-radius: 6px;
-    background: var(--surface);
+    background: var(--surface-elevated);
   }
   .card.na {
     border-style: dashed;
@@ -245,11 +232,11 @@
     border-radius: 4px;
     padding: 1px 5px;
   }
-  .badge.reliable {
+  .badge-reliable {
     color: var(--success);
     border-color: var(--success);
   }
-  .badge.unreliable {
+  .badge-unreliable {
     color: var(--warning);
     border-color: var(--warning);
   }
@@ -279,7 +266,7 @@
   .bar-track {
     flex: 1;
     height: 6px;
-    background: var(--surface);
+    background: var(--surface-elevated);
     border: 1px solid var(--hairline);
     border-radius: 3px;
     overflow: hidden;

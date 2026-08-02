@@ -2,6 +2,14 @@
   import { onMount } from "svelte";
   import { get } from "../lib/api";
   import { onMessage } from "../lib/ws";
+  import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+  } from "$lib/components/ui/table";
 
   type Position = {
     symbol: string;
@@ -24,9 +32,9 @@
     active_positions: number;
   };
 
-  let positions: Position[] = [];
-  let risk: Risk | null = null;
-  let error = "";
+  let positions = $state<Position[]>([]);
+  let risk = $state<Risk | null>(null);
+  let error = $state("");
 
   onMount(() => {
     load();
@@ -56,43 +64,46 @@
     return value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  $: marginRatio =
+  let marginRatio = $derived(
     risk && risk.margin_used + risk.margin_available > 0
       ? risk.margin_used / (risk.margin_used + risk.margin_available)
-      : 0;
-  $: marginBreach = risk !== null && risk.margin_used > risk.margin_available;
-  $: marginClass = marginBreach ? "ratio-breach" : marginRatio > 0.8 ? "ratio-warn" : "";
+      : 0,
+  );
+  let marginBreach = $derived(risk !== null && risk.margin_used > risk.margin_available);
+  let marginClass = $derived(marginBreach ? "ratio-breach" : marginRatio > 0.8 ? "ratio-warn" : "");
 </script>
 
 <section class="strip">
   <div class="pos-table">
     <h2>Positions</h2>
     <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>SYMBOL</th>
-            <th>QTY</th>
-            <th>AVG</th>
-            <th>M2M</th>
-            <th>P&L</th>
-          </tr>
-        </thead>
-        <tbody>
+      <Table>
+        <TableHeader>
+          <TableRow class="hover:bg-transparent">
+            <TableHead>Symbol</TableHead>
+            <TableHead class="text-right">Qty</TableHead>
+            <TableHead class="text-right">Avg</TableHead>
+            <TableHead class="text-right">M2M</TableHead>
+            <TableHead class="text-right">P&L</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {#each positions as p (p.symbol)}
-            <tr>
-              <td class="ticker">{p.symbol}</td>
-              <td class="num">{p.net_quantity}</td>
-              <td class="num">{p.buy_avg ? fmtAvg(p.buy_avg) : "—"}</td>
-              <td class="num {pnlClass(p.m2m)}">{fmtMoney(p.m2m)}</td>
-              <td class="num {pnlClass(p.pnl)}">{fmtMoney(p.pnl)}</td>
-            </tr>
+            <TableRow>
+              <TableCell class="font-mono font-semibold text-ink">{p.symbol}</TableCell>
+              <TableCell class="font-mono text-right tabular-nums">{p.net_quantity}</TableCell>
+              <TableCell class="font-mono text-right tabular-nums">{p.buy_avg ? fmtAvg(p.buy_avg) : "—"}</TableCell>
+              <TableCell class="font-mono text-right tabular-nums {pnlClass(p.m2m)}">{fmtMoney(p.m2m)}</TableCell>
+              <TableCell class="font-mono text-right tabular-nums {pnlClass(p.pnl)}">{fmtMoney(p.pnl)}</TableCell>
+            </TableRow>
           {/each}
           {#if positions.length === 0}
-            <tr><td colspan="5" class="empty">No open positions.</td></tr>
+            <TableRow>
+              <TableCell colspan={5} class="text-faint">No open positions.</TableCell>
+            </TableRow>
           {/if}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   </div>
 
@@ -162,50 +173,6 @@
     flex: 1;
     overflow-y: auto;
   }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-  }
-  thead {
-    position: sticky;
-    top: 0;
-    background: var(--surface-elevated);
-  }
-  th {
-    color: var(--muted);
-    font-size: 10px;
-    font-weight: 600;
-    text-align: right;
-    padding: 3px 8px;
-    border-bottom: 1px solid var(--hairline-strong);
-  }
-  th:first-child {
-    text-align: left;
-  }
-  td {
-    padding: 3px 8px;
-    text-align: right;
-    border-bottom: 1px solid var(--hairline);
-  }
-  td:first-child {
-    text-align: left;
-  }
-  td:last-child {
-    text-align: right;
-  }
-  .num {
-    font-size: 12px;
-  }
-  .ticker {
-    color: var(--ink);
-    font-weight: 600;
-  }
-  .empty {
-    color: var(--faint);
-    font-size: 12px;
-    padding: 8px 0;
-  }
   .risk-block {
     gap: 8px;
     border-left: 1px solid var(--hairline);
@@ -274,6 +241,11 @@
   .chip-info {
     color: var(--info);
     border: 1px solid var(--info);
+  }
+  .empty {
+    color: var(--faint);
+    font-size: 12px;
+    padding: 8px 0;
   }
   .error {
     color: var(--danger);

@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { get } from "../lib/api";
+  import { Button } from "$lib/components/ui/button";
+  import { Badge } from "$lib/components/ui/badge";
+  import { RotateCw } from "@lucide/svelte";
 
   type Hint = {
     direction: string;
@@ -10,8 +13,8 @@
     rationale: string;
   };
 
-  let hint: Hint | null = null;
-  let error = "";
+  let hint = $state<Hint | null>(null);
+  let error = $state("");
 
   onMount(() => {
     load();
@@ -26,12 +29,12 @@
     }
   }
 
-  $: dir = hint ? String(hint.direction).toLowerCase() : "";
-  $: badgeClass = dir === "bullish" ? "badge-bull" : dir === "bearish" ? "badge-bear" : "badge-neutral";
-  $: badgeText =
-    dir === "bullish" ? "BULLISH" : dir === "bearish" ? "BEARISH" : "NEUTRAL";
-  $: strategyName =
-    dir === "bullish" ? "Long Call" : dir === "bearish" ? "Long Put" : "Stand Aside";
+  let dir = $derived(hint ? String(hint.direction).toLowerCase() : "");
+  let badgeClass = $derived(
+    dir === "bullish" ? "border-price-up text-price-up" : dir === "bearish" ? "border-price-down text-price-down" : "border-hairline-strong text-muted-foreground",
+  );
+  let badgeText = $derived(dir === "bullish" ? "BULLISH" : dir === "bearish" ? "BEARISH" : "NEUTRAL");
+  let strategyName = $derived(dir === "bullish" ? "Long Call" : dir === "bearish" ? "Long Put" : "Stand Aside");
 
   function fmt(value: number | null | undefined): string {
     if (value === null || value === undefined || !isFinite(value)) return "—";
@@ -42,7 +45,9 @@
 <section class="panel hints">
   <header class="panel-head">
     <h2>Strategy Hint</h2>
-    <button class="refresh" on:click={load} title="Refresh">↻</button>
+    <Button variant="ghost" size="icon" class="size-7 text-muted-foreground hover:text-ink" onclick={load} aria-label="Refresh hint">
+      <RotateCw class="size-3.5" />
+    </Button>
   </header>
 
   {#if error}
@@ -50,7 +55,7 @@
   {:else if hint}
     <div class="body">
       <div class="row1">
-        <span class="badge {badgeClass}">{badgeText}</span>
+        <Badge class={badgeClass}>{badgeText}</Badge>
         <span class="strategy">{strategyName}</span>
       </div>
       <div class="ev-line mono">
@@ -87,19 +92,6 @@
     color: var(--muted);
     text-transform: uppercase;
   }
-  .refresh {
-    background: none;
-    border: 1px solid var(--hairline);
-    border-radius: 4px;
-    color: var(--muted);
-    cursor: pointer;
-    padding: 2px 8px;
-    font-size: 13px;
-  }
-  .refresh:hover {
-    color: var(--ink);
-    border-color: var(--hairline-strong);
-  }
   .body {
     padding: 12px 10px;
     display: flex;
@@ -111,26 +103,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-  .badge {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    border-radius: 4px;
-    padding: 3px 8px;
-    white-space: nowrap;
-  }
-  .badge-bull {
-    color: var(--price-up);
-    border: 1px solid var(--price-up);
-  }
-  .badge-bear {
-    color: var(--price-down);
-    border: 1px solid var(--price-down);
-  }
-  .badge-neutral {
-    color: var(--muted);
-    border: 1px solid var(--hairline-strong);
   }
   .strategy {
     color: var(--ink);
