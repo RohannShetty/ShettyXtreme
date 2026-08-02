@@ -88,6 +88,24 @@ class CredentialStore:
         except Exception:
             return ""
 
+    @staticmethod
+    def _extract_exp_from_token(access_token: str | None) -> str:
+        """Extract the `exp` claim (epoch seconds) from a JWT access token as ISO-8601."""
+        if not access_token:
+            return ""
+        try:
+            parts = access_token.split(".")
+            if len(parts) < 2:
+                return ""
+            payload = parts[1] + "=="
+            decoded = json.loads(base64.urlsafe_b64decode(payload))
+            exp = decoded.get("exp")
+            if not exp:
+                return ""
+            return datetime.fromtimestamp(int(exp), tz=UTC).isoformat()
+        except Exception:
+            return ""
+
     def is_complete(self) -> bool:
         """True when API key and secret are present."""
         return bool(self.api_key and self.api_secret)
@@ -97,6 +115,15 @@ class CredentialStore:
         if not self.access_token or not self.token_expiry:
             return False
         expiry = datetime.fromisoformat(self.token_expiry)
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=UTC)
+        return expiry > datetime.now(UTC)
+
+    def is_data_token_valid(self) -> bool:
+        """True when the data-access token exists and has not expired."""
+        if not self.data_access_token or not self.data_access_token_expiry:
+            return False
+        expiry = datetime.fromisoformat(self.data_access_token_expiry)
         if expiry.tzinfo is None:
             expiry = expiry.replace(tzinfo=UTC)
         return expiry > datetime.now(UTC)

@@ -133,3 +133,26 @@ def test_data_token_roundtrip(tmp_path: Path) -> None:
         assert reloaded.data_access_token_expiry == "2026-12-31T00:00:00Z"
     finally:
         monkeypatch.undo()
+
+
+def test_extract_exp_from_token() -> None:
+    import base64
+
+    payload = {"dhanClientId": "DHAN123", "exp": 1780000000}
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+    token = f"header.{body}.signature"
+    expiry = CredentialStore._extract_exp_from_token(token)
+    assert expiry.startswith("2026-")  # 1780000000 = 2026-05-28T...
+    assert CredentialStore._extract_exp_from_token(None) == ""
+    assert CredentialStore._extract_exp_from_token("not.a.jwt") == ""
+    assert CredentialStore._extract_exp_from_token("onlyone") == ""
+
+
+def test_data_token_validity() -> None:
+    store = CredentialStore()
+    assert store.is_data_token_valid() is False
+    store.data_access_token = "tok"
+    store.data_access_token_expiry = "2026-12-31T23:59:59"
+    assert store.is_data_token_valid() is True
+    store.data_access_token_expiry = "2020-01-01T00:00:00"
+    assert store.is_data_token_valid() is False
