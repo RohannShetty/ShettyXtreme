@@ -23,6 +23,11 @@ Suite: **732 passed / 0 failed / 0 skipped** (was 703). Three tracks: the trades
 - Postback fills carry NULL symbol/side (unknowable at the postback surface) — excluded from pairing by the `symbol IS NOT NULL` guard, so they never contribute spurious realized PnL until symbol resolution ships.
 - Deferred minors retained: polyline-vs-step chart (documented deliberate deviation), read-endpoint DB auto-create (consistent with ResearchStore pattern), `test_knowledge_api` module-state teardown.
 
+### Cleanup
+- Removed dead code: stale pre-Svelte React scaffold (root `terminal/ui/`), empty `PLAN 2307.md`, 7 one-off doc-generator scripts (kept `sync_vendor.py` + `research_smoke.py`), empty packages `risk/`/`plugins/`/`observability/` (real RiskEngine lives in `intelligence/risk/`), `print("hello")` stub `options/spreads/spread_analyzer.py`, empty `experiments/` dir.
+- Archived two superseded handoffs into `docs/superpowers/handoffs/` (`2026-07-23-session-record.md`, `2026-07-30-credential-consolidation.md`).
+- Smoke-verified: `run.py --mode OBSERVER` boots clean — `/api/health` 200 (Dhan down = expired token, re-auth at `#/settings`), scorecard shows 13 logged sessions, ledger/knowledge/research endpoints live.
+
 ## [2026-08-01] — v0.10.0: Phase 4 Knowledge Layer (D12) + Analytics Dashboards
 
 Suite: **703 passed / 0 failed / 0 skipped** (was 655). D12 knowledge layer v1 — FTS5 document store for decided research briefs, heuristic tagger, human-gated activation wired to a `knowledge_search` research tool — plus scorecard-core dashboards with a recording track (SessionLog + regime-at-decision). All decisions from the Phase 4 wayfinder map (`.scratch/phase4-knowledge-dashboards/`); multi-broker and backtest depth DECIDED-DEFER.
