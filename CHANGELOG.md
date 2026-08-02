@@ -1,5 +1,28 @@
 # ShettyXtreme Changelog
 
+## [2026-08-02] — v0.11.0: Trades Ledger + Knowledge v2 + Hygiene Wave
+
+Suite: **731 passed / 0 failed / 0 skipped** (was 703). Three tracks: the trades-ledger recording track that unblocks net-EV scoring (ticket 06), knowledge v2 (operator notes + tag refinement), and the deferred-minors hygiene wave.
+
+### Added
+- **Trades ledger** (`execution/ledger.py`): sqlite `TradeLedger` — idempotent fills on `(order_id, source)`, FIFO opposite-side `pair_fills` (long and short, partial remainders dropped with a noted follow-up), `per_session_summary` (fills/gross notional/realized PnL).
+- **Ledger recording** (`execution/ledger_recorder.py`): subscribes `ORDER_FILLED` (paper, full order details) and `ORDER_UPDATED` (Dhan postbacks, status-gated FILLED/TRADED/COMPLETE with `filled_quantity>0`; symbol/side recorded NULL). Wired in lifespan → `app.state.trade_ledger` + `app.state.current_session_id`.
+- **Ledger API**: `GET /api/analytics/ledger` (fills + per-session aggregates); scorecard gains `fills` and `net_ev_per_session` metrics (`available:false` until closed fill pairs exist — honesty convention; cost = `_COST_PER_FILL` 25.0 = brokerage 20 + slippage 5, matching strategy_hints defaults). AnalyticsPanel renders them via the generic metric cards — no frontend change.
+- **Knowledge v2**: `knowledge/notes.py` operator-note ingest (kind `operator_note`, status `proposed`, heuristic-tagged, human-activated via the existing gate — D12 imports core only); `POST /api/knowledge/notes`; symbol aliases (`SYMBOL_ALIASES`: BANK/BNF→BANKNIFTY, FIN→FINNIFTY, MIDCAP→MIDCPNIFTY, NIFTYNEXT50→NIFTYNXT50) + deterministic `(kind, tag)` tag ordering; KnowledgePanel note composer (DESIGN.md tokens, svelte-check 0 errors, bundle committed).
+
+### Fixed (hygiene wave)
+- `sqlite3.connect(..., timeout=5.0)` on all four stores (research, knowledge, sessions, execution-approvals) — kills the scheduler-tick ↔ manual-run contention on `data/research.db`.
+- Research router tests: module-global snapshot/restore fixture (no cross-test `RESEARCH_DB_PATH`/`_ORCHESTRATOR` leakage).
+- `.gitignore` now un-ignores `__init__.py` (`!**/__init__.py` after `_*.py`) — no more force-add workaround.
+- `regime_at_decision` normalized to lowercase enum values at decide time (projection can carry the uppercase enum name).
+- `AlertProjection` suppresses duplicate alerts within a 30s window (scanner alert spam).
+- `chain_snapshot` research tool now renders watchlist LTP/change via `ProjectionDataSource.chain_summary`; `options_posture` stays `[UNSOURCED]` honestly.
+
+### Known
+- `pair_fills` drops partial-fill remainders (not re-queued) — follow-up noted before live usage.
+- Postback fills carry NULL symbol/side (unknowable at the postback surface); NULL-session groups pair across sessions (unreachable in prod — provider always yields a session).
+- Deferred minors retained: polyline-vs-step chart (documented deliberate deviation), read-endpoint DB auto-create (consistent with ResearchStore pattern), `test_knowledge_api` module-state teardown.
+
 ## [2026-08-01] — v0.10.0: Phase 4 Knowledge Layer (D12) + Analytics Dashboards
 
 Suite: **703 passed / 0 failed / 0 skipped** (was 655). D12 knowledge layer v1 — FTS5 document store for decided research briefs, heuristic tagger, human-gated activation wired to a `knowledge_search` research tool — plus scorecard-core dashboards with a recording track (SessionLog + regime-at-decision). All decisions from the Phase 4 wayfinder map (`.scratch/phase4-knowledge-dashboards/`); multi-broker and backtest depth DECIDED-DEFER.
