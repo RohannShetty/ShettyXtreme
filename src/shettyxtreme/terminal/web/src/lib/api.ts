@@ -261,7 +261,7 @@ export async function saveDataToken(accessToken: string, expiry: string | null =
 }
 
 export async function reauth(): Promise<ConsentStart> {
-  return post<ConsentStart>("/api/settings/reauth");
+  return post<ConsentStart>("/auth/start-consent");
 }
 
 export async function logoutAuth(): Promise<SaveResult> {
