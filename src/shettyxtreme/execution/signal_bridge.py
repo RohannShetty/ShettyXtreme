@@ -49,6 +49,7 @@ def default_hint_builder(data: dict[str, Any]) -> dict[str, Any]:
         "order_type": OrderType.MARKET,
         "product": ProductType.MIS,
         "tag": "signal-v2",
+        "hint_kind": "default",
     }
 
 

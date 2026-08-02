@@ -123,6 +123,7 @@ class ProposalResponse(BaseModel):
     P: float = 1.0
     G: str = "contested"
     source: str = "signal_v2"
+    hint_kind: str = "default"  # default / chain — chain-derived when a real builder is plugged
     signal_id: str = ""
     status: str = "PENDING"  # PENDING / APPROVED / REJECTED / EXPIRED
     reason: str = ""

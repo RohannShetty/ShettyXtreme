@@ -14,16 +14,21 @@ from unittest.mock import AsyncMock
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from pathlib import Path
 
 from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
 from shettyxtreme.core.interfaces.order_executor import OrderResult, OrderStatus
 from shettyxtreme.execution.execution_engine import ExecutionEngine
 from shettyxtreme.execution.mode_router import ModeRoutingExecutor
 from shettyxtreme.execution.paper_trading import PaperTradingEngine
-from shettyxtreme.execution.signal_bridge import ExecutionSignalBridge
+from shettyxtreme.execution.signal_bridge import ExecutionSignalBridge, default_hint_builder
 from shettyxtreme.intelligence.risk.risk_engine import Portfolio, RiskDecision, RiskEngine
 from shettyxtreme.terminal.api import execution_router
 from shettyxtreme.terminal.api.app import app
+
+# Import-time default of a fresh process (captured before the per-test fixture
+# resets the module state, which would hide it).
+_KILL_SWITCH_DEFAULT = execution_router._kill_switch_path
 
 _SIGNAL_UP = {
     "direction": "UP",
@@ -129,6 +134,13 @@ def test_signal_v2_creates_proposal() -> None:
     hint = approval.strategy_hint
     assert hint["symbol"] == "NIFTY"
     assert hint["quantity"] == 75
+    assert hint["hint_kind"] == "default"
+
+
+def test_default_hint_builder_marks_hint_kind_default() -> None:
+    hint = default_hint_builder({})
+    assert hint["hint_kind"] == "default"
+    assert hint["symbol"] == "NIFTY"
 
 
 def test_signal_v2_down_side_is_sell() -> None:
@@ -180,6 +192,7 @@ async def test_approve_paper_routes_to_paper_engine(client: AsyncClient) -> None
     data = resp.json()
     assert data["status"] == "APPROVED"
     assert data["side"] == "BUY"
+    assert data["hint_kind"] == "default"
 
     orders = paper.get_order_book()
     assert len(orders) == 1
@@ -311,6 +324,39 @@ async def test_kill_switch_blocks_approve(client: AsyncClient, tmp_path) -> None
     assert "kill switch" in resp.json()["detail"]
     assert paper.get_order_book() == []
     assert (await _proposals(client))[0]["status"] == "PENDING"
+
+
+@pytest.mark.asyncio
+async def test_stale_kill_switch_file_armed_across_restart(
+    client: AsyncClient, tmp_path, monkeypatch,
+) -> None:
+    """A file armed by a previous process blocks placement after a fresh start.
+
+    The module default is set at import time (not lazily on activation), so a
+    fresh process must honor a stale armed file without any explicit call.
+    """
+    # Fresh-process default points at the armed-file path, never "".
+    assert _KILL_SWITCH_DEFAULT == str(Path.home() / ".shetty_kill_switch")
+    kill_file = tmp_path / ".shetty_kill_switch"
+    kill_file.touch()  # armed by a previous process
+    monkeypatch.setattr(execution_router, "_kill_switch_path", str(kill_file))
+
+    execution_router._current_mode = "PAPER"
+    engine, paper = _make_engine(mode="PAPER", kill_path=str(kill_file))
+    app.state.execution_engine = engine
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
+    proposal = (await _proposals(client))[0]
+
+    assert execution_router.is_kill_switch_armed() is True
+    resp = await client.get("/api/execution/kill-switch")
+    assert resp.status_code == 200
+    assert resp.json()["active"] is True
+
+    resp = await client.post(f"/api/execution/proposals/{proposal['id']}/approve")
+    assert resp.status_code == 400
+    assert "kill switch" in resp.json()["detail"]
+    assert paper.get_order_book() == []
 
 
 def test_mode_router_blocks_when_kill_switch_armed() -> None:

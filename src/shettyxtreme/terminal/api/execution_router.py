@@ -39,7 +39,9 @@ def _save_mode(mode: str) -> None:
         pass
 
 _current_mode: str = _load_mode()
-_kill_switch_path: str = ""
+# Initialized at import time (not lazily in activate_kill_switch) so a kill
+# switch armed by a previous process is honored across restarts.
+_kill_switch_path: str = str(Path.home() / ".shetty_kill_switch")
 
 
 def get_mode_value() -> str:
@@ -82,6 +84,7 @@ def _proposal_response(approval: Any) -> ProposalResponse:
         P=approval.signal.P,
         G=str(approval.signal.G),
         source="signal_v2",
+        hint_kind=str(hint.get("hint_kind", "default")),
         signal_id=approval.signal_id,
         status=approval.status,
         reason=approval.failure_reason or "",
