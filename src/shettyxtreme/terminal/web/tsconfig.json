@@ -8,7 +8,11 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "types": ["vite/client"],
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "$lib": ["./src/lib"],
+      "$lib/*": ["./src/lib/*"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.svelte"]
 }

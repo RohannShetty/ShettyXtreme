@@ -1,9 +1,19 @@
 import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
+import tailwindcss from "@tailwindcss/vite";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
-  plugins: [svelte()],
+  plugins: [tailwindcss(), svelte()],
   base: "/static/",
+  resolve: {
+    alias: {
+      $lib: path.resolve(__dirname, "src/lib"),
+    },
+  },
   build: { outDir: "../static", emptyOutDir: true },
   server: {
     port: 3000,
