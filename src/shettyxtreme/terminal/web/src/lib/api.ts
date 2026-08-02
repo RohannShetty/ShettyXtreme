@@ -284,6 +284,7 @@ export type Proposal = {
   P: number;
   G: string;
   source: string;
+  hint_kind: string; // default / chain — chain-derived when a real builder is plugged
   signal_id: string;
   status: string; // PENDING / APPROVED / REJECTED / EXPIRED
   reason: string;

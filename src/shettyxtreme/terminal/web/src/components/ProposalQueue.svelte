@@ -169,6 +169,9 @@
               <Badge class={convictionClass(convictionLevel(p.conviction))}>
                 {convictionLevel(p.conviction)}
               </Badge>
+              {#if p.hint_kind === "default"}
+                <Badge class="border-warning text-warning">DEFAULT HINT</Badge>
+              {/if}
             </div>
             <div class="line2 mono">
               <span>QTY <b>{p.quantity}</b></span>
