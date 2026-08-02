@@ -8,6 +8,7 @@
   import KnowledgePanel from "./components/KnowledgePanel.svelte";
   import LogDrawer from "./components/LogDrawer.svelte";
   import PositionsRiskStrip from "./components/PositionsRiskStrip.svelte";
+  import ProposalQueue from "./components/ProposalQueue.svelte";
   import ResearchPanel from "./components/ResearchPanel.svelte";
   import ScannerPanel from "./components/ScannerPanel.svelte";
   import SettingsView from "./components/SettingsView.svelte";
@@ -89,6 +90,7 @@
         </Tabs>
       </div>
       <div class="right-col">
+        <ProposalQueue />
         <ResearchPanel />
         <KnowledgePanel />
         <LogDrawer bind:open={drawerOpen} />

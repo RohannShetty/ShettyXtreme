@@ -267,3 +267,58 @@ export async function reauth(): Promise<ConsentStart> {
 export async function logoutAuth(): Promise<SaveResult> {
   return post<SaveResult>("/auth/logout");
 }
+
+// --- Execution: proposals (P4b OBSERVER propose→approve flow) ---
+
+export type Proposal = {
+  id: string;
+  symbol: string;
+  exchange: string;
+  side: string; // BUY / SELL
+  quantity: number;
+  price: number | null;
+  order_type: string;
+  product: string;
+  conviction: number;
+  D: number;
+  P: number;
+  G: string;
+  source: string;
+  signal_id: string;
+  status: string; // PENDING / APPROVED / REJECTED / EXPIRED
+  reason: string;
+  timestamp: string | null;
+};
+
+export type ExecutionMode = { mode: string };
+export type RiskSummary = {
+  daily_pnl: number;
+  margin_used: number;
+  margin_available: number;
+  loss_limit: number;
+  loss_limit_hit: boolean;
+  max_positions: number;
+  active_positions: number;
+};
+
+export async function getProposals(status?: string): Promise<Proposal[]> {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  return get<Proposal[]>(`/api/execution/proposals${qs}`);
+}
+
+export async function approveProposal(id: string, confirm: boolean): Promise<Proposal> {
+  return post<Proposal>(`/api/execution/proposals/${encodeURIComponent(id)}/approve?confirm=${confirm}`);
+}
+
+export async function rejectProposal(id: string, reason = ""): Promise<Proposal> {
+  const qs = reason ? `?reason=${encodeURIComponent(reason)}` : "";
+  return post<Proposal>(`/api/execution/proposals/${encodeURIComponent(id)}/reject${qs}`);
+}
+
+export async function executionMode(): Promise<ExecutionMode> {
+  return get<ExecutionMode>("/api/execution/mode");
+}
+
+export async function riskSummary(): Promise<RiskSummary> {
+  return get<RiskSummary>("/api/execution/risk");
+}
