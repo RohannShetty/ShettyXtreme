@@ -212,3 +212,58 @@ export type SessionCounts = {
   observer: number;
 };
 export type SessionsResponse = { sessions: SessionRecord[]; counts: SessionCounts };
+
+// --- Auth / credential onboarding (P1) ---
+
+export type AuthStatus = {
+  has_api_key: boolean;
+  has_token: boolean;
+  token_valid: boolean;
+  token_expiry: string | null;
+  connected: boolean;
+  setup_complete: boolean;
+  client_name: string | null;
+  client_id: string | null;
+  data_token_valid: boolean;
+  data_token_expiry: string | null;
+};
+
+export type ConsentStart = { consent_app_id: string; login_url: string };
+export type SaveResult = { success: boolean; message: string };
+export type ValidationResult = { valid: boolean; message: string };
+
+export async function authStatus(): Promise<AuthStatus> {
+  return get<AuthStatus>("/auth/status");
+}
+
+export async function saveCredentials(apiKey: string, apiSecret: string): Promise<SaveResult> {
+  return postBody<SaveResult>("/auth/credentials", { api_key: apiKey, api_secret: apiSecret });
+}
+
+export async function testCredentials(apiKey: string, apiSecret: string): Promise<ValidationResult> {
+  return postBody<ValidationResult>("/auth/test", { api_key: apiKey, api_secret: apiSecret });
+}
+
+export async function startConsent(): Promise<ConsentStart> {
+  return post<ConsentStart>("/auth/start-consent");
+}
+
+export async function saveDirectToken(accessToken: string): Promise<SaveResult> {
+  return postBody<SaveResult>("/auth/token", { access_token: accessToken });
+}
+
+export async function savePinTotp(clientId: string, pin: string, totp: string): Promise<SaveResult> {
+  return postBody<SaveResult>("/auth/token/pin-totp", { client_id: clientId, pin, totp });
+}
+
+export async function saveDataToken(accessToken: string, expiry: string | null = null): Promise<SaveResult> {
+  return postBody<SaveResult>("/auth/data-token", { access_token: accessToken, expiry });
+}
+
+export async function reauth(): Promise<ConsentStart> {
+  return post<ConsentStart>("/api/settings/reauth");
+}
+
+export async function logoutAuth(): Promise<SaveResult> {
+  return post<SaveResult>("/auth/logout");
+}
