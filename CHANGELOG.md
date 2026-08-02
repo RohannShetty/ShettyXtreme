@@ -2,7 +2,7 @@
 
 ## [2026-08-02] — v0.11.0: Trades Ledger + Knowledge v2 + Hygiene Wave
 
-Suite: **731 passed / 0 failed / 0 skipped** (was 703). Three tracks: the trades-ledger recording track that unblocks net-EV scoring (ticket 06), knowledge v2 (operator notes + tag refinement), and the deferred-minors hygiene wave.
+Suite: **732 passed / 0 failed / 0 skipped** (was 703). Three tracks: the trades-ledger recording track that unblocks net-EV scoring (ticket 06), knowledge v2 (operator notes + tag refinement), and the deferred-minors hygiene wave.
 
 ### Added
 - **Trades ledger** (`execution/ledger.py`): sqlite `TradeLedger` — idempotent fills on `(order_id, source)`, FIFO opposite-side `pair_fills` (long and short, partial remainders dropped with a noted follow-up), `per_session_summary` (fills/gross notional/realized PnL).
@@ -20,7 +20,7 @@ Suite: **731 passed / 0 failed / 0 skipped** (was 703). Three tracks: the trades
 
 ### Known
 - `pair_fills` drops partial-fill remainders (not re-queued) — follow-up noted before live usage.
-- Postback fills carry NULL symbol/side (unknowable at the postback surface); NULL-session groups pair across sessions (unreachable in prod — provider always yields a session).
+- Postback fills carry NULL symbol/side (unknowable at the postback surface) — excluded from pairing by the `symbol IS NOT NULL` guard, so they never contribute spurious realized PnL until symbol resolution ships.
 - Deferred minors retained: polyline-vs-step chart (documented deliberate deviation), read-endpoint DB auto-create (consistent with ResearchStore pattern), `test_knowledge_api` module-state teardown.
 
 ## [2026-08-01] — v0.10.0: Phase 4 Knowledge Layer (D12) + Analytics Dashboards
