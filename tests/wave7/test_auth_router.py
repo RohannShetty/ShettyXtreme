@@ -118,6 +118,66 @@ def test_dhan_callback_success() -> None:
     assert status["has_token"] is True
 
 
+def test_dhan_callback_triggers_bootstrap(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _record_bootstrap() -> bool:
+        calls.append("boot")
+        return True
+
+    monkeypatch.setattr(_auth_router, "run_terminal_init", _record_bootstrap)
+    app = _make_app()
+    client = TestClient(app, follow_redirects=False)
+
+    client.post(
+        "/auth/credentials",
+        json={"api_key": "trading_key", "api_secret": "trading_secret"},
+    )
+
+    resp = client.get("/auth/dhan/callback?tokenId=tok_trade_123")
+    assert resp.status_code == 307
+    assert "connected=true" in resp.headers["location"]
+    assert calls == ["boot"]
+
+
+def test_dhan_callback_bootstrap_raises_still_connects(monkeypatch) -> None:
+    async def _boom() -> bool:
+        raise RuntimeError("pipeline init exploded")
+
+    monkeypatch.setattr(_auth_router, "run_terminal_init", _boom)
+    app = _make_app()
+    client = TestClient(app, follow_redirects=False)
+
+    client.post(
+        "/auth/credentials",
+        json={"api_key": "trading_key", "api_secret": "trading_secret"},
+    )
+
+    resp = client.get("/auth/dhan/callback?tokenId=tok_trade_123")
+    assert resp.status_code == 307
+    assert "connected=true" in resp.headers["location"]
+
+
+def test_dhan_callback_failure_redirects_fixed_error() -> None:
+    raw_error = "Dhan API 500: some secret material must never leak"
+    _auth_router._oauth.consume_consent = AsyncMock(
+        return_value=ConsumeResult(error=raw_error)
+    )
+    app = _make_app()
+    client = TestClient(app, follow_redirects=False)
+
+    client.post(
+        "/auth/credentials",
+        json={"api_key": "trading_key", "api_secret": "trading_secret"},
+    )
+
+    resp = client.get("/auth/dhan/callback?tokenId=tok_trade_123")
+    assert resp.status_code == 307
+    location = resp.headers["location"]
+    assert "error=Authentication+failed" in location
+    assert "secret material" not in location
+
+
 def test_auth_logout() -> None:
     app = _make_app()
     client = TestClient(app)

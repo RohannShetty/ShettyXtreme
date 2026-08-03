@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
@@ -11,6 +10,7 @@ from pydantic import BaseModel
 from shettyxtreme.auth.credential_store import CredentialStore
 from shettyxtreme.auth.dhan_oauth import DhanOAuthHelper
 from shettyxtreme.auth.validator import CredentialValidator
+from shettyxtreme.terminal.api.terminal_init import run_terminal_init
 
 logger = logging.getLogger(__name__)
 
@@ -221,10 +221,14 @@ async def dhan_callback(tokenId: str) -> RedirectResponse:
             )
             store.client_name = consent.client_name
             store.save()
+            try:
+                await run_terminal_init()
+            except Exception:
+                logger.exception("terminal data pipeline init after login failed")
             return RedirectResponse(url="/static/?connected=true#/setup")
         error_msg = result.error or "Unknown error during consent exchange"
-        logger.error("OAuth callback failed: %s", error_msg)
-        return RedirectResponse(url=f"/static/?error={quote(error_msg)}#/setup")
+        logger.debug("OAuth callback failed: %s", error_msg)
+        return RedirectResponse(url="/static/?error=Authentication+failed#/setup")
 
     except Exception:
         logger.exception("OAuth callback failed")
