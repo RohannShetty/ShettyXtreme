@@ -137,7 +137,7 @@ def test_dhan_callback_triggers_bootstrap(monkeypatch) -> None:
     resp = client.get("/auth/dhan/callback?tokenId=tok_trade_123")
     assert resp.status_code == 307
     assert "connected=true" in resp.headers["location"]
-    assert calls == ["boot"]
+    assert calls == ["boot", "boot"]
 
 
 def test_dhan_callback_bootstrap_raises_still_connects(monkeypatch) -> None:
@@ -292,3 +292,77 @@ def test_status_data_token_fields() -> None:
     assert "data_token_expiry" in data
     assert data["data_token_valid"] is False
     assert data["data_token_expiry"] is None
+
+
+@pytest.mark.parametrize(
+    "path, body, expected_message",
+    [
+        (
+            "/auth/credentials",
+            {"api_key": "cid:::key", "api_secret": "secret"},
+            "Credentials saved",
+        ),
+        (
+            "/auth/token",
+            {"access_token": "eyJhbGciOiJIUzI1NiJ9.eyJkaGFuQ2xpZW50SWQiOiIxMjMifQ.sig"},
+            "Access token saved",
+        ),
+        (
+            "/auth/data-token",
+            {"access_token": "tok", "expiry": None},
+            "Data access token saved",
+        ),
+        (
+            "/auth/token/pin-totp",
+            {"client_id": "123", "pin": "1234", "totp": "123456"},
+            "Access token generated and saved",
+        ),
+    ],
+)
+def test_save_endpoints_trigger_bootstrap(
+    monkeypatch, path: str, body: dict, expected_message: str
+) -> None:
+    calls: list[str] = []
+
+    async def _record_bootstrap() -> bool:
+        calls.append("boot")
+        return True
+
+    if path == "/auth/token/pin-totp":
+        _auth_router._oauth.generate_access_token = AsyncMock(
+            return_value=ConsumeResult(
+                consent=ConsentResult(
+                    access_token="tok_pintotp",
+                    expiry_time="2026-12-31T23:59:59",
+                    client_id="123",
+                    client_name="PIN User",
+                    ddpi_status=True,
+                )
+            )
+        )
+    monkeypatch.setattr(_auth_router, "run_terminal_init", _record_bootstrap)
+    app = _make_app()
+    client = TestClient(app)
+
+    resp = client.post(path, json=body)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data == {"success": True, "message": expected_message}
+    assert calls == ["boot"]
+
+
+def test_save_credentials_bootstrap_raises_still_saves(monkeypatch) -> None:
+    async def _boom() -> bool:
+        raise RuntimeError("pipeline init exploded")
+
+    monkeypatch.setattr(_auth_router, "run_terminal_init", _boom)
+    app = _make_app()
+    client = TestClient(app)
+
+    resp = client.post(
+        "/auth/credentials",
+        json={"api_key": "cid:::key", "api_secret": "secret"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"success": True, "message": "Credentials saved"}
+    assert _get_store().api_key == "key"

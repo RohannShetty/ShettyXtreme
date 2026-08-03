@@ -98,6 +98,18 @@ def _get_store() -> CredentialStore:
     return _store
 
 
+async def _safe_bootstrap() -> None:
+    """Trigger the terminal adapter bootstrap after a credential save.
+
+    Failures are logged and swallowed — a bootstrap problem must never
+    break the save response the caller is about to return.
+    """
+    try:
+        await run_terminal_init()
+    except Exception:
+        logger.warning("terminal adapter bootstrap after credential save failed", exc_info=True)
+
+
 @router.get("/status", response_model=CredentialStatusResponse)
 async def get_status() -> CredentialStatusResponse:
     store = _get_store()
@@ -127,6 +139,7 @@ async def save_credentials(body: CredentialBody) -> SaveResult:
     if client_id:
         store.client_id = client_id
     store.save()
+    await _safe_bootstrap()
     return SaveResult(success=True, message="Credentials saved")
 
 
@@ -146,6 +159,7 @@ async def save_direct_token(body: TokenBody) -> SaveResult:
         client_id=client_id,
     )
     store.save()
+    await _safe_bootstrap()
     return SaveResult(success=True, message="Access token saved")
 
 
@@ -171,6 +185,7 @@ async def save_pin_totp(body: PinTotpBody) -> SaveResult:
         client_id=consent.client_id,
     )
     store.save()
+    await _safe_bootstrap()
     return SaveResult(success=True, message="Access token generated and saved")
 
 
@@ -179,6 +194,7 @@ async def save_data_token(body: DataTokenBody) -> SaveResult:
     store = _get_store()
     store.update_data_token(token=body.access_token, expiry=body.expiry)
     store.save()
+    await _safe_bootstrap()
     return SaveResult(success=True, message="Data access token saved")
 
 
