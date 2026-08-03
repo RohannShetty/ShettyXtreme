@@ -121,13 +121,17 @@ async def test_init_partial_failure_does_not_raise_and_retries() -> None:
 
 @pytest.mark.asyncio
 async def test_init_empty_watchlist_succeeds_without_pipeline() -> None:
+    """Empty watchlist: returns True, no pipeline, marker NOT pinned — so a
+    later re-init retries and self-heals once symbols exist."""
     app = FastAPI()
     app.state.watchlist_projection = _FakeWatchlist({})
     app.state.event_bus = object()
 
     fake_trading_cls = MagicMock()
+    fake_trading_cls.return_value.disconnect = AsyncMock()
     fake_data_cls = MagicMock()
     fake_pipeline_cls = MagicMock()
+    fake_pipeline_cls.return_value.start = AsyncMock()
 
     with (
         patch("shettyxtreme.terminal.api.terminal_init.DhanTradingAdapter", fake_trading_cls),
@@ -140,12 +144,23 @@ async def test_init_empty_watchlist_succeeds_without_pipeline() -> None:
         fake_pipeline_cls.assert_not_called()
         fake_data_cls.return_value.set_symbol_map.assert_called_once()
         assert getattr(app.state, "ingestion_pipeline", None) is None
-        assert getattr(app.state, "terminal_initialized", False) is True
+        assert getattr(app.state, "terminal_initialized", False) is False
 
+        # Watchlist becomes non-empty later — the next re-init must start
+        # pipelines and pin the marker (self-heal).
+        app.state.watchlist_projection = _FakeWatchlist(
+            {"NIFTY": {"exchange": "NSE_FNO", "security_id": "13"}}
+        )
         second = await init_terminal_adapters(app, _FakeStore(), {})
         assert second is True
-        fake_trading_cls.assert_called_once()
-        fake_data_cls.assert_called_once()
+        assert fake_pipeline_cls.call_count == 1
+        fake_pipeline_cls.return_value.start.assert_awaited_once()
+        assert getattr(app.state, "terminal_initialized", False) is True
+
+        third = await init_terminal_adapters(app, _FakeStore(), {})
+        assert third is True
+        assert fake_trading_cls.call_count == 2  # marker pinned — no re-build
+        assert fake_data_cls.call_count == 2
 
 
 @pytest.mark.asyncio

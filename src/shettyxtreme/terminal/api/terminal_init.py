@@ -72,6 +72,7 @@ async def init_terminal_adapters(
         logger.info("Stopped stale IngestionPipeline before re-init")
 
     ok = True
+    pipeline_started = False
     try:
         trading_adapter = DhanTradingAdapter(
             client_id=store.client_id,
@@ -130,6 +131,7 @@ async def init_terminal_adapters(
                 )
                 app.state.ingestion_pipeline = pipeline
                 await pipeline.start(symbols)
+                pipeline_started = True
                 logger.info(
                     "IngestionPipeline started for %s with symbols: %s",
                     feed_segment,
@@ -139,7 +141,9 @@ async def init_terminal_adapters(
         ok = False
         logger.error("Failed to initialize DhanDataAdapter or IngestionPipeline: %s", exc)
 
-    if ok:
+    # Only pin the marker when a pipeline actually started: an empty-watchlist
+    # run stays cheap-to-retry, so a later re-init self-heals once symbols exist.
+    if ok and pipeline_started:
         app.state.terminal_initialized = True
 
     return ok
