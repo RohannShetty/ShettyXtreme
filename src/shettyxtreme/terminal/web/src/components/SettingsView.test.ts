@@ -22,9 +22,10 @@ vi.mock("../lib/api", () => ({
 
 afterEach(cleanup);
 
-import { saveDataToken } from "../lib/api";
+import { authStatus, saveDataToken } from "../lib/api";
 
 const mockSave = vi.mocked(saveDataToken);
+const mockAuth = vi.mocked(authStatus);
 
 test("Save data token button stays disabled until a token is pasted", async () => {
   const { findByPlaceholderText, findByText } = render(SettingsView);
@@ -33,6 +34,11 @@ test("Save data token button stays disabled until a token is pasted", async () =
   expect(saveBtn.disabled).toBe(true);
 
   const field = (await findByPlaceholderText("paste data access token (JWT)")) as HTMLInputElement;
+  await fireEvent.input(field, { target: { value: "   " } });
+
+  const whitespaceBtn = (await findByText("Save data token")) as HTMLButtonElement;
+  expect(whitespaceBtn.disabled).toBe(true);
+
   await fireEvent.input(field, { target: { value: "NIFTY" } });
 
   const enabledBtn = (await findByText("Save data token")) as HTMLButtonElement;
@@ -40,6 +46,7 @@ test("Save data token button stays disabled until a token is pasted", async () =
 });
 
 test("pasting a token and saving calls saveDataToken", async () => {
+  mockAuth.mockClear();
   const { findByPlaceholderText, findByText } = render(SettingsView);
 
   const field = (await findByPlaceholderText("paste data access token (JWT)")) as HTMLInputElement;
@@ -48,6 +55,7 @@ test("pasting a token and saving calls saveDataToken", async () => {
 
   expect(mockSave).toHaveBeenCalledWith("eyJhbGciOiJIUzI1NiJ9.abc");
   expect(field.value).toBe("");
+  expect(mockAuth).toHaveBeenCalledTimes(2); // initial onMount load + post-save reload
 });
 
 test("save failure surfaces the error", async () => {

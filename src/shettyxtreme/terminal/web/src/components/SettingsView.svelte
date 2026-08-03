@@ -78,13 +78,13 @@
         <div class="row"><span class="label">Token expiry</span><span class="value mono">{fmtExpiry(status.token_expiry)}</span></div>
         <div class="row"><span class="label">Data token</span><span class="value mono">{status.data_token_valid ? "VALID" : "NOT SET"}</span></div>
         <div class="row"><span class="label">Data token expiry</span><span class="value mono">{fmtExpiry(status.data_token_expiry)}</span></div>
-        <label class="field">
+        <div class="field">
           <span class="label">Data access token</span>
           <Input class="mono" type="password" bind:value={dataToken} placeholder="paste data access token (JWT)" />
           <div class="actions">
             <Button variant="secondary" onclick={onSaveDataToken} disabled={busy || !dataToken.trim()}>Save data token</Button>
           </div>
-        </label>
+        </div>
         <div class="actions">
           <Button onclick={onReauth} disabled={busy}>Re-auth (open Dhan login)</Button>
           <Button variant="danger" onclick={onLogout} disabled={busy}>Logout</Button>
