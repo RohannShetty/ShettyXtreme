@@ -1,6 +1,7 @@
 """Auth router for onboarding wizard and Dhan OAuth callback."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException
@@ -98,16 +99,21 @@ def _get_store() -> CredentialStore:
     return _store
 
 
+_bootstrap_lock = asyncio.Lock()
+
+
 async def _safe_bootstrap() -> None:
     """Trigger the terminal adapter bootstrap after a credential save.
 
     Failures are logged and swallowed — a bootstrap problem must never
-    break the save response the caller is about to return.
+    break the save response the caller is about to return. Serialized so
+    concurrent saves cannot double-initialize the adapters.
     """
     try:
-        await run_terminal_init()
+        async with _bootstrap_lock:
+            await run_terminal_init()
     except Exception:
-        logger.warning("terminal adapter bootstrap after credential save failed", exc_info=True)
+        logger.error("terminal adapter bootstrap after credential save failed", exc_info=True)
 
 
 @router.get("/status", response_model=CredentialStatusResponse)
