@@ -49,6 +49,7 @@ class WatchlistProjection:
             "ltp": d.get("ltp", existing.get("ltp", 0.0)),
             "change_pct": d.get("change_pct", d.get("change", existing.get("change_pct", 0.0))),
             "volume": d.get("volume", existing.get("volume", 0)),
+            "security_id": d.get("security_id", existing.get("security_id")),
             "timestamp": d.get("timestamp", event.timestamp),
         }
         await ws_bridge.broadcast("tick", {
@@ -58,7 +59,7 @@ class WatchlistProjection:
             "volume": self._data[symbol]["volume"],
         })
 
-    def add(self, symbol: str, exchange: str = "NSE") -> dict[str, Any]:
+    def add(self, symbol: str, exchange: str = "NSE", security_id: str | None = None) -> dict[str, Any]:
         if symbol not in self._data:
             self._data[symbol] = {
                 "symbol": symbol,
@@ -66,6 +67,7 @@ class WatchlistProjection:
                 "ltp": 0.0,
                 "change_pct": 0.0,
                 "volume": 0,
+                "security_id": security_id,
                 "timestamp": None,
             }
         return self._data[symbol]

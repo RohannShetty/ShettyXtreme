@@ -18,6 +18,7 @@ class WatchlistItem(BaseModel):
     change_pct: float = 0.0
     volume: int = 0
     timestamp: datetime | None = None
+    security_id: str | None = None
 
 
 # ── Intelligence ───────────────────────────────────────────────────────────

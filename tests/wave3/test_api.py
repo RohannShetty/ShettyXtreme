@@ -128,6 +128,18 @@ async def test_remove_from_watchlist(client: AsyncClient) -> None:
     assert "RELIANCE" not in symbols
 
 
+@pytest.mark.asyncio
+async def test_get_watchlist_returns_security_id(client: AsyncClient) -> None:
+    """GET must echo the security_id stored on the projection row."""
+    resp = await client.post("/api/watchlist/13?exchange=NSE_FNO")
+    assert resp.status_code == 200
+    assert resp.json()["security_id"] == "13"
+
+    resp2 = await client.get("/api/watchlist")
+    item = next(i for i in resp2.json() if i["symbol"] == "13")
+    assert item["security_id"] == "13"
+
+
 # ── Intelligence ───────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_regime(client: AsyncClient) -> None:

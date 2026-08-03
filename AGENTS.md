@@ -1,3 +1,80 @@
+# AGENTS.md — ShettyXtreme
+
+India-first options intelligence workstation (FastAPI + Svelte 5, Python 3.11). The authoritative blueprints are [`docs/architecture/v2/ARCHITECTURE_V2.md`](docs/architecture/v2/ARCHITECTURE_V2.md) and [`DESIGN.md`](DESIGN.md) (binding for UI work). `CLAUDE.md` and `.projectos/identity/frozen-rules.md` hold the immutable constraints — read them before large changes.
+
+## Commands
+
+```powershell
+# Tests — ALWAYS this exact form (verified):
+#   - .venv\Scripts\python.exe: PATH `python` may be a different venv
+#   - PYTHONPATH="": prevents stray site-packages being picked up
+#   - --basetemp: avoids Windows session-teardown PermissionError quirk
+$env:PYTHONPATH=""; .venv\Scripts\python.exe -m pytest tests/ -q --tb=short --basetemp=C:\Users\rohan\AppData\Local\Temp\pytest-phase2 -p no:cacheprovider
+
+# Single test file / test:
+$env:PYTHONPATH=""; .venv\Scripts\python.exe -m pytest tests/wave7/test_credential_store.py -q --basetemp=... 
+
+# Frontend (Svelte 5 + Vite, in src/shettyxtreme/terminal/web):
+npm run dev      # vite on :3000, proxies /api + /ws to :8000
+npm run check    # svelte-check type gate — 0 errors required before build
+npm run build    # → src/shettyxtreme/terminal/static/ (COMMITTED bundle)
+
+# Run the terminal:
+.venv\Scripts\python.exe run.py --mode OBSERVER   # default; LIVE needs typed confirmation (D10)
+```
+
+## Test Gates (MANUAL — there is no CI in this repo)
+
+Run after every change; the repo has no `.github/` so these are grep/wc/pytest checks, not automation:
+
+1. Full suite passes (command above). Suite: **599 passed / 0 failed / 3 skipped** (v0.8.0).
+2. `grep -r "import openalgo\|from openalgo" src/` → ZERO matches (standalone rule)
+3. No file > 500 lines — **known violations, don't reintroduce more**: `integration/dhan/trading_adapter.py` (529), `integration/dhan/data_adapter.py` (683), `terminal/api/app.py` (565)
+4. `core/` has zero external imports — **known violation**: `core/config/config_manager.py:10` imports `yaml` (pre-existing, slated for fix)
+
+Tests live in `tests/wave1`–`wave8` (feature waves) plus per-module dirs (`core/`, `options/`, `execution/`, `terminal/`, `intelligence/`, `vendor/`). Match the closest existing location when adding tests.
+
+## Architecture rules
+
+- Layered modular monolith; import boundaries are law: `core/` → nothing external; `intelligence/` → core only; `integration/` → core/interfaces + external APIs; `knowledge/` → core only (must NOT import intelligence/ or execution/); `research/` is the only LLM-touching layer (D3 wall — `research/provider.py`).
+- Modules communicate via the asyncio `EventBus` (`core/event_bus/`); no direct cross-layer module-to-module calls.
+- Integration contracts are `typing.Protocol`s in `core/interfaces/`; adapters implement them (`integration/dhan/`).
+- Execution is OBSERVER-first (D10): platform proposes, human approves. OBSERVER is the default mode; `--mode LIVE` requires typed confirmation and never auto-restores.
+- `vendor/openalgo/` is AGPL-3.0 vendored plumbing for **private use only, never distributed**; `src/` must never import it (`scripts/sync_vendor.py` re-syncs, byte-idempotent).
+
+## Docs conventions
+
+- Binding: `docs/architecture/v2/ARCHITECTURE_V2.md` (master + 20 sections, decisions D1–D12, ADRs), `DESIGN.md` (UI design contract).
+- **DESIGN.md is binding for all UI work**: near-black canvas, one accent, Indian price convention — **red = up `#f6525c`, green = down `#2ebd85` — never "fix" this**. Numerals in JetBrains Mono tabular, labels in Inter.
+- Feature work follows the superpowers convention: spec → plan → handoff in `docs/superpowers/{specs,plans,handoffs}/` (dated `YYYY-MM-DD-<topic>.md`). Check for existing specs/plans before starting work.
+- `CHANGELOG.md` is maintained per release with suite counts.
+
+## Version & release
+
+Version is drifted across files — update ALL of these on a bump:
+`src/shettyxtreme/__init__.py` (currently stale at 0.6.0), `src/shettyxtreme/terminal/api/app.py` (0.7.0), `pyproject.toml` (0.7.0), `CHANGELOG.md` (head: 0.8.0), frontend `package.json` (0.6.0).
+
+## Credentials & Dhan
+
+- Single primary consent token (OAuth) serves trading REST + feed WS (D8), Fernet-encrypted at `~/.shettyxtreme/credentials.enc` (machine-derived key). Setup wizard: `#/setup`.
+- Dhan error **806 = Data-API entitlement**, not a credentials bug — surface it, never paper it over.
+- `DEEPSEEK_API_KEY` (research briefers): env-only, read at call time, never logged. `/api/research/*` returns 503 without it.
+- `configs/default.yaml` still carries legacy keys (`data_provider: openalgo`, `openalgo_base_url`) — vestigial, don't rely on them.
+
+## Tooling & skills to use
+
+- **graphify** (plugin, `.opencode/plugins/graphify.js`) — see full workflow below. After modifying code, run `graphify update .` to keep the graph current (AST-only, free).
+- **codegraph** (MCP): `.codegraph/` index exists — call `codegraph_explore` before editing to see a symbol's source + blast radius instead of grep/read loops.
+- **UI work**: use the repo-local `.skills/` skills (design-taste-frontend, ui-ux-pro-max, industrial-brutalist-ui, design-system, ui-styling) with DESIGN.md as the contract.
+- **O2B memory**: project decisions live in the Obsidian Brain vaults — query before repeating past decisions.
+
+## Gotchas
+
+- `server.log` / `server.err` at repo root are runtime artifacts (gitignored); check `server.err` when diagnosing crashes.
+- `.opencode/`, `.codegraph/`, `graphify-out/`, `data/`, `references/`, `.skills/` are gitignored — generated/index state, not source.
+- `scripts/research_smoke.py` is env-gated manual DeepSeek run (exit 2 without key) — never called from tests.
+- Windows: use `.venv\Scripts\python.exe` everywhere; `--basetemp` on pytest to avoid teardown PermissionError.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.

@@ -23,6 +23,33 @@ IST_OFFSET = timedelta(hours=5, minutes=30)
 # These are examples of Indian market holidays that fall on/near Thursdays.
 DEFAULT_HOLIDAYS: set[str] = set()
 
+# Exchange aliases: UI/exchange names ↔ Dhan feed segment names stored in
+# the security CSV (e.g. NSE_EQ is stored for NSE equities).
+_EXCHANGE_ALIASES: dict[str, tuple[str, ...]] = {
+    "NSE": ("NSE", "NSE_EQ"),
+    "NFO": ("NFO", "NSE_FNO"),
+    "BSE": ("BSE", "BSE_EQ"),
+    "BFO": ("BFO", "BSE_FNO"),
+    "NSE_FNO": ("NSE_FNO", "NFO"),
+    "NSE_EQ": ("NSE_EQ", "NSE"),
+    "BSE_EQ": ("BSE_EQ", "BSE"),
+    "BSE_FNO": ("BSE_FNO", "BFO"),
+}
+
+# CSV (SEM_EXM_EXCH_ID, SEM_SEGMENT) -> Dhan feed segment stored in `exchange`.
+_SEGMENT_EXCHANGE: dict[tuple[str, str], str] = {
+    ("NSE", "E"): "NSE_EQ", ("NSE", "I"): "NSE_FNO",
+    ("NSE", "F"): "NSE_FNO", ("NSE", "C"): "NSE_FNO",
+    ("BSE", "E"): "BSE_EQ", ("BSE", "I"): "BSE_FNO",
+    ("BSE", "F"): "BSE_FNO", ("BSE", "C"): "BSE_FNO",
+}
+
+# Expected columns for the instruments table (schema v2: no PK on security_id).
+_EXPECTED_COLUMNS: frozenset[str] = frozenset({
+    "security_id", "symbol", "exchange", "instrument_type",
+    "isin", "company_name", "strike", "expiry",
+})
+
 
 class InstrumentMaster:
     """Manages instrument metadata from Dhan API.
@@ -61,16 +88,20 @@ class InstrumentMaster:
     def _init_db(self) -> None:
         """Initialize the SQLite database with schema."""
         self._conn = sqlite3.connect(self._db_path)
+        self._drop_legacy_schema()
         self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS instruments (
-                security_id TEXT PRIMARY KEY,
+                security_id TEXT NOT NULL,
                 symbol TEXT NOT NULL,
                 exchange TEXT NOT NULL,
                 instrument_type TEXT,
                 isin TEXT,
                 company_name TEXT,
-                UNIQUE(symbol, exchange)
+                strike TEXT,
+                expiry TEXT,
+                UNIQUE(symbol, exchange),
+                UNIQUE(exchange, security_id)
             )
             """
         )
@@ -82,67 +113,161 @@ class InstrumentMaster:
         )
         self._conn.commit()
 
+    def _drop_legacy_schema(self) -> None:
+        """Drop a pre-v2 instruments table (security_id PRIMARY KEY, no strike/expiry)."""
+        columns: set[str] = set()
+        try:
+            for row in self._conn.execute("PRAGMA table_info(instruments)"):
+                columns.add(str(row[1]))
+        except sqlite3.Error:
+            columns = set()
+        if columns and columns != _EXPECTED_COLUMNS:
+            logger.warning("instruments table has incompatible schema — dropping and recreating")
+            self._conn.execute("DROP TABLE IF EXISTS instruments")
+            self._conn.commit()
+
+    def count_instruments(self) -> int:
+        """Return the number of instruments stored in the local database."""
+        cursor = self._conn.execute("SELECT COUNT(*) FROM instruments")
+        row = cursor.fetchone()
+        return int(row[0]) if row is not None else 0
+
     def fetch_security_list(self) -> int:
         """Fetch security list from Dhan API and store in SQLite.
 
+        Accepts the dhanhq SDK shapes (a pandas DataFrame from the static
+        CSV download with SEM_* columns, or a list of row dicts with
+        SECURITY_ID / TRADING_SYMBOL / EXCHANGE keys) and stores the
+        security ID, trading symbol, feed segment, type, and company name.
+
         Returns:
-            Number of instruments inserted/updated.
+            Number of instruments inserted/updated, or 0 if nothing was
+            inserted (the caller must not report a fake population).
         """
         if self._dhan is None:
             logger.warning("No Dhan client configured for fetch_security_list.")
             return 0
         try:
             data: Any = self._dhan.fetch_security_list()
+            if hasattr(data, "to_dict"):  # pandas DataFrame from the real SDK
+                rows = data.to_dict("records")
+            elif isinstance(data, list):
+                rows = data
+            else:
+                rows = []
             count: int = 0
-            if isinstance(data, list):
-                for row in data:
-                    if not isinstance(row, dict):
-                        continue
-                    self._conn.execute(
-                        """
-                        INSERT OR REPLACE INTO instruments
-                        (security_id, symbol, exchange, instrument_type, isin, company_name)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            str(row.get("SECURITY_ID", row.get("security_id", ""))),
-                            str(row.get("TRADING_SYMBOL", row.get("symbol", ""))),
-                            str(row.get("EXCHANGE", row.get("exchange", ""))),
-                            str(row.get("INSTRUMENT_TYPE", row.get("instrument_type", ""))),
-                            str(row.get("ISIN", row.get("isin", ""))),
-                            str(row.get("COMPANY_NAME", row.get("company_name", ""))),
-                        ),
-                    )
-                    count += 1
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                security_id = str(row.get("SEM_SMST_SECURITY_ID", row.get("SECURITY_ID", row.get("security_id", ""))))
+                if not security_id:
+                    continue
+                self._conn.execute(
+                    """
+                    INSERT OR REPLACE INTO instruments
+                    (security_id, symbol, exchange, instrument_type, isin, company_name, strike, expiry)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        security_id,
+                        str(row.get("SEM_TRADING_SYMBOL", row.get("TRADING_SYMBOL", row.get("symbol", "")))),
+                        self._row_exchange(row),
+                        str(row.get("SEM_EXCH_INSTRUMENT_TYPE", row.get("INSTRUMENT_TYPE", row.get("instrument_type", "")))),
+                        str(row.get("ISIN", row.get("isin", ""))),
+                        str(row.get("SM_SYMBOL_NAME", row.get("COMPANY_NAME", row.get("company_name", "")))),
+                        str(row.get("SEM_STRIKE_PRICE", row.get("strike", ""))),
+                        str(row.get("SEM_EXPIRY_DATE", row.get("expiry", ""))),
+                    ),
+                )
+                count += 1
             self._conn.commit()
+            if count == 0:
+                logger.error("fetch_security_list: zero rows inserted — source keys mismatched?")
+                return 0
             logger.info("Fetched %d instruments from Dhan.", count)
             return count
         except Exception as exc:
             logger.error("fetch_security_list failed: %s", exc)
             return 0
 
+    @staticmethod
+    def _row_exchange(row: dict[str, Any]) -> str:
+        """Derive the Dhan feed segment from a CSV row (SEM_EXM_EXCH_ID + SEM_SEGMENT).
+
+        Falls back to the legacy EXCHANGE/EXCHANGE_SEGMENT keys verbatim.
+        """
+        sem_exch = row.get("SEM_EXM_EXCH_ID")
+        sem_seg = row.get("SEM_SEGMENT")
+        if sem_exch and sem_seg:
+            ex = str(sem_exch).upper()
+            seg = str(sem_seg).upper()
+            if ex == "MCX":
+                return "MCX"
+            return _SEGMENT_EXCHANGE.get((ex, seg), ex)
+        return str(
+            row.get("EXCHANGE_SEGMENT", row.get("EXCHANGE", row.get("exchange", "")))
+        )
+
     def resolve_symbol(self, symbol: str, exchange: str = "NSE") -> str | None:
         """Resolve a trading symbol to its Dhan security ID.
 
         Args:
             symbol: The trading symbol (e.g., 'RELIANCE').
-            exchange: The exchange (NSE, BSE, etc.).
+            exchange: The exchange (NSE, BSE, etc.) or a feed segment
+                (NSE_EQ, NSE_FNO) — aliases are normalized.
 
         Returns:
             The security ID string, or None if not found.
         """
+        exchange_upper = exchange.upper()
+        aliases = _EXCHANGE_ALIASES.get(exchange_upper, (exchange_upper,))
+        placeholders = ",".join("?" for _ in aliases)
         cursor = self._conn.execute(
-            "SELECT security_id FROM instruments WHERE symbol = ? AND exchange = ?",
-            (symbol.upper(), exchange.upper()),
+            f"SELECT security_id FROM instruments WHERE UPPER(symbol) = ? AND UPPER(exchange) IN ({placeholders})",
+            (symbol.upper(), *aliases),
         )
-        row: tuple[Any, ...] | None = cursor.fetchone()
+        row = cursor.fetchone()
         if row is not None:
             return str(row[0])
 
-        # Fallback: try case-insensitive
+        # Fallback: ignore the exchange entirely (one security ID per scrip).
+        # ORDER BY exchange keeps the result deterministic when a symbol lists
+        # on several exchanges (NSE_* sorts before BSE_*).
         cursor = self._conn.execute(
-            "SELECT security_id FROM instruments WHERE UPPER(symbol) = ? AND UPPER(exchange) = ?",
-            (symbol.upper(), exchange.upper()),
+            "SELECT security_id FROM instruments WHERE UPPER(symbol) = ? ORDER BY exchange",
+            (symbol.upper(),),
+        )
+        row = cursor.fetchone()
+        return str(row[0]) if row is not None else None
+
+    def resolve_security_id(self, security_id: str | int, exchange: str | None = None) -> str | None:
+        """Resolve a Dhan security ID to its trading symbol (reverse lookup).
+
+        Args:
+            security_id: The Dhan security ID (e.g., '13' for NIFTY).
+            exchange: Optional exchange filter (NSE, NSE_FNO, etc.).
+
+        Returns:
+            The trading symbol (e.g., 'NIFTY'), or None if not found.
+        """
+        if exchange:
+            exchange_upper = exchange.upper()
+            aliases = _EXCHANGE_ALIASES.get(exchange_upper, (exchange_upper,))
+            placeholders = ",".join("?" for _ in aliases)
+            cursor = self._conn.execute(
+                f"SELECT symbol FROM instruments WHERE security_id = ? AND UPPER(exchange) IN ({placeholders})",
+                (str(security_id), *aliases),
+            )
+            row = cursor.fetchone()
+            if row is not None:
+                return str(row[0])
+        # Fallback without an exchange: security IDs repeat across segments
+        # (13 = ABB on NSE_EQ and NIFTY on NSE_FNO), so the result is
+        # ambiguous — callers should pass an exchange. ORDER BY exchange keeps
+        # whatever it returns deterministic.
+        cursor = self._conn.execute(
+            "SELECT symbol FROM instruments WHERE security_id = ? ORDER BY exchange",
+            (str(security_id),),
         )
         row = cursor.fetchone()
         return str(row[0]) if row is not None else None

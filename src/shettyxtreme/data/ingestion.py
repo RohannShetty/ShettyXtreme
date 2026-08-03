@@ -31,6 +31,7 @@ class IngestionPipeline:
         dhan_client_id: str = "",
         dhan_access_token: str = "",
         exchange: str = "NSE",
+        symbol_map: dict[str, str] | None = None,
     ) -> None:
         self._event_bus = event_bus
         self._ts_store = ts_store
@@ -40,8 +41,14 @@ class IngestionPipeline:
             dhan_access_token=dhan_access_token,
             exchange=exchange,
         )
+        if symbol_map:
+            self._stream.set_symbol_map(symbol_map)
         self._bar_builder = BarBuilder(event_bus=event_bus, ts_store=ts_store)
         self._running = False
+
+    def set_symbol_map(self, symbol_map: dict[str, str]) -> None:
+        """Map Dhan security IDs to display symbols for inbound ticks."""
+        self._stream.set_symbol_map(symbol_map)
 
     async def start(self, symbols: list[str]) -> None:
         """Start the full data pipeline.

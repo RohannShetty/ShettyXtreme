@@ -44,6 +44,7 @@ class StreamManager:
         self._access_token = dhan_access_token
         self._exchange = exchange
         self._instruments: list[tuple[str, str, int]] = []
+        self._symbol_map: dict[str, str] = {}
         self._running = False
         self._connected = False
         self._ws_task: asyncio.Task[None] | None = None
@@ -53,6 +54,14 @@ class StreamManager:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def set_symbol_map(self, symbol_map: dict[str, str]) -> None:
+        """Map Dhan security IDs to display symbols (e.g. {"13": "NIFTY"}).
+
+        Incoming ticks are keyed by security ID; this map resolves them to
+        the trading symbol the rest of the app keys on (watchlist, pipeline).
+        """
+        self._symbol_map = dict(symbol_map)
 
     def set_instruments(self, symbols: list[str]) -> None:
         """Set the list of instrument symbols to subscribe to.
@@ -182,10 +191,15 @@ class StreamManager:
         for raw in raw_ticks:
             try:
                 tick = self._parse_tick(raw)
-                if tick is not None:
-                    await self._event_bus.publish_nowait(
-                        Event(topic=Topic.MARKET_DATA_TICK, data=tick, source="stream_manager"),
-                    )
+                if tick is None:
+                    continue
+                # Ticks arrive keyed by security ID; resolve to the display
+                # symbol the watchlist/pipeline key on (falls back to ID).
+                if tick.symbol in self._symbol_map:
+                    tick.symbol = self._symbol_map[tick.symbol]
+                await self._event_bus.publish_nowait(
+                    Event(topic=Topic.MARKET_DATA_TICK, data=tick, source="stream_manager"),
+                )
             except Exception:
                 logger.exception("Failed to process tick: %s", raw)
 

@@ -50,32 +50,20 @@ Graph: 2423 nodes / 4601 edges / 152 communities / 87% EXTRACTED / 13% INFERRED 
 4. Functional test: make one trivial tracked change (e.g. append a blank line to a harmless doc) and commit it; confirm the hook ran (check graphify log or updated-at stamp) and did NOT error.
 5. Commit message: `chore: test graphify post-commit hook freshness automation`.
 
-## Task 4 — Semantic extraction (LLM-enriched graph)
+## Task 4 — Semantic extraction (LLM-enriched graph) — **SKIPPED (blocked on auth, low value)**
 **DEPENDS ON:** Task 3.
-**MODIFIES:** `graphify-out/graph.json`, `graphify-out/cost.json` (both ignored). Uses the headroom proxy (`OPENAI_BASE_URL=http://127.0.0.1:8787/v1`, `OPENAI_API_KEY` set, model `deepseek-chat`).
-**VERIFY:** `graphify extract --backend openai --mode deep` completes; node/edge counts increase (especially INFERRED edges); cost.json records spend > 0.
+**STATUS:** Attempted via opencode Zen; **skipped after verified blocker** — the `openai` backend of graphify requires `OPENAI_API_KEY` to be non-empty (cli.py gate), but the Zen endpoint accepts only an empty/no `Authorization` header (401 `AuthError` on any real key, whitespace keys rejected at the HTTP layer as illegal header values). The headroom proxy (`127.0.0.1:8787`) is not an LLM provider (401). The AST-only graph already satisfies the project's needs (labels, INFERRED edges, query tools, hook, MCP), so the marginal gain (conceptual names, cost.json demo) does not justify it.
 **COMMIT:** none (ignored artifacts).
 
-1. Run `graphify extract . --backend openai --mode deep` (no `--force` — graph is fresh).
-2. Wait for completion; record before/after node+edge counts in report.
-3. Check `graphify-out/cost.json` — record total spend and per-step breakdown.
-4. Confirm `graphify-out/graph.json` was rebuilt (timestamp/size).
-5. NO COMMIT (graphify-out ignored).
+NOTE: While attempting this, the graphifyy uv-tool venv was repaired — `uv tool install "graphifyy[openai]" --force` (openai extra added, both executables restored). Verified: CLI works, hook interpreter imports graphify + openai, graph intact (2438/4615), hooks installed. This repair is required infrastructure, not a plan deviation.
 
-## Task 5 — Community labeling (LLM) + cluster-only
-**DEPENDS ON:** Task 4 (enriched graph).
-**MODIFIES:** `graphify-out/.graphify_labels.json` + graph.json labels (ignored). LLM calls via proxy.
-**VERIFY:** label file exists and non-empty; labeled graph shows human-readable community names; cost.json reflects the label pass.
+## Task 5 — Community labeling (LLM) + cluster-only — **SKIPPED (same blocker as Task 4)**
+**DEPENDS ON:** Task 4 (enriched graph) — not available.
+**STATUS:** Skipped with Task 4. Deterministic labels (`.graphify_labels.json`) already present and human-readable. `--cluster-only` remains a valid no-LLM fallback if labels ever need regeneration.
 **COMMIT:** none (ignored).
 
-1. Run `graphify label . --backend openai --batch-size 50` (proxy model).
-2. Verify `graphify-out/.graphify_labels.json` exists, non-empty, covers communities.
-3. Run `graphify label . --cluster-only` (deterministic labels, no LLM) — record what changes.
-4. Record cost delta in report.
-5. NO COMMIT.
-
 ## Task 6 — Exports & artifacts
-**DEPENDS ON:** Task 5.
+**DEPENDS ON:** Task 3 (Task 4/5 skipped — exports run fine on the AST-only graph).
 **MODIFIES:** `graphify-out/` wiki + exports (ignored).
 **VERIFY:** each artifact exists and is non-trivial (sizes listed in report); wiki/ contains per-community .md files; svg/callflow html render paths resolve.
 **COMMIT:** none (ignored).
@@ -87,7 +75,7 @@ Graph: 2423 nodes / 4601 edges / 152 communities / 87% EXTRACTED / 13% INFERRED 
 5. NO COMMIT.
 
 ## Task 7 — Impact-analysis workflow
-**DEPENDS ON:** Task 6.
+**DEPENDS ON:** Task 3 (hook live).
 **MODIFIES:** AGENTS.md (append workflow section), `graphify-out/` memory + reflections (ignored).
 **VERIFY:** AGENTS.md workflow section present; `graphify affected`/`query --dfs`/`path`/`explain` output sensible on a real example; reflection file exists.
 **COMMIT:** AGENTS.md only (do NOT `git add -A`).

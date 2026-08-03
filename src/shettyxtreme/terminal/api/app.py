@@ -45,6 +45,7 @@ from shettyxtreme.terminal.api.execution_router import (
     router as execution_router,
 )
 from shettyxtreme.terminal.api.health_router import router as health_router
+from shettyxtreme.terminal.api.instrument_init import init_instrument_master
 from shettyxtreme.terminal.api.intelligence_router import router as intelligence_router
 from shettyxtreme.terminal.api.learning_router import router as learning_router
 from shettyxtreme.terminal.api.research_router import router as research_router
@@ -160,6 +161,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Store adapters and pipeline on app.state for router access
     app.state.trading_adapter = None
     app.state.data_adapter = None
+    app.state.instrument_master = None
     app.state.ingestion_pipeline = None
     app.state.event_bus = _event_bus
 
@@ -326,14 +328,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # ── Seed watchlist from YAML FIRST (before pipeline needs it) ───────────
     watchlist_path = Path(__file__).resolve().parent.parent.parent.parent.parent / "configs" / "default_watchlist.yaml"
+    symbol_map: dict[str, str] = {}
     if watchlist_path.exists():
         import yaml
         with open(watchlist_path, "r") as f:
             watchlist_data = yaml.safe_load(f)
         for idx in watchlist_data.get("default_watchlist", {}).get("indices", []):
-            sec_id = idx["security_id"]
+            sec_id = str(idx["security_id"])
+            name = idx.get("name", sec_id)
             exchange = idx.get("exchange", "NSE_FNO")
-            watchlist_proj.add(str(sec_id), exchange)
+            watchlist_proj.add(name, exchange, security_id=sec_id)
+            symbol_map[sec_id] = name
         logger.info(
             "Default watchlist seeded with %d instruments",
             len(watchlist_data.get("default_watchlist", {}).get("indices", [])),
@@ -361,6 +366,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             app.state.data_adapter = _data_adapter
             logger.info("DhanDataAdapter initialized")
+            _data_adapter.set_symbol_map(symbol_map)
+
+            # Instrument master: symbol <-> security ID resolution for the
+            # watchlist add path.
+            app.state.instrument_master = init_instrument_master(_data_adapter)
 
             # Group watchlist symbols by exchange for correct MarketFeed subscription
             watchlist_data_proj = watchlist_proj.get()
@@ -371,7 +381,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     exch = info.get("exchange", "NSE_FNO")
                     # Map exchange names to Dhan feed segments
                     feed_segment = {"NSE_FNO": "NSE_FNO", "NSE": "NSE_EQ", "BSE": "BSE_EQ"}.get(exch, exch)
-                    exchange_groups.setdefault(feed_segment, []).append(sym)
+                    # The feed subscribes by security ID; the projection is keyed
+                    # by display name (watchlist rows must show NIFTY, not 13).
+                    feed_symbol = info.get("security_id") or sym
+                    exchange_groups.setdefault(feed_segment, []).append(feed_symbol)
 
                 ts_store = TimeSeriesStore()
                 # Start one pipeline per exchange segment
@@ -384,6 +397,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         dhan_client_id=store.client_id,
                         dhan_access_token=store.access_token,
                         exchange=pipeline_exchange,
+                        symbol_map=symbol_map,
                     )
                     app.state.ingestion_pipeline = _ingestion_pipeline
                     await _ingestion_pipeline.start(symbols)

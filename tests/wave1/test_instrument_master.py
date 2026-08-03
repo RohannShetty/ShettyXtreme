@@ -137,6 +137,151 @@ class TestSymbolResolution:
         assert count == 0
         im.close()
 
+    def test_resolve_security_id_reverse_lookup(self, instrument_master: InstrumentMaster) -> None:
+        """resolve_security_id should return the trading symbol for an ID."""
+        instrument_master.fetch_security_list()
+        assert instrument_master.resolve_security_id("11536") == "RELIANCE"
+        assert instrument_master.resolve_security_id("3456") == "TATAMOTORS"
+
+    def test_resolve_security_id_unknown(self, instrument_master: InstrumentMaster) -> None:
+        """resolve_security_id should return None for an unknown ID."""
+        instrument_master.fetch_security_list()
+        assert instrument_master.resolve_security_id("999999") is None
+
+    def test_resolve_symbol_exchange_alias(self, instrument_master: InstrumentMaster) -> None:
+        """resolve_symbol should accept feed-segment names (NSE_EQ) as aliases."""
+        instrument_master.fetch_security_list()
+        assert instrument_master.resolve_symbol("RELIANCE", "NSE_EQ") == "11536"
+
+    def test_fetch_security_list_dataframe(self, temp_db_path: str) -> None:
+        """fetch_security_list should read the real SDK CSV columns (SEM_*)."""
+        mock_dhan = MagicMock()
+        import pandas as pd
+
+        mock_dhan.fetch_security_list.return_value = pd.DataFrame(
+            [
+                {
+                    "SEM_EXM_EXCH_ID": "NSE", "SEM_SEGMENT": "I",
+                    "SEM_SMST_SECURITY_ID": "13", "SEM_INSTRUMENT_NAME": "INDEX",
+                    "SEM_EXPIRY_CODE": "0", "SEM_TRADING_SYMBOL": "NIFTY",
+                    "SEM_EXCH_INSTRUMENT_TYPE": "INDEX", "SEM_SERIES": "INDEX",
+                    "SM_SYMBOL_NAME": "NIFTY 50",
+                },
+                {
+                    "SEM_EXM_EXCH_ID": "NSE", "SEM_SEGMENT": "E",
+                    "SEM_SMST_SECURITY_ID": "2885", "SEM_INSTRUMENT_NAME": "EQUITY",
+                    "SEM_EXPIRY_CODE": "0", "SEM_TRADING_SYMBOL": "RELIANCE",
+                    "SEM_EXCH_INSTRUMENT_TYPE": "EQUITY", "SEM_SERIES": "EQ",
+                    "SM_SYMBOL_NAME": "Reliance Industries",
+                },
+            ]
+        )
+        im = InstrumentMaster(db_path=temp_db_path, dhan_client=mock_dhan)
+        assert im.fetch_security_list() == 2
+        # Segment I maps to the NSE_FNO feed; segment E to NSE_EQ.
+        assert im.resolve_symbol("NIFTY", "NSE_FNO") == "13"
+        assert im.resolve_symbol("RELIANCE", "NSE_EQ") == "2885"
+        assert im.resolve_security_id("2885", "NSE_EQ") == "RELIANCE"
+        im.close()
+
+    def test_fetch_security_list_wrong_keys_returns_zero(self, temp_db_path: str) -> None:
+        """A DataFrame without any recognized key must not poison the DB (C1 guard)."""
+        mock_dhan = MagicMock()
+        import pandas as pd
+
+        mock_dhan.fetch_security_list.return_value = pd.DataFrame(
+            [{"FOO": "1", "BAR": "2"}, {"FOO": "3", "BAR": "4"}]
+        )
+        im = InstrumentMaster(db_path=temp_db_path, dhan_client=mock_dhan)
+        assert im.fetch_security_list() == 0
+        assert im.count_instruments() == 0
+        im.close()
+
+    def test_security_id_collision_across_segments(self, temp_db_path: str) -> None:
+        """The same security ID on different segments must both survive (13 = ABB + NIFTY)."""
+        mock_dhan = MagicMock()
+        import pandas as pd
+
+        mock_dhan.fetch_security_list.return_value = pd.DataFrame(
+            [
+                {
+                    "SEM_EXM_EXCH_ID": "NSE", "SEM_SEGMENT": "E",
+                    "SEM_SMST_SECURITY_ID": "13", "SEM_TRADING_SYMBOL": "ABB",
+                    "SEM_EXCH_INSTRUMENT_TYPE": "EQUITY", "SM_SYMBOL_NAME": "ABB Ltd",
+                },
+                {
+                    "SEM_EXM_EXCH_ID": "NSE", "SEM_SEGMENT": "I",
+                    "SEM_SMST_SECURITY_ID": "13", "SEM_TRADING_SYMBOL": "NIFTY",
+                    "SEM_EXCH_INSTRUMENT_TYPE": "INDEX", "SM_SYMBOL_NAME": "NIFTY 50",
+                },
+            ]
+        )
+        im = InstrumentMaster(db_path=temp_db_path, dhan_client=mock_dhan)
+        assert im.fetch_security_list() == 2
+        assert im.count_instruments() == 2
+        assert im.resolve_symbol("NIFTY", "NSE_FNO") == "13"
+        assert im.resolve_symbol("ABB", "NSE_EQ") == "13"
+        assert im.resolve_security_id("13", "NSE_FNO") == "NIFTY"
+        assert im.resolve_security_id("13", "NSE_EQ") == "ABB"
+        im.close()
+
+    def test_resolve_symbol_fallback_is_deterministic(self, temp_db_path: str) -> None:
+        """Exchange-less fallback returns the ORDER BY exchange row, not insertion order."""
+        mock_dhan = MagicMock()
+        import pandas as pd
+
+        # NSE row inserted first; BSE_EQ sorts before NSE_EQ.
+        mock_dhan.fetch_security_list.return_value = pd.DataFrame(
+            [
+                {
+                    "SEM_EXM_EXCH_ID": "NSE", "SEM_SEGMENT": "E",
+                    "SEM_SMST_SECURITY_ID": "11536", "SEM_TRADING_SYMBOL": "RELIANCE",
+                },
+                {
+                    "SEM_EXM_EXCH_ID": "BSE", "SEM_SEGMENT": "E",
+                    "SEM_SMST_SECURITY_ID": "5254", "SEM_TRADING_SYMBOL": "RELIANCE",
+                },
+            ]
+        )
+        im = InstrumentMaster(db_path=temp_db_path, dhan_client=mock_dhan)
+        assert im.fetch_security_list() == 2
+        # No exchange aliases match MCX, so the fallback runs.
+        assert im.resolve_symbol("RELIANCE", "MCX") == "5254"
+        im.close()
+
+    def test_legacy_schema_dropped_and_recreated(self, temp_db_path: str) -> None:
+        """A pre-v2 instruments table (security_id PRIMARY KEY) must be replaced."""
+        import sqlite3
+
+        db = temp_db_path
+        conn = sqlite3.connect(db)
+        try:
+            conn.execute(
+                """
+                CREATE TABLE instruments (
+                    security_id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    exchange TEXT NOT NULL,
+                    instrument_type TEXT,
+                    isin TEXT,
+                    company_name TEXT,
+                    UNIQUE(symbol, exchange)
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO instruments VALUES ('13', 'NIFTY', 'NSE_FNO', 'INDEX', '', '')"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        im = InstrumentMaster(db_path=db, dhan_client=MagicMock())
+        try:
+            assert im.count_instruments() == 0  # legacy table dropped
+        finally:
+            im.close()
+
 
 # ---------------------------------------------------------------------------
 # Weekly expiry tests

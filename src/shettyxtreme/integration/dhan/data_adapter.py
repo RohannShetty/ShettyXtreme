@@ -119,6 +119,7 @@ class DhanDataAdapter:
         self._ws_connected: bool = False
         self._tick_callbacks: dict[str, TickCallback] = {}
         self._bar_callbacks: dict[str, tuple[str, BarCallback]] = {}
+        self._symbol_map: dict[str, str] = {}
         self._last_tick_time: float = 0.0
         self.last_error: str | None = None
         self.entitlement_error: bool = False
@@ -401,6 +402,45 @@ class DhanDataAdapter:
         if not self._local_close:
             feed._running = False
 
+    def set_symbol_map(self, symbol_map: dict[str, str]) -> None:
+        """Map Dhan security IDs to display symbols (e.g. {"13": "NIFTY"}).
+
+        Incoming ticks are keyed by security ID; this map resolves them to
+        the trading symbol the rest of the app keys on (watchlist, pipeline).
+        """
+        self._symbol_map = dict(symbol_map)
+
+    def _display_symbol(self, security_id: str) -> str:
+        """Resolve a raw security ID to its display symbol, if known."""
+        return self._symbol_map.get(security_id, security_id)
+
+    @property
+    def dhan_client(self) -> DhanHQClient | None:
+        """The underlying DhanHQ client (data context)."""
+        return self._dhan
+
+    def _dispatch_tick(self, tick: Tick) -> None:
+        """Dispatch one Tick to its callback, resolving the symbol on the Tick.
+
+        The callback lookup uses the RAW security ID first (callers register
+        under whatever key they subscribed with); if that misses, the symbol
+        is resolved through the map and looked up again. The resolved display
+        symbol is always written onto the Tick.
+        """
+        raw: str = tick.symbol
+        cb: TickCallback | None = self._tick_callbacks.get(raw)
+        if cb is None:
+            resolved: str = self._display_symbol(raw)
+            if resolved != raw:
+                cb = self._tick_callbacks.get(resolved)
+            tick.symbol = resolved
+        else:
+            tick.symbol = self._display_symbol(raw)
+        if cb is not None:
+            result = cb(tick)
+            if asyncio.iscoroutine(result):
+                asyncio.ensure_future(result)
+
     def _process_ws_tick(self, tick_data: Any) -> None:
         """Process incoming WebSocket tick data and dispatch callbacks."""
         if tick_data is None:
@@ -410,19 +450,12 @@ class DhanDataAdapter:
         if isinstance(tick_data, (bytes, bytearray)):
             tick: Tick | None = self._parse_binary_tick(tick_data)
             if tick is not None:
-                cb: TickCallback | None = self._tick_callbacks.get(tick.symbol)
-                if cb is not None:
-                    result = cb(tick)
-                    if asyncio.iscoroutine(result):
-                        asyncio.ensure_future(result)
+                self._dispatch_tick(tick)
         elif isinstance(tick_data, dict):
-            symbol: str = str(tick_data.get("security_id", tick_data.get("symbol", "")))
-            tick_obj: Tick = self._parse_dict_tick(symbol, tick_data)
-            cb2: TickCallback | None = self._tick_callbacks.get(symbol)
-            if cb2 is not None:
-                result_t = cb2(tick_obj)
-                if asyncio.iscoroutine(result_t):
-                    asyncio.ensure_future(result_t)
+            raw_symbol: str = str(
+                tick_data.get("security_id", tick_data.get("symbol", ""))
+            )
+            self._dispatch_tick(self._parse_dict_tick(raw_symbol, tick_data))
 
     @staticmethod
     def _parse_binary_tick(data: bytes) -> Tick | None:

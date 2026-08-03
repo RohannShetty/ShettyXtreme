@@ -619,3 +619,63 @@ class TestDataTokenRenewal:
                 "status": "failure",
             }
             assert data_adapter._renew_token_sync() is False
+
+
+class TestTickSymbolResolution:
+    """Tests for _display_symbol and _process_ws_tick dispatch."""
+
+    def test_display_symbol_resolves_known_id(self, data_adapter) -> None:
+        data_adapter.set_symbol_map({"13": "NIFTY"})
+        assert data_adapter._display_symbol("13") == "NIFTY"
+
+    def test_display_symbol_falls_back_to_raw_id(self, data_adapter) -> None:
+        data_adapter.set_symbol_map({"13": "NIFTY"})
+        assert data_adapter._display_symbol("999") == "999"
+
+    def test_process_ws_tick_raw_key_callback(self, data_adapter) -> None:
+        """A callback registered under the raw ID must receive the resolved symbol."""
+        data_adapter.set_symbol_map({"13": "NIFTY"})
+        received: list = []
+        display_fired: list = []
+        data_adapter._tick_callbacks["13"] = lambda tick: received.append(tick)
+        data_adapter._tick_callbacks["NIFTY"] = lambda tick: display_fired.append(tick)
+        data_adapter._process_ws_tick(
+            {
+                "security_id": "13",
+                "exchange_segment": "NSE_FNO",
+                "ltp": 24500.5,
+                "volume": 1000,
+                "tt": 1700000000000,
+            }
+        )
+        assert len(received) == 1
+        assert received[0].symbol == "NIFTY"
+        assert received[0].ltp == 24500.5
+        assert len(display_fired) == 0
+
+    def test_process_ws_tick_resolved_name_callback(self, data_adapter) -> None:
+        """A callback under the display name must fire when the raw key misses."""
+        data_adapter.set_symbol_map({"13": "NIFTY"})
+        received: list = []
+        data_adapter._tick_callbacks["NIFTY"] = lambda tick: received.append(tick)
+        data_adapter._process_ws_tick(
+            {
+                "security_id": "13",
+                "exchange_segment": "NSE_FNO",
+                "ltp": 24500.5,
+                "volume": 1000,
+            }
+        )
+        assert len(received) == 1
+        assert received[0].symbol == "NIFTY"
+
+    def test_process_ws_tick_no_callback_no_crash(self, data_adapter) -> None:
+        """Unknown security IDs with no registered callback are dropped safely."""
+        data_adapter.set_symbol_map({"13": "NIFTY"})
+        data_adapter._process_ws_tick(
+            {"security_id": "777", "exchange_segment": "NSE_EQ", "ltp": 100.0}
+        )
+
+    def test_dhan_client_property(self, data_adapter) -> None:
+        """dhan_client should expose the underlying DhanHQ client."""
+        assert data_adapter.dhan_client is data_adapter._dhan
