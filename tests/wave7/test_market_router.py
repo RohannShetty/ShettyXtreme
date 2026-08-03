@@ -247,6 +247,19 @@ async def test_ltp_missing_price_502(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_ltp_empty_string_price_502(client: AsyncClient) -> None:
+    app.state.data_adapter = FakeDataAdapter(
+        ltp_body={
+            "status": "success",
+            "data": {"NSE_FNO": {"13": {"last_price": ""}}},
+        }
+    )
+    resp = await client.get("/api/market/ltp?symbol=NIFTY&exchange=NSE_FNO")
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "LTP not found in response"
+
+
+@pytest.mark.asyncio
 async def test_ltp_adapter_unavailable_503(client: AsyncClient) -> None:
     resp = await client.get("/api/market/ltp?symbol=NIFTY&exchange=NSE_FNO")
     assert resp.status_code == 503

@@ -191,4 +191,8 @@ async def get_market_ltp(
     last_price = instrument.get("last_price")
     if last_price is None:
         raise HTTPException(status_code=502, detail="LTP not found in response")
-    return MarketLtpResponse(symbol=symbol.upper(), exchange=exchange.upper(), ltp=float(last_price))
+    try:
+        ltp_value = float(last_price)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=502, detail="LTP not found in response") from None
+    return MarketLtpResponse(symbol=symbol.upper(), exchange=exchange.upper(), ltp=ltp_value)
