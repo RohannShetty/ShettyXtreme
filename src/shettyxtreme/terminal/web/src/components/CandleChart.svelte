@@ -11,18 +11,28 @@
   let bars = $state<MarketBar[]>([]);
   let loading = $state(false);
   let error = $state("");
+  let reqSeq = 0;
 
   $effect(() => {
-    void load();
+    // track props so the debounced refetch fires on symbol/exchange/tf change
+    void symbol;
+    void exchange;
+    void tf;
+    const seq = ++reqSeq;
+    loading = true;
+    const t = setTimeout(() => void load(seq), 250);
+    return () => clearTimeout(t);
   });
 
-  async function load(): Promise<void> {
+  async function load(seq: number): Promise<void> {
     loading = true;
     error = "";
     try {
       const resp = await getMarketBars(symbol, exchange, tf);
+      if (seq !== reqSeq) return; // stale response — drop
       bars = resp.bars ?? [];
     } catch (err) {
+      if (seq !== reqSeq) return;
       bars = [];
       error = err instanceof Error ? err.message : String(err);
     }
@@ -47,7 +57,7 @@
   const span = $derived(yMax - yMin || 1);
   const maxVol = $derived(shown.length ? Math.max(...shown.map((b) => b.volume)) : 0);
   const slotW = $derived((PLOT_RIGHT - PLOT_LEFT) / Math.max(shown.length, 1));
-  const bodyW = $derived(Math.max(2, slotW * 0.6));
+  const bodyW = $derived(Math.min(Math.max(2, slotW * 0.6), 24));
   const ticks = $derived(
     Array.from({ length: TICK_COUNT }, (_, i) => yMin + (span * (i + 0.5)) / TICK_COUNT),
   );
@@ -71,8 +81,8 @@
     <span class="chart-title mono">{symbol}</span>
     <span class="chart-sub mono">{exchange} · {tf}m</span>
     <span class="legend mono">
-      <i class="sw sw-up"></i>UP
-      <i class="sw sw-down"></i>DOWN
+      <i class="sw sw-up" aria-hidden="true"></i>UP
+      <i class="sw sw-down" aria-hidden="true"></i>DOWN
     </span>
   </div>
 
@@ -104,19 +114,26 @@
           stroke={candleColor(b)}
           stroke-width="1"
         />
-        <rect x={cx - bodyW / 2} y={bodyTop} width={bodyW} height={bodyH} fill={candleColor(b)} />
+        <rect
+          class="candle-body"
+          x={cx - bodyW / 2}
+          y={bodyTop}
+          width={bodyW}
+          height={bodyH}
+          fill={candleColor(b)}
+        />
         <rect
           x={cx - bodyW / 2}
           y={VOL_BOTTOM - volH}
           width={bodyW}
           height={volH}
-          fill="var(--muted)"
-          fill-opacity="0.25"
+          fill={candleColor(b)}
+          fill-opacity="0.35"
         />
       {/each}
     </svg>
   {:else if loading}
-    <p class="chart-note mono">loading…</p>
+    <p class="chart-note mono">Loading…</p>
   {:else}
     <p class="empty">No chart data.</p>
   {/if}
