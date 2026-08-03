@@ -46,6 +46,7 @@ from shettyxtreme.terminal.api.terminal_init import (
 )
 from shettyxtreme.terminal.api.intelligence_router import router as intelligence_router
 from shettyxtreme.terminal.api.learning_router import router as learning_router
+from shettyxtreme.terminal.api.market_router import router as market_router
 from shettyxtreme.terminal.api.research_router import router as research_router
 from shettyxtreme.research.scheduler import ResearchScheduler
 from shettyxtreme.research.tools import set_data_source
@@ -450,6 +451,7 @@ app.include_router(learning_router)
 app.include_router(research_router)
 app.include_router(knowledge_router)
 app.include_router(analytics_router)
+app.include_router(market_router)
 
 
 # ── Root: redirect to the Svelte SPA ────────────────────────────────────────

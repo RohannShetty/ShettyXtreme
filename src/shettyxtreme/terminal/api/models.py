@@ -78,6 +78,33 @@ class StrategyHintResponse(BaseModel):
     rationale: str = ""
 
 
+# ── Market data ────────────────────────────────────────────────────────────
+class MarketBar(BaseModel):
+    timestamp: str  # ISO-8601 (normalized from dhanhq epoch seconds)
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+
+class MarketBarsResponse(BaseModel):
+    symbol: str
+    exchange: str
+    bars: list[MarketBar] = []
+
+
+class MarketLtpResponse(BaseModel):
+    symbol: str
+    exchange: str
+    ltp: float
+    change_pct: float | None = None
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    prev_close: float | None = None
+
+
 # ── Execution ──────────────────────────────────────────────────────────────
 class PositionResponse(BaseModel):
     symbol: str
