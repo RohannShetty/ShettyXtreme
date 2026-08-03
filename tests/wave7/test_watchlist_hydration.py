@@ -165,6 +165,43 @@ async def test_halted_security_last_price_null_leaves_row_unchanged(client: Asyn
 
 
 @pytest.mark.asyncio
+async def test_halted_security_empty_string_price_leaves_row_unchanged(client: AsyncClient) -> None:
+    proj = app.state.watchlist_projection
+    proj.add("RELIANCE", "NSE", security_id="2885")
+    app.state.data_adapter = FakeDataAdapter(
+        ohlc_body={
+            "status": "success",
+            "data": {"NSE_EQ": {"2885": {"last_price": ""}}},
+        }
+    )
+
+    resp = await client.get("/api/watchlist")
+
+    assert resp.status_code == 200
+    (row,) = resp.json()
+    assert row["ltp"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_adapter_raising_never_breaks_response(client: AsyncClient) -> None:
+    proj = app.state.watchlist_projection
+    proj.add("RELIANCE", "NSE", security_id="2885")
+
+    class RaisingAdapter(FakeDataAdapter):
+        async def get_ohlc(self, securities) -> dict[str, Any]:
+            raise RuntimeError("boom")
+
+    app.state.data_adapter = RaisingAdapter()
+
+    resp = await client.get("/api/watchlist")
+
+    assert resp.status_code == 200
+    (row,) = resp.json()
+    assert row["ltp"] == 0.0
+    assert row["change_pct"] == 0.0
+
+
+@pytest.mark.asyncio
 async def test_mixed_segments_grouped_correctly(client: AsyncClient) -> None:
     proj = app.state.watchlist_projection
     proj.add("RELIANCE", "NSE", security_id="2885")

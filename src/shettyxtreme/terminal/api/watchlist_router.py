@@ -36,8 +36,11 @@ def _parse_last_price(instrument: Any) -> float | None:
 async def _hydrate_from_rest(proj_rows: dict[str, dict[str, Any]], request: Request) -> None:
     """Backfill ltp/change_pct from Dhan REST when the live feed is idle.
 
-    Mutates proj_rows in place. Live values win — only rows whose ltp is 0
-    are hydrated. Never raises — REST failures leave stored values untouched.
+    Mutates proj_rows in place — the rows ARE the projection's live objects
+    (get() is a shallow copy), so a backfilled price persists for the
+    session. That is deliberate: post-close the value is today's close and
+    the feed polls every ~2s must not hammer Dhan REST. Live ticks always
+    overwrite. Never raises — REST failures leave stored values untouched.
     """
     adapter = getattr(request.app.state, "data_adapter", None)
     if adapter is None:
@@ -77,15 +80,16 @@ async def _hydrate_from_rest(proj_rows: dict[str, dict[str, Any]], request: Requ
                 continue
             info["ltp"] = last_price
             prev_close: float | None = None
-            if isinstance(instrument, dict):
-                ohlc = instrument.get("ohlc")
-                if isinstance(ohlc, dict):
-                    try:
-                        prev_close = float(ohlc.get("close"))
-                    except (TypeError, ValueError):
-                        prev_close = None
+            ohlc = instrument.get("ohlc") if isinstance(instrument, dict) else None
+            if isinstance(ohlc, dict):
+                try:
+                    prev_close = float(ohlc.get("close"))
+                except (TypeError, ValueError):
+                    prev_close = None
             if prev_close and prev_close > 0:
                 info["change_pct"] = round(((last_price - prev_close) / prev_close) * 100, 2)
+            else:
+                info["change_pct"] = 0.0
     except Exception:
         logger.warning("watchlist REST hydration failed — keeping stored values", exc_info=True)
 
