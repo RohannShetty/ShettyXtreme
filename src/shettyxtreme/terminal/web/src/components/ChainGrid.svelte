@@ -4,6 +4,7 @@
   import { selectedSymbol } from "../lib/selection";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
+  import CandleChart from "./CandleChart.svelte";
   import {
     Table,
     TableBody,
@@ -37,6 +38,7 @@
   type ChainRow = { strike: number; ce?: Contract; pe?: Contract };
 
   let symbol = $state("NIFTY");
+  let exchange = $state("NSE_FNO");
   let expiry = $state("");
   let expiries = $state<string[]>([]);
   let contracts = $state<Contract[]>([]);
@@ -118,6 +120,8 @@
   {#if error}
     <p class="error">{error}</p>
   {/if}
+
+  <CandleChart {symbol} {exchange} />
 
   <div class="table-wrap">
     <Table class="text-[12px]">

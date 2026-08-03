@@ -323,3 +323,30 @@ export async function executionMode(): Promise<ExecutionMode> {
 export async function riskSummary(): Promise<RiskSummary> {
   return get<RiskSummary>("/api/execution/risk");
 }
+
+// --- Market: intraday bars (T2) ---
+
+export type MarketBar = {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+export type MarketBarsResponse = {
+  symbol: string;
+  exchange: string;
+  bars: MarketBar[];
+};
+
+export async function getMarketBars(
+  symbol: string,
+  exchange: string = "NSE_FNO",
+  tf: number = 1,
+  days: number = 1,
+): Promise<MarketBarsResponse> {
+  const q = new URLSearchParams({ symbol, exchange, tf: String(tf), days: String(days) });
+  return get<MarketBarsResponse>(`/api/market/bars?${q}`);
+}
