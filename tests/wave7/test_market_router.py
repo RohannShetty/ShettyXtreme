@@ -106,6 +106,7 @@ async def test_bars_happy_path_maps_columnar_body(client: AsyncClient) -> None:
     assert body["exchange"] == "NSE_FNO"
     bars = body["bars"]
     assert [b["timestamp"] for b in bars] == sorted(b["timestamp"] for b in bars)
+    assert bars[0]["timestamp"] == "1970-01-01T00:00:01+00:00"
     assert bars[0]["open"] == 22545.0
     assert bars[0]["high"] == 22555.0
     assert bars[0]["low"] == 22535.0
@@ -119,6 +120,29 @@ async def test_bars_happy_path_maps_columnar_body(client: AsyncClient) -> None:
     assert itype == "INDEX"
     assert interval == 1
     assert frm == to
+
+
+@pytest.mark.asyncio
+async def test_bars_drops_malformed_row_with_none_ohlc(client: AsyncClient) -> None:
+    body = {
+        "status": "success",
+        "data": {
+            "open": [22550.0, None, 22560.0],
+            "high": [22560.0, 22555.0, 22575.0],
+            "low": [22540.0, 22535.0, 22550.0],
+            "close": [22555.0, 22550.0, 22570.0],
+            "volume": [1200, 900, 1500],
+            "timestamp": [1, 2, 3],
+        },
+    }
+    app.state.data_adapter = FakeDataAdapter(intraday_body=body)
+    resp = await client.get("/api/market/bars?symbol=NIFTY&exchange=NSE_FNO")
+    assert resp.status_code == 200
+    bars = resp.json()["bars"]
+    assert [b["timestamp"] for b in bars] == [
+        "1970-01-01T00:00:01+00:00",
+        "1970-01-01T00:00:03+00:00",
+    ]
 
 
 @pytest.mark.asyncio
@@ -158,6 +182,15 @@ async def test_bars_numeric_symbol_passthrough(client: AsyncClient) -> None:
     assert resp.status_code == 200
     assert adapter.calls[0][1] == "13"
     assert adapter.calls[0][2] == "NSE_FNO"
+    assert adapter.calls[0][3] == "INDEX"
+
+
+@pytest.mark.asyncio
+async def test_bars_rejects_unsupported_interval(client: AsyncClient) -> None:
+    app.state.data_adapter = FakeDataAdapter()
+    resp = await client.get("/api/market/bars?symbol=NIFTY&exchange=NSE_FNO&tf=7")
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "tf must be one of 1, 5, 15, 25, 60"
 
 
 @pytest.mark.asyncio
@@ -198,6 +231,19 @@ async def test_ltp_happy_path(client: AsyncClient) -> None:
     assert body["exchange"] == "NSE_FNO"
     assert body["ltp"] == 22555.5
     assert adapter.calls[0] == ("ltp", {"NSE_FNO": ["13"]})
+
+
+@pytest.mark.asyncio
+async def test_ltp_missing_price_502(client: AsyncClient) -> None:
+    app.state.data_adapter = FakeDataAdapter(
+        ltp_body={
+            "status": "success",
+            "data": {"NSE_FNO": {"13": {"last_price": None}}},
+        }
+    )
+    resp = await client.get("/api/market/ltp?symbol=NIFTY&exchange=NSE_FNO")
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "LTP not found in response"
 
 
 @pytest.mark.asyncio

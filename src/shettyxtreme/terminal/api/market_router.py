@@ -19,6 +19,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from shettyxtreme.integration.dhan.data_adapter import EXCHANGE_MAP
 from shettyxtreme.terminal.api.models import (
     MarketBar,
     MarketBarsResponse,
@@ -30,24 +31,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/market", tags=["market"])
 
 _SYMBOL_SECURITY_ID: dict[str, str] = {"NIFTY": "13", "BANKNIFTY": "25"}
+_ID_FOR_SYMBOL: dict[str, str] = {v: k for k, v in _SYMBOL_SECURITY_ID.items()}
 
-# Same segment mapping the data pipeline uses (data_adapter.EXCHANGE_MAP),
-# plus passthrough for raw feed segments (NSE_EQ, NSE_FNO, ...).
-_SEGMENT_FOR_EXCHANGE: dict[str, str] = {
-    "NSE": "NSE_EQ", "BSE": "BSE_EQ", "NFO": "NSE_FNO",
-    "BFO": "BSE_FNO", "MCX": "MCX", "IDX": "IDX_I",
-}
+# Same segment mapping the data pipeline uses (data_adapter.EXCHANGE_MAP).
+_SEGMENT_FOR_EXCHANGE: dict[str, str] = {**EXCHANGE_MAP}
 
 # Bars per trading day at tf=1 (6.25h session) — safety cap for large ranges.
 _MAX_BARS_PER_DAY = 375
-
-
-class DataEntitlementError(Exception):
-    """Raised when the data adapter reports a missing Data-API entitlement (806)."""
-
-
-class DataAdapterUnavailable(Exception):
-    """Raised when no data adapter is wired — market data cannot be fetched."""
 
 
 def _segment_for(exchange: str) -> str:
@@ -62,7 +52,9 @@ def _instrument_type_for(exchange: str, symbol: str, security_id: str) -> str:
     to ``EQUITY`` (verified enum values: INDEX, FUTIDX, OPTIDX, EQUITY).
     """
     segment = _segment_for(exchange)
-    if segment in ("NSE_FNO", "BSE_FNO", "IDX_I") and symbol.upper() in _SYMBOL_SECURITY_ID:
+    if segment in ("NSE_FNO", "BSE_FNO", "IDX_I") and (
+        symbol.upper() in _SYMBOL_SECURITY_ID or security_id in _ID_FOR_SYMBOL
+    ):
         return "INDEX"
     return "EQUITY"
 
@@ -110,16 +102,19 @@ def _parse_intraday(data: Any, cap: int) -> list[MarketBar]:
         iso = _iso_timestamp(ts)
         if iso is None:
             continue
-        bars.append(MarketBar(
-            timestamp=iso,
-            open=float(open_v),
-            high=float(high_v),
-            low=float(low_v),
-            close=float(close_v),
-            volume=int(volume_v or 0),
-        ))
+        try:
+            bars.append(MarketBar(
+                timestamp=iso,
+                open=float(open_v),
+                high=float(high_v),
+                low=float(low_v),
+                close=float(close_v),
+                volume=int(volume_v or 0),
+            ))
+        except (TypeError, ValueError):
+            continue
     bars.sort(key=lambda b: b.timestamp)
-    return bars[:cap]
+    return bars[-cap:]
 
 
 @router.get("/bars", response_model=MarketBarsResponse)
@@ -131,6 +126,8 @@ async def get_market_bars(
     days: int = Query(1, ge=1, le=5),
 ) -> MarketBarsResponse:
     """Return intraday OHLCV bars for a symbol (works after market close)."""
+    if tf not in (1, 5, 15, 25, 60):
+        raise HTTPException(status_code=422, detail="tf must be one of 1, 5, 15, 25, 60")
     security_id, segment = _resolve_symbol(request, symbol, exchange)
     adapter = request.app.state.data_adapter
     if adapter is None:
@@ -189,7 +186,9 @@ async def get_market_ltp(
     if not isinstance(data, dict):
         raise HTTPException(status_code=502, detail="unexpected LTP response shape")
     instrument = data.get(segment, {}).get(security_id)
-    if not isinstance(instrument, dict) or "last_price" not in instrument:
+    if not isinstance(instrument, dict):
         raise HTTPException(status_code=502, detail="LTP not found in response")
-    ltp = float(instrument["last_price"])
-    return MarketLtpResponse(symbol=symbol.upper(), exchange=exchange.upper(), ltp=ltp)
+    last_price = instrument.get("last_price")
+    if last_price is None:
+        raise HTTPException(status_code=502, detail="LTP not found in response")
+    return MarketLtpResponse(symbol=symbol.upper(), exchange=exchange.upper(), ltp=float(last_price))
