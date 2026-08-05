@@ -1,4 +1,11 @@
-"""Idempotent Dhan adapter + pipeline bootstrap (lifespan AND post-OAuth-login)."""
+"""Idempotent Fyers adapter + pipeline bootstrap (lifespan AND post-OAuth-login).
+
+Wires the F4 Fyers adapters (REST trading, market-data, HSM data socket,
+JSON order socket) into the terminal: trading/data adapters on app.state,
+live ticks bridged onto the EventBus for the watchlist projection and bar
+builder, and order-socket updates forwarded to the ORDER_UPDATED topic
+(Fyers has no postback webhooks — fills arrive over the order socket).
+"""
 from __future__ import annotations
 
 import logging
@@ -7,10 +14,17 @@ from typing import Any, Callable, Coroutine
 from fastapi import FastAPI
 
 from shettyxtreme.auth.credential_store import CredentialStore
+from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
 from shettyxtreme.core.storage.time_series_store import TimeSeriesStore
-from shettyxtreme.data.ingestion import IngestionPipeline
-from shettyxtreme.integration.dhan.data_adapter import DhanDataAdapter
-from shettyxtreme.integration.dhan.trading_adapter import DhanTradingAdapter
+from shettyxtreme.data.pipeline.bar_builder import BarBuilder
+from shettyxtreme.integration.fyers.client import FyersHTTPClient
+from shettyxtreme.integration.fyers.data_adapter import FyersDataAdapter
+from shettyxtreme.integration.fyers.data_socket import FyersDataSocketWrapper
+from shettyxtreme.integration.fyers.session import FyersSession
+from shettyxtreme.integration.fyers.symbols import FyersSymbolResolver
+from shettyxtreme.integration.fyers.trading_adapter import FyersTradingAdapter
+from shettyxtreme.integration.fyers.ws_client import FyersOrderSocket
+from shettyxtreme.terminal.api import postback_router
 from shettyxtreme.terminal.api.instrument_init import init_instrument_master
 
 logger = logging.getLogger(__name__)
@@ -35,12 +49,49 @@ async def run_terminal_init() -> bool:
     return await _init_terminal_adapters()
 
 
+def _to_bus_tick(tick: Any) -> Any:
+    """Convert a Fyers-adapter Tick to the EventBus Tick dataclass.
+
+    The adapter emits ``core.interfaces.market_data_stream.Tick``; the
+    watchlist projection and bar builder key on
+    ``core.data_models.Tick`` via isinstance. Both share the same fields.
+    """
+    from shettyxtreme.core.data_models import Tick as BusTick
+
+    if isinstance(tick, BusTick):
+        return tick
+    return BusTick(
+        symbol=tick.symbol,
+        exchange=tick.exchange,
+        ltp=tick.ltp,
+        volume=tick.volume,
+        timestamp=tick.timestamp,
+        bid=tick.bid,
+        ask=tick.ask,
+        open=tick.open,
+        high=tick.high,
+        low=tick.low,
+        close=tick.close,
+    )
+
+
+def _build_session_and_transport(
+    store: CredentialStore,
+) -> tuple[FyersSession, FyersHTTPClient] | None:
+    """Rehydrate the Fyers session and REST transport from the credential store."""
+    session = FyersSession.load(store)
+    if session is None:
+        return None
+    client = FyersHTTPClient(app_id=session.app_id, access_token=session.access_token)
+    return session, client
+
+
 async def init_terminal_adapters(
     app: FastAPI,
     store: CredentialStore,
     symbol_map: dict[str, str],
 ) -> bool:
-    """Idempotently initialize Dhan adapters + ingestion pipelines.
+    """Idempotently initialize Fyers adapters + the market-data bridge.
 
     Safe to call repeatedly: skips entirely once a full success has been
     recorded (app.state.terminal_initialized). Raises nothing — failures are
@@ -51,7 +102,7 @@ async def init_terminal_adapters(
     if getattr(app.state, "terminal_initialized", False):
         return True
 
-    # Re-run: disconnect adapters/pipelines orphaned by a previous partial
+    # Re-run: disconnect adapters/sockets orphaned by a previous partial
     # failure before constructing replacements.
     stale_trading = getattr(app.state, "trading_adapter", None)
     if stale_trading is not None:
@@ -60,89 +111,130 @@ async def init_terminal_adapters(
         except Exception:
             logger.warning("Failed to disconnect stale trading adapter", exc_info=True)
         app.state.trading_adapter = None
-        logger.info("Disconnected stale DhanTradingAdapter before re-init")
+        logger.info("Disconnected stale FyersTradingAdapter before re-init")
 
-    stale_pipeline = getattr(app.state, "ingestion_pipeline", None)
-    if stale_pipeline is not None:
+    stale_data = getattr(app.state, "data_adapter", None)
+    if stale_data is not None:
         try:
-            await stale_pipeline.stop()
+            await stale_data.disconnect()
         except Exception:
-            logger.warning("Failed to stop stale ingestion pipeline", exc_info=True)
-        app.state.ingestion_pipeline = None
-        logger.info("Stopped stale IngestionPipeline before re-init")
+            logger.warning("Failed to disconnect stale data adapter", exc_info=True)
+        app.state.data_adapter = None
+        logger.info("Disconnected stale FyersDataAdapter before re-init")
+
+    built = _build_session_and_transport(store)
+    if built is None:
+        logger.warning("No Fyers access token — adapters not initialized")
+        return False
+    session, client = built
 
     ok = True
+    try:
+        master = init_instrument_master()
+        symbol_resolver = FyersSymbolResolver(master)
+        order_socket = FyersOrderSocket(
+            app_id=session.app_id, access_token=session.access_token
+        )
+        data_socket = FyersDataSocketWrapper(
+            app_id=session.app_id, access_token=session.access_token
+        )
+        trading_adapter = FyersTradingAdapter(
+            session=session,
+            client=client,
+            symbol_resolver=symbol_resolver,
+        )
+        data_adapter = FyersDataAdapter(
+            session=session,
+            client=client,
+            symbol_resolver=symbol_resolver,
+            order_socket=order_socket,
+            data_socket=data_socket,
+        )
+        app.state.fyers_session = session
+        app.state.fyers_client = client
+        app.state.instrument_master = master
+        app.state.symbol_resolver = symbol_resolver
+        app.state.fyers_order_socket = order_socket
+        app.state.fyers_data_socket = data_socket
+        app.state.trading_adapter = trading_adapter
+        app.state.data_adapter = data_adapter
+        logger.info(
+            "Fyers adapters initialized (session client=%s)",
+            session.access_token[-4:] if session.access_token else "none",
+        )
+    except Exception as exc:
+        ok = False
+        logger.error("Failed to initialize Fyers adapters: %s", exc)
+
+    # Live market-data bridge + order-update bridge (best-effort).
     pipeline_started = False
     try:
-        trading_adapter = DhanTradingAdapter(
-            client_id=store.client_id,
-            access_token=store.access_token,
-        )
-        app.state.trading_adapter = trading_adapter
-        logger.info("DhanTradingAdapter initialized")
-    except Exception as exc:
-        ok = False
-        logger.error("Failed to initialize DhanTradingAdapter: %s", exc)
-
-    try:
-        data_adapter = DhanDataAdapter(
-            client_id=store.client_id,
-            access_token=store.access_token,
-            data_access_token=store.data_access_token,
-        )
-        app.state.data_adapter = data_adapter
-        logger.info("DhanDataAdapter initialized")
-        data_adapter.set_symbol_map(symbol_map)
-
-        # Instrument master: symbol <-> security ID resolution for the
-        # watchlist add path.
-        app.state.instrument_master = init_instrument_master(data_adapter)
-
+        event_bus: EventBus | None = getattr(app.state, "event_bus", None)
         watchlist_proj = getattr(app.state, "watchlist_projection", None)
-        event_bus = getattr(app.state, "event_bus", None)
         watchlist_data = watchlist_proj.get() if watchlist_proj is not None else {}
         if not watchlist_data:
-            logger.warning("Watchlist empty — pipeline not started")
+            logger.warning("Watchlist empty — market-data bridge not started")
         elif event_bus is None:
             ok = False
-            logger.warning("Event bus missing — pipeline not started")
+            logger.warning("Event bus missing — market-data bridge not started")
         else:
-            # Group watchlist symbols by exchange for correct MarketFeed
-            # subscription; feed subscribes by security ID, the projection is
-            # keyed by display name (watchlist rows show NIFTY, not 13).
-            exchange_groups: dict[str, list[str]] = {}
-            for sym, info in watchlist_data.items():
-                exch = info.get("exchange", "NSE_FNO")
-                feed_segment = {"NSE_FNO": "NSE_FNO", "NSE": "NSE_EQ", "BSE": "BSE_EQ"}.get(exch, exch)
-                feed_symbol = info.get("security_id") or sym
-                exchange_groups.setdefault(feed_segment, []).append(feed_symbol)
+            data_adapter = app.state.data_adapter
+            assert data_adapter is not None
 
+            # Bar aggregation: the BarBuilder is broker-neutral and consumes
+            # MARKET_DATA_TICK events, so start it before bridging ticks.
             ts_store = TimeSeriesStore()
-            # Start one pipeline per exchange segment
-            for feed_segment, symbols in exchange_groups.items():
-                pipeline_exchange = {"NSE_FNO": "NFO", "NSE_EQ": "NSE", "BSE_EQ": "BSE"}.get(feed_segment, "NSE")
-                pipeline = IngestionPipeline(
-                    event_bus=event_bus,
-                    ts_store=ts_store,
-                    dhan_client_id=store.client_id,
-                    dhan_access_token=store.access_token,
-                    exchange=pipeline_exchange,
-                    symbol_map=symbol_map,
+            bar_builder = BarBuilder(event_bus=event_bus, ts_store=ts_store)
+            await bar_builder.start()
+            app.state.bar_builder = bar_builder
+
+            async def _publish_market_tick(tick: Any) -> None:
+                await event_bus.publish(Event(
+                    topic=Topic.MARKET_DATA_TICK,
+                    data=_to_bus_tick(tick),
+                    source="fyers_data_adapter",
+                ))
+
+            symbols = list(watchlist_data.keys())
+            subscribed = await data_adapter.subscribe_ticks(symbols, _publish_market_tick)
+            if not subscribed:
+                ok = False
+                logger.warning(
+                    "Fyers tick subscription failed for %d symbols", len(symbols)
                 )
-                app.state.ingestion_pipeline = pipeline
-                await pipeline.start(symbols)
+            else:
                 pipeline_started = True
                 logger.info(
-                    "IngestionPipeline started for %s with symbols: %s",
-                    feed_segment,
-                    symbols,
+                    "Fyers market-data bridge wired for %d watchlist symbols",
+                    len(symbols),
                 )
+
+            # Order updates (replaces Dhan postback webhooks). Connect both
+            # sockets best-effort: a missing data-socket SDK or an expired
+            # token degrades to REST-only instead of failing the whole init.
+            order_socket = getattr(app.state, "fyers_order_socket", None)
+            if order_socket is not None:
+                order_socket.on_message(postback_router.consume_order_message)
+                try:
+                    connected = await data_adapter.connect()
+                    if connected:
+                        await order_socket.subscribe(["orders", "trades"])
+                        logger.info("Fyers order socket subscribed to orders/trades")
+                    else:
+                        logger.warning(
+                            "Fyers sockets not fully connected — REST-only mode"
+                        )
+                except Exception:
+                    logger.warning(
+                        "Fyers socket connect failed — REST-only mode", exc_info=True
+                    )
     except Exception as exc:
         ok = False
-        logger.error("Failed to initialize DhanDataAdapter or IngestionPipeline: %s", exc)
+        logger.error("Failed to wire Fyers data bridge: %s", exc)
 
-    # Only pin the marker when a pipeline actually started: an empty-watchlist
-    # run stays cheap-to-retry, so a later re-init self-heals once symbols exist.
+    # Only pin the marker when the market-data bridge actually started: an
+    # empty-watchlist run stays cheap-to-retry, so a later re-init self-heals
+    # once symbols exist.
     if ok and pipeline_started:
         app.state.terminal_initialized = True
 

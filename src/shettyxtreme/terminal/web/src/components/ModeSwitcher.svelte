@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { get, post } from "../lib/api";
+  import { get, post, postBody } from "../lib/api";
   import { Button } from "$lib/components/ui/button";
   import {
     Dialog,
@@ -11,7 +11,7 @@
     DialogTitle,
   } from "$lib/components/ui/dialog";
 
-  type ModeResponse = { mode: string };
+  type ModeResponse = { mode: string; csrf_token: string | null };
 
   const MODES = ["OBSERVER", "PAPER", "LIVE"];
 
@@ -45,9 +45,13 @@
 
   async function setMode(target: string): Promise<void> {
     error = "";
-    const qs = target === "LIVE" ? "?mode=LIVE&confirm=true" : `?mode=${encodeURIComponent(target)}`;
     try {
-      const resp = await post<ModeResponse>(`/api/execution/mode${qs}`);
+      // LIVE requires the typed confirmation string "LIVE" in the request
+      // body — a boolean query flag never arms LIVE (F-EXEC-001).
+      const resp =
+        target === "LIVE"
+          ? await postBody<ModeResponse>("/api/execution/mode?mode=LIVE", { confirm: "LIVE" })
+          : await post<ModeResponse>(`/api/execution/mode?mode=${encodeURIComponent(target)}`);
       mode = resp.mode;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);

@@ -60,12 +60,10 @@ def config_manager(tmp_data_dir: str):
     import yaml
     cfg = {
         "mode": "paper",
-        "broker": "dhan",
-        "data_provider": "openalgo",
+        "broker": "fyers",
         "log_level": "DEBUG",
         "dry_run": True,
-        "dhan_client_id": "test_client",
-        "openalgo_base_url": "http://test.openalgo:5000",
+        "fyers_app_id": "test_app",
     }
     cfg_path = os.path.join(tmp_data_dir, "config.yaml")
     with open(cfg_path, "w") as f:
@@ -76,7 +74,7 @@ def config_manager(tmp_data_dir: str):
 
 @pytest.fixture
 def clean_env():
-    keys = [k for k in os.environ if k.startswith(("SHETTY_", "DHAN_", "OPENALGO_"))]
+    keys = [k for k in os.environ if k.startswith(("SHETTY_", "FYERS_", "OPENALGO_"))]
     stash = {k: os.environ.pop(k) for k in keys if k in os.environ}
     for k in keys:
         os.environ.pop(k, None)

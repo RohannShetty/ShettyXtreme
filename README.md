@@ -1,10 +1,10 @@
 # ShettyXtreme
 
-**India-first options intelligence workstation** — a standalone, Dhan-connected terminal for NSE/BSE index options (NIFTY/BANKNIFTY weeklies), with equities as market breadth.
+**India-first options intelligence workstation** — a standalone, Fyers-connected terminal for NSE/BSE index options (NIFTY/BANKNIFTY weeklies), with equities as market breadth.
 
-v0.11.0 · Python 3.11 + FastAPI + Svelte 5 · 731 tests passing · [Changelog](CHANGELOG.md)
+v0.12.0 · Python 3.11 + FastAPI + Svelte 5 · 959 tests passing · [Changelog](CHANGELOG.md)
 
-ShettyXtreme turns live Dhan market data into a single cockpit: option chain with greeks and IV, strategy hints with expected-value line items, regime and signal intelligence, positions/risk, and OBSERVER-first execution — the platform watches and proposes; you approve.
+ShettyXtreme turns live Fyers market data into a single cockpit: option chain with greeks and IV, strategy hints with expected-value line items, regime and signal intelligence, positions/risk, and OBSERVER-first execution — the platform watches and proposes; you approve.
 
 ---
 
@@ -39,7 +39,7 @@ A dark, data-dense Svelte SPA governed by [DESIGN.md](DESIGN.md) (binding token 
 - **Scanner** — gaps, clusters, alerts
 - **Positions / risk strip** (bottom) — P&L, margin vs limits, loss-limit breach chip
 - **Logs / alerts drawer** (right, min 320px)
-- **Session controls** (header) — mode switcher, kill switch (`Ctrl+Shift+K`, never disabled), health strip incl. Dhan Data-API entitlement state
+- **Session controls** (header) — mode switcher, kill switch (`Ctrl+Shift+K`, never disabled), health strip incl. Fyers Data-API entitlement state
 
 Frontend dev (Vite on :3000, proxies `/api` + `/ws` to :8000):
 
@@ -55,13 +55,13 @@ npm run build    # build → terminal/static/ (committed bundle)
 
 The v2 blueprint is the authoritative spec: [`docs/architecture/v2/ARCHITECTURE_V2.md`](docs/architecture/v2/ARCHITECTURE_V2.md) (master doc + 20 sections, decisions D1–D12, ADR-002…007). In one paragraph:
 
-A layered modular monolith. **FastAPI** (`terminal/api/`) is the only REST/WS surface; the **EventBus** (`core/event_bus/`) carries ticks/signals/orders; **Dhan adapters** (`integration/dhan/`) implement `core/interfaces` protocols (single `DhanContext` per D8 — one consent token, optional `data_access_token` fallback); the **intelligence pipeline** (`intelligence/`) runs features → regime → signal (D/P/G conviction voters) → options EV → risk; the **execution engine** (`execution/`) is semi-auto with a mode gate; the **options module** (`options/`) is pure-Python pricing (Black-76, greeks, IV rank, OI tracking, strategy analyzer) with an optional QuantLib backend.
+A layered modular monolith. **FastAPI** (`terminal/api/`) is the only REST/WS surface; the **EventBus** (`core/event_bus/`) carries ticks/signals/orders; **Fyers adapters** (`integration/fyers/`) implement `core/interfaces` protocols (one OAuth2 access token per ADR-008 — trading REST, data REST, and both WebSockets); the **intelligence pipeline** (`intelligence/`) runs features → regime → signal (D/P/G conviction voters) → options EV → risk; the **execution engine** (`execution/`) is semi-auto with a mode gate; the **options module** (`options/`) is pure-Python pricing (Black-76, greeks, IV rank, OI tracking, strategy analyzer) with an optional QuantLib backend.
 
 ```
 src/shettyxtreme/
   core/            Event bus, storage (KV/time-series), config, interfaces (Protocols)
-  auth/            Fernet credential store, OAuth + PIN/TOTP flows, health monitor
-  integration/     Anti-corruption layer: Dhan data + trading adapters (D1: no vendor imports)
+  auth/            Fernet credential store, Fyers OAuth2 authorization-code flow, health monitor
+  integration/     Anti-corruption layer: Fyers data + trading adapters + instrument master
   data/            Ingestion pipeline (watchlist → ticks/bars → stores)
   intelligence/    Features, regime, signals (VoterRegistry), voters, options (IV rank/PCR/EV),
                    hints, conviction, risk, scanners
@@ -72,12 +72,13 @@ src/shettyxtreme/
   observability/   Health, metrics
 ```
 
-## Credentials & Dhan
+## Credentials & Fyers
 
-- **Single primary** consent token (OAuth) serves trading REST + the feed WS (D8); stored Fernet-encrypted at `~/.shettyxtreme/credentials.enc` (machine-derived key).
-- **Optional data fallback**: a separate `data_access_token` provisioned via PIN/TOTP (`generateAccessToken`) is used by the data adapter only if the feed rejects the consent token.
-- **Dhan error 806 = Data-API entitlement**, not a credentials bug: surfaced as "subscribe to Data APIs" on the health strip, REST errors, and the feed guard — never papered over.
-- DhanHQ-py pinned to 2.2.0; WS v2 subscription request codes 15/17/21 (Ticker/Quote/Full).
+- **Fyers OAuth2 authorization-code** (ADR-008): App ID + Secret ID → `generate-authcode` → browser login → callback `auth_code` → immediate `validate-authcode` exchange → single `access_token` serving trading REST, data REST, and both WebSockets. Stored Fernet-encrypted at `~/.shettyxtreme/credentials.enc` (machine-derived key).
+- **Tokens expire daily with no silent refresh** — re-auth through the setup wizard (`#/setup`) is the reliable path; a `GET /profile` liveness probe is the source of truth, and the health monitor flags EXPIRED/STALE states (never zeros).
+- **Fyers 403 / -373 = Data-API entitlement** (the Dhan 806 twin), not a credentials bug: surfaced as "subscribe to Data APIs" on the health strip, REST errors, and the feed guard — never papered over.
+- **Rate limits**: 10 req/s · 200/min (day block after 3 minute-cap breaches) — the REST client throttles with a token bucket (~8/s) and honors `Retry-After`; ticks come over the WS, never polling.
+- Order fills arrive over the **JSON order WebSocket** (replaces Dhan postback webhooks).
 
 ## Vendored components (AGPL, private use)
 
@@ -89,7 +90,7 @@ OpenAlgo execution plumbing is vendored into `vendor/openalgo/` (origin-stamped,
 .venv\Scripts\python.exe -m pytest tests/ -q --basetemp=C:\Users\<you>\AppData\Local\Temp\pytest-phase2 -p no:cacheprovider
 ```
 
-**527 passed / 0 failed / 3 skipped.** (Windows note: always use `.venv\Scripts\python.exe` — the PATH `python` may be a different venv — and an explicit `--basetemp` to avoid a session-teardown PermissionError quirk.)
+**1059 passed / 0 failed / 0 skipped.** (Windows note: always use `.venv\Scripts\python.exe` — the PATH `python` may be a different venv — and an explicit `--basetemp` to avoid a session-teardown PermissionError quirk.)
 
 ## Roadmap
 

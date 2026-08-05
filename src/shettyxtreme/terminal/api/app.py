@@ -1,7 +1,7 @@
 """FastAPI application for the ShettyXtreme terminal.
 
-Lifespan: starts event bus, credential store, health monitor, Dhan adapters,
-and ingestion pipeline. Mounts static files and includes all routers.
+Lifespan: starts event bus, credential store, health monitor, Fyers adapters,
+and the market-data bridge. Mounts static files and includes all routers.
 """
 from __future__ import annotations
 
@@ -19,10 +19,10 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from shettyxtreme.auth.credential_store import CredentialStore
-from shettyxtreme.auth.dhan_oauth import DhanOAuthHelper
+from shettyxtreme.auth.fyers_oauth import FyersOAuthHelper
 from shettyxtreme.auth.health_monitor import TokenHealthMonitor
 from shettyxtreme.auth.validator import CredentialValidator
-from shettyxtreme.core.event_bus.event_bus import EventBus
+from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
 from shettyxtreme.execution.execution_engine import ExecutionEngine
 from shettyxtreme.execution.ledger import TradeLedger
 from shettyxtreme.execution.ledger_recorder import LedgerRecorder
@@ -84,16 +84,58 @@ _event_bus: EventBus | None = None
 _event_bus_task: asyncio.Task | None = None
 _health_monitor: TokenHealthMonitor | None = None
 _intelligence_pipeline: IntelligencePipeline | None = None
+_margin_poller_task: asyncio.Task | None = None
+
+# Brokers disagree on the available-balance key name in get_margin() payloads;
+# accept any known one (fix #2 — real margin, never a hardcoded stand-in).
+_MARGIN_AVAILABLE_KEYS = ("availabelBalance", "availableMargin", "available", "balance")
+_MARGIN_POLL_CADENCE_SECONDS = 30.0
+
+
+async def _margin_poll_loop(app: FastAPI) -> None:
+    """Poll trading_adapter.get_margin() and publish real available margin.
+
+    Margin starts UNKNOWN (None). We only publish a number once the broker
+    reports one; on failure we publish nothing, so the risk projection keeps
+    its previous honest value instead of a fabricated default.
+    """
+    while True:
+        try:
+            adapter = getattr(app.state, "trading_adapter", None)
+            if adapter is not None and hasattr(adapter, "get_margin"):
+                raw = await adapter.get_margin()
+                payload = raw.get("data", raw) if isinstance(raw, dict) else {}
+                available: float | None = None
+                if isinstance(payload, dict):
+                    for key in _MARGIN_AVAILABLE_KEYS:
+                        value = payload.get(key)
+                        if value is not None:
+                            try:
+                                available = float(value)
+                                break
+                            except (TypeError, ValueError):
+                                continue
+                if available is not None and _event_bus is not None:
+                    await _event_bus.publish(Event(
+                        topic=Topic.RISK_DECISION,
+                        data={"margin_available": available},
+                        source="margin_poller",
+                    ))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("margin poller iteration failed")
+        await asyncio.sleep(_MARGIN_POLL_CADENCE_SECONDS)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown lifecycle."""
-    global _event_bus, _event_bus_task, _health_monitor, _intelligence_pipeline
+    global _event_bus, _event_bus_task, _health_monitor, _intelligence_pipeline, _margin_poller_task
     logger.info("ShettyXtreme Terminal starting up...")
 
     store = CredentialStore.load() or CredentialStore()
-    oauth = DhanOAuthHelper()
+    oauth = FyersOAuthHelper()
     validator = CredentialValidator()
     init_auth(store, oauth, validator)
 
@@ -102,6 +144,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     postback_router.set_event_bus(_event_bus)
     _health_monitor = TokenHealthMonitor(store, _event_bus)
     await _health_monitor.start()
+
+    # Margin poller: reads app.state.trading_adapter each tick (it is not
+    # created until later in this lifespan / after login), publishes real
+    # margin via RISK_DECISION → RiskProjection (fix #2).
+    _margin_poller_task = asyncio.create_task(_margin_poll_loop(app))
 
     # ── Create projection instances and subscribe to EventBus ───────────────
     watchlist_proj = WatchlistProjection()
@@ -157,7 +204,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.trading_adapter = None
     app.state.data_adapter = None
     app.state.instrument_master = None
-    app.state.ingestion_pipeline = None
+    app.state.symbol_resolver = None
+    app.state.fyers_session = None
     app.state.event_bus = _event_bus
 
     # Store projections on app.state for router access
@@ -260,8 +308,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.shadow_loop = shadow_loop
 
     # ── Execution wiring (P4b): proposal queue + mode-routed placement ───────
-    # OBSERVER = proposals only; PAPER → PaperTradingEngine; LIVE → Dhan
-    # adapter (typed gate enforced at the mode endpoint, D10).
+    # OBSERVER = proposals only; PAPER → PaperTradingEngine; LIVE → broker
+    # adapter (Fyers; typed gate + session-validity gate, D10).
     paper_engine = PaperTradingEngine(event_bus=_event_bus)
     app.state.paper_engine = paper_engine
 
@@ -297,17 +345,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     product=p.get("product", "NRML"),
                 ))
         risk = risk_proj.get() if risk_proj is not None else {}
+        # Unknown margin (None) → 0.0: the risk engine then rejects proposals
+        # it cannot verify rather than admitting them on phantom capital.
+        margin_available = risk.get("margin_available")
         return Portfolio(
             positions=positions,
             daily_pnl=risk.get("daily_pnl", 0.0),
             total_margin_used=risk.get("margin_used", 0.0),
-            available_margin=risk.get("margin_available", 0.0),
+            available_margin=margin_available if margin_available is not None else 0.0,
         )
 
     execution_engine = ExecutionEngine(
         executor=mode_executor,
         risk_engine=RiskEngine(),
         portfolio_provider=_portfolio_provider,
+        db_path="data/proposals.db",
     )
     app.state.execution_engine = execution_engine
 
@@ -339,19 +391,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         logger.warning("Default watchlist not found at %s", watchlist_path)
 
-    # ── Initialize Dhan adapters + pipelines (lifespan and post-login) ──────
+    # ── Initialize Fyers adapters + market-data bridge (lifespan & post-login) ──
     wire_terminal_init(lambda: init_terminal_adapters(app, store, symbol_map))
     if store.is_token_valid():
         ok = await init_terminal_adapters(app, store, symbol_map)
-        logger.info("Dhan adapters initialized at lifespan: %s", ok)
+        logger.info("Fyers adapters initialized at lifespan: %s", ok)
 
-    # Configure HealthProjection with actual adapter references
+    # Configure HealthProjection with actual adapter references. The token
+    # health provider reads the FyersSession (daily token, no silent refresh)
+    # so a known-expired token reports honestly instead of object existence.
+    def _token_health() -> bool:
+        session = getattr(app.state, "fyers_session", None)
+        return True if session is None else session.is_valid()
+
     health_proj.configure(
         event_bus=_event_bus,
         data_adapter=app.state.data_adapter,
         trading_adapter=app.state.trading_adapter,
         feature_engine=app.state.feature_engine,
         signal_engine=app.state.signal_engine,
+        token_health_provider=_token_health,
     )
 
     yield
@@ -390,17 +449,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.exception("shadow loop close failed")
         knowledge_store.close()
         trade_ledger.close()
-        ingestion_pipeline = getattr(app.state, "ingestion_pipeline", None)
+        bar_builder = getattr(app.state, "bar_builder", None)
         data_adapter = getattr(app.state, "data_adapter", None)
         trading_adapter = getattr(app.state, "trading_adapter", None)
-        if ingestion_pipeline:
-            await ingestion_pipeline.stop()
+        if bar_builder:
+            await bar_builder.stop()
+        # FyersDataAdapter.disconnect() tears down both the HSM data socket
+        # and the JSON order socket (F3).
         if data_adapter:
             await data_adapter.disconnect()
         if trading_adapter:
             await trading_adapter.disconnect()
         if _health_monitor:
             await _health_monitor.stop()
+        if _margin_poller_task:
+            _margin_poller_task.cancel()
         if _event_bus:
             await _event_bus.stop()
         if _event_bus_task:
@@ -411,7 +474,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="ShettyXtreme Terminal",
-    version="0.11.0",
+    version="0.12.0",
     lifespan=lifespan,
 )
 
@@ -472,7 +535,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     Clients receive ticks/signals/alerts/regime changes. Frames: "ping"
     keepalive; subscribe/unsubscribe {"type": ..., "topics": [...]}.
+    Only local terminal origins may connect (F-EXEC-001).
     """
+    if not ws_manager.is_origin_allowed(websocket.headers.get("origin")):
+        # Close before accept → the client receives HTTP 403 (F-EXEC-001).
+        await websocket.close(code=1008)
+        return
     await ws_manager.connect(websocket)
     try:
         while True:

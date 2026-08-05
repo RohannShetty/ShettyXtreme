@@ -1,6 +1,7 @@
 """Tests for ExecutionEngine (semi-auto approval flow)."""
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
@@ -170,3 +171,50 @@ def test_lifecycle_transitions() -> None:
     )
     approval_id = engine.submit_signal(_make_signal(), _make_hint())
     assert engine.get_approval(approval_id).status == ApprovalStatus.PENDING.value
+
+
+def test_proposal_persists_across_engine_restart(tmp_path) -> None:
+    """F-KNOW-002: a proposal survives a restart via db_path persistence.
+
+    Submit on one engine, construct a fresh engine on the same db path
+    (simulated process restart), and the proposal must be listed again with
+    its full signal + strategy_hint payload.
+    """
+    db_path = str(tmp_path / "proposals.db")
+    signal = _make_signal(SignalDirection.UP)
+    hint = _make_hint()
+    engine = ExecutionEngine(
+        executor=_make_executor(), risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio, db_path=db_path,
+    )
+    approval_id = engine.submit_signal(signal, hint)
+
+    engine2 = ExecutionEngine(
+        executor=_make_executor(), risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio, db_path=db_path,
+    )
+    restored = engine2.get_approval(approval_id)
+    assert restored is not None
+    assert restored.id == approval_id
+    assert restored.status == ApprovalStatus.PENDING.value
+    assert restored.signal.direction == SignalDirection.UP
+    assert restored.signal.conviction == signal.conviction
+    assert restored.strategy_hint == hint
+
+
+def test_db_failure_does_not_abort_submit(tmp_path, monkeypatch) -> None:
+    """A broken DB must not abort proposal submission (in-memory fallback)."""
+    db_path = str(tmp_path / "proposals.db")
+    engine = ExecutionEngine(
+        executor=_make_executor(), risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio, db_path=db_path,
+    )
+
+    def broken_connect(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(sqlite3, "connect", broken_connect)
+    approval_id = engine.submit_signal(_make_signal(), _make_hint())
+    approval = engine.get_approval(approval_id)
+    assert approval is not None
+    assert approval.status == ApprovalStatus.PENDING.value

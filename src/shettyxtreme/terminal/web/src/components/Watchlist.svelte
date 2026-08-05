@@ -6,6 +6,9 @@
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import { Plus, X } from "@lucide/svelte";
+  import EmptyState from "./state/EmptyState.svelte";
+  import LoadingState from "./state/LoadingState.svelte";
+  import ErrorState from "./state/ErrorState.svelte";
 
   type WatchItem = {
     symbol: string;
@@ -13,26 +16,49 @@
     ltp: number;
     change_pct: number;
     volume: number;
+    timestamp: string | null;
   };
+
+  const STALE_MS = 60_000;
 
   let items: WatchItem[] = $state([]);
   let selected = $state("");
   let newSymbol = $state("");
   let newExchange = $state("NSE");
   let error = $state("");
+  let loading = $state(true);
+  let now = $state(Date.now());
   const flashMap = new Map<string, "up" | "down">();
+  // symbol -> epoch ms of the last tick we actually saw for that symbol
+  const lastSeenMs = new Map<string, number>();
+  let staleTimer: number | undefined;
 
   onMount(() => {
     load();
-    return onMessage("tick", applyTick);
+    const unsub = onMessage("tick", applyTick);
+    staleTimer = window.setInterval(() => (now = Date.now()), 5000);
+    return () => {
+      unsub();
+      if (staleTimer !== undefined) window.clearInterval(staleTimer);
+    };
   });
 
   async function load(): Promise<void> {
+    loading = true;
+    error = "";
     try {
       items = await get<WatchItem[]>("/api/watchlist");
+      for (const it of items) {
+        if (it.timestamp) {
+          const ts = Date.parse(it.timestamp);
+          if (!Number.isNaN(ts)) lastSeenMs.set(it.symbol, ts);
+        }
+      }
       if (selected && !items.some((i) => i.symbol === selected)) selected = "";
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
+    } finally {
+      loading = false;
     }
   }
 
@@ -44,10 +70,17 @@
       if (typeof tick.ltp === "number") existing.ltp = tick.ltp;
       if (typeof tick.change_pct === "number") existing.change_pct = tick.change_pct;
       if (typeof tick.volume === "number") existing.volume = tick.volume;
+      lastSeenMs.set(tick.symbol, Date.now());
       flashMap.set(tick.symbol, (tick.change_pct ?? existing.change_pct) >= 0 ? "up" : "down");
       window.setTimeout(() => flashMap.delete(tick.symbol ?? ""), 160);
       items = items.slice();
     }
+  }
+
+  function isStale(item: WatchItem): boolean {
+    const last = lastSeenMs.get(item.symbol);
+    if (last === undefined) return true; // never ticked in this session → no live data
+    return now - last > STALE_MS;
   }
 
   function flashClass(symbol: string): string {
@@ -77,6 +110,7 @@
       await del(`/api/watchlist/${encodeURIComponent(symbol)}`);
       if (selected === symbol) selected = "";
       items = items.filter((i) => i.symbol !== symbol);
+      lastSeenMs.delete(symbol);
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     }
@@ -122,43 +156,53 @@
     </Button>
   </div>
 
-  {#if error}
-    <p class="error">{error}</p>
-  {/if}
-
-  <div class="list">
-    {#each items as item (item.symbol)}
-      <div
-        class={flashClass(item.symbol) ? `row ${flashClass(item.symbol)}` : "row"}
-        class:selected={selected === item.symbol}
-        onclick={() => selectRow(item.symbol)}
-        onkeydown={(e) => onRowKeydown(e, item.symbol)}
-        role="button"
-        tabindex="0"
-      >
-        <div class="sym-cell">
-          <span class="ticker">{item.symbol}</span>
-          <span class="exch">{item.exchange}</span>
-        </div>
-        <span class="num ltp {pnlClass(item.change_pct)}">{fmtLtp(item.ltp)}</span>
-        <span class="num chg {pnlClass(item.change_pct)}">{item.change_pct > 0 ? "+" : ""}{item.change_pct.toFixed(2)}%</span>
-        <button
-          class="rm"
-          onclick={(e) => {
-            e.stopPropagation();
-            remove(item.symbol);
-          }}
-          title="Remove"
-          aria-label={`Remove ${item.symbol}`}
-        >
-          <X class="size-3.5" />
-        </button>
-      </div>
-    {/each}
-    {#if items.length === 0}
-      <p class="empty">No instruments. Add one above.</p>
+  {#if error && items.length === 0}
+    <ErrorState message={error} onRetry={load} />
+  {:else}
+    {#if error}
+      <ErrorState message={error} onRetry={load} />
     {/if}
-  </div>
+
+    {#if loading && items.length === 0}
+      <LoadingState label="Loading watchlist…" rows={4} />
+    {:else}
+      <div class="list">
+        {#each items as item (item.symbol)}
+          <div
+            class={flashClass(item.symbol) ? `row ${flashClass(item.symbol)}` : "row"}
+            class:selected={selected === item.symbol}
+            class:stale={isStale(item)}
+            onclick={() => selectRow(item.symbol)}
+            onkeydown={(e) => onRowKeydown(e, item.symbol)}
+            role="button"
+            tabindex="0"
+            title={isStale(item) ? "No tick in the last 60s" : ""}
+          >
+            <div class="sym-cell">
+              <span class="ticker">{item.symbol}</span>
+              <span class="exch">{item.exchange}</span>
+            </div>
+            <span class="num ltp {pnlClass(item.change_pct)}">{fmtLtp(item.ltp)}</span>
+            <span class="num chg {pnlClass(item.change_pct)}">{item.change_pct > 0 ? "+" : ""}{item.change_pct.toFixed(2)}%</span>
+            <button
+              class="rm"
+              onclick={(e) => {
+                e.stopPropagation();
+                remove(item.symbol);
+              }}
+              title="Remove"
+              aria-label={`Remove ${item.symbol}`}
+            >
+              <X class="size-3.5" />
+            </button>
+          </div>
+        {/each}
+        {#if items.length === 0}
+          <EmptyState message="No instruments. Add one above." />
+        {/if}
+      </div>
+    {/if}
+  {/if}
 </section>
 
 <style>
@@ -221,6 +265,10 @@
     background: var(--row-selected);
     border-left-color: var(--accent);
   }
+  .row.stale {
+    opacity: 0.5;
+    transition: opacity 300ms ease;
+  }
   .sym-cell {
     display: flex;
     flex-direction: column;
@@ -255,17 +303,5 @@
   }
   .rm:hover {
     color: var(--danger);
-  }
-  .empty {
-    color: var(--faint);
-    font-size: 11px;
-    padding: 12px 10px;
-    margin: 0;
-  }
-  .error {
-    color: var(--danger);
-    font-size: 11px;
-    padding: 4px 10px;
-    margin: 0;
   }
 </style>

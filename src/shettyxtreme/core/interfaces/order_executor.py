@@ -1,4 +1,4 @@
-"""Protocol for order execution - implemented by DhanTradingAdapter."""
+"""Protocol for order execution - implemented by FyersTradingAdapter."""
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable

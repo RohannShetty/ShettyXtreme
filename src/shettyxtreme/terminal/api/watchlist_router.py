@@ -1,4 +1,10 @@
-"""Watchlist router — manage and view watchlist instruments."""
+"""Watchlist router — manage and view watchlist instruments.
+
+For Fyers the watchlist ``security_id`` holds the *internal* symbol (broker
+neutral since F1) — the Fyers symbol resolver converts it to a ticker at
+hydration/subscribe time. REST hydration backfills ltp/change_pct from
+``/data/quotes`` when the live feed is idle; live ticks always win.
+"""
 from __future__ import annotations
 
 import logging
@@ -6,88 +12,57 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
-from shettyxtreme.integration.dhan.data_adapter import EXCHANGE_MAP
 from shettyxtreme.terminal.api.models import WatchlistItem
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
 
-# Same segment mapping the data pipeline uses (data_adapter.EXCHANGE_MAP).
-_SEGMENT_FOR_EXCHANGE: dict[str, str] = {**EXCHANGE_MAP}
+#: Internal index names that resolve to the Fyers INDEX instrument type.
+_INDEX_SYMBOLS: frozenset[str] = frozenset({"NIFTY", "BANKNIFTY", "FINNIFTY"})
 
 
-def _segment_for(exchange: str) -> str:
-    """Map a friendly exchange name to its Dhan feed segment."""
-    key = exchange.upper()
-    return _SEGMENT_FOR_EXCHANGE.get(key, key)
-
-
-def _parse_last_price(instrument: Any) -> float | None:
-    """Parse a Dhan marketfeed last_price defensively (None for halted)."""
-    if not isinstance(instrument, dict):
+def _as_price(value: Any) -> float | None:
+    """Coerce a price value to float; None for junk/halted (<=0)."""
+    if not isinstance(value, (int, float, str)):
         return None
     try:
-        return float(instrument.get("last_price"))
+        price = float(value)
     except (TypeError, ValueError):
         return None
+    return price if price > 0 else None
 
 
 async def _hydrate_from_rest(proj_rows: dict[str, dict[str, Any]], request: Request) -> None:
-    """Backfill ltp/change_pct from Dhan REST when the live feed is idle.
+    """Backfill ltp/change_pct from Fyers REST when the live feed is idle.
 
     Mutates proj_rows in place — the rows ARE the projection's live objects
     (get() is a shallow copy), so a backfilled price persists for the
     session. That is deliberate: post-close the value is today's close and
-    the feed polls every ~2s must not hammer Dhan REST. Live ticks always
-    overwrite. Never raises — REST failures leave stored values untouched.
+    the feed polls must not hammer Fyers REST (10 req/s limit). Live ticks
+    always overwrite. Never raises — REST failures leave stored values
+    untouched.
     """
     adapter = getattr(request.app.state, "data_adapter", None)
     if adapter is None:
         return
-    segments: dict[str, list[str]] = {}
-    pending: set[str] = set()
-    for info in proj_rows.values():
-        sec_id = info.get("security_id")
-        if not sec_id:
-            continue
-        seg = _segment_for(info.get("exchange", "NSE"))
-        segments.setdefault(seg, []).append(sec_id)
-        if (info.get("ltp") or 0) <= 0:
-            pending.add(sec_id)
-    if not segments or not pending:
-        return
     try:
-        result = await adapter.get_ohlc(segments)
-        if result.get("status") != "success":
-            fallback = await adapter.get_ltp(segments)
-            if fallback.get("status") != "success":
-                return
-            result = fallback
-        data = result.get("data", {})
-        if not isinstance(data, dict):
-            return
-        for info in proj_rows.values():
-            sec_id = info.get("security_id")
-            if sec_id not in pending:
+        for symbol, info in proj_rows.items():
+            if (info.get("ltp") or 0) > 0:
                 continue
-            segment_data = data.get(_segment_for(info.get("exchange", "NSE")))
-            if not isinstance(segment_data, dict):
+            query = str(info.get("security_id") or symbol).strip()
+            if not query:
                 continue
-            instrument = segment_data.get(sec_id)
-            last_price = _parse_last_price(instrument)
-            if last_price is None:
-                continue
-            info["ltp"] = last_price
-            prev_close: float | None = None
-            ohlc = instrument.get("ohlc") if isinstance(instrument, dict) else None
-            if isinstance(ohlc, dict):
-                try:
-                    prev_close = float(ohlc.get("close"))
-                except (TypeError, ValueError):
-                    prev_close = None
-            if prev_close and prev_close > 0:
-                info["change_pct"] = round(((last_price - prev_close) / prev_close) * 100, 2)
+            ohlc = await adapter.get_ohlc(query)
+            ltp = _as_price(ohlc.get("ltp") if isinstance(ohlc, dict) else None)
+            if ltp is None:
+                ltp = _as_price(await adapter.get_ltp(query))
+            if ltp is None:
+                continue  # halted security / no data — keep stored values
+            info["ltp"] = ltp
+            prev_close = _as_price(ohlc.get("close")) if isinstance(ohlc, dict) else None
+            if prev_close is not None:
+                info["change_pct"] = round(((ltp - prev_close) / prev_close) * 100, 2)
             else:
                 info["change_pct"] = 0.0
     except Exception:
@@ -115,16 +90,25 @@ async def get_watchlist(request: Request) -> list[WatchlistItem]:
 
 
 def _resolve_security_id(request: Request, symbol: str, exchange: str) -> str | None:
-    """Resolve a trading symbol to its Dhan security ID, if the master is loaded.
+    """Resolve a trading symbol to its internal (broker-neutral) symbol.
 
-    Numeric symbols are assumed to already be security IDs and pass through.
+    For Fyers the internal symbol IS the security_id; the Fyers symbol
+    resolver validates it resolves to a Fyers ticker (round-trip gate).
     """
-    if symbol.isdigit():
-        return symbol
-    master = getattr(request.app.state, "instrument_master", None)
-    if master is None:
+    s = str(symbol).strip()
+    if not s:
         return None
-    return master.resolve_symbol(symbol, exchange)
+    if ":" in s:
+        return s  # already a Fyers ticker
+    resolver = getattr(request.app.state, "symbol_resolver", None)
+    if resolver is None:
+        return s
+    try:
+        instrument_type = "INDEX" if s.upper() in _INDEX_SYMBOLS else "EQUITY"
+        resolver.to_fyers(s, exchange, instrument_type)
+        return s
+    except ValueError:
+        return None
 
 
 @router.post("/{symbol}", response_model=WatchlistItem)
@@ -132,9 +116,10 @@ async def add_to_watchlist(symbol: str, request: Request, exchange: str = "NSE")
     """Add an instrument to the watchlist."""
     proj = request.app.state.watchlist_projection
     security_id = _resolve_security_id(request, symbol, exchange)
-    if security_id is None and not symbol.isdigit():
+    if security_id is None:
         logger.warning(
-            "watchlist add: %s not resolvable via instrument master — no live ticks until the feed knows its security ID",
+            "watchlist add: %s not resolvable via the Fyers symbol resolver — "
+            "no live ticks until the resolver knows it",
             symbol,
         )
     proj.add(symbol, exchange, security_id=security_id)

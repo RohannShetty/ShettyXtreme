@@ -4,10 +4,32 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
+
+# Origins allowed to open the /ws feed. Browser WebSocket requests carry an
+# Origin header naming the page that initiated them; anything else is a
+# foreign site trying to subscribe to the live feed (F-EXEC-001).
+#   :3000 = Vite dev server   :8000 = production API origin
+_ALLOWED_ORIGINS = frozenset({
+    "127.0.0.1:3000",
+    "localhost:3000",
+    "127.0.0.1:8000",
+    "localhost:8000",
+})
+
+
+def _origin_netloc(origin: str | None) -> bool:
+    if not origin:
+        return True
+    try:
+        netloc = urlparse(origin).netloc
+    except ValueError:
+        return False
+    return netloc in _ALLOWED_ORIGINS
 
 
 class WebSocketManager:
@@ -18,6 +40,16 @@ class WebSocketManager:
     with no declared subscriptions receive everything — backward compatible
     with the original broadcast-to-all behavior.
     """
+
+    @staticmethod
+    def is_origin_allowed(origin: str | None) -> bool:
+        """True when a browser-initiated WS connection is from the local
+        terminal (Vite dev :3000 / production :8000).
+
+        Non-browser clients send no Origin header; they are not a CSRF
+        vector and are accepted. Any other origin is rejected (F-EXEC-001).
+        """
+        return _origin_netloc(origin)
 
     def __init__(self) -> None:
         self._connections: list[WebSocket] = []

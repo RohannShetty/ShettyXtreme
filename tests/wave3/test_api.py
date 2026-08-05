@@ -32,6 +32,8 @@ async def setup_projections(tmp_path: Path, monkeypatch) -> AsyncIterator[None]:
     mode_file = tmp_path / "mode.txt"
     monkeypatch.setattr(execution_router, "_MODE_FILE", mode_file)
     execution_router._current_mode = execution_router._load_mode()
+    execution_router._csrf_token = None
+    execution_router._kill_switch_path = ""
 
     app.state.event_bus = bus
     app.state.trading_adapter = None
@@ -74,10 +76,10 @@ async def client() -> AsyncIterator[AsyncClient]:
 
 
 class EntitledAdapter:
-    """Adapter that reports a missing Data-API entitlement (Dhan 806)."""
+    """Adapter that reports a missing Data-API entitlement (Fyers 403/-373)."""
 
-    async def get_option_chain(self, underlying_scrip: str, exchange_segment: str, expiry: str) -> dict:
-        return {"status": "error", "entitlement": True, "message": "subscribe to Data APIs — Dhan error 806"}
+    async def get_option_chain(self, underlying: str, expiry: str, strike_count: int) -> dict:
+        return {"s": "error", "entitlement": True, "message": "subscribe to Data APIs — Fyers 403/-373"}
 
 
 # ── Root ───────────────────────────────────────────────────────
@@ -188,16 +190,14 @@ async def test_get_strategy_hint(client: AsyncClient) -> None:
 async def test_get_strategy_hint_with_adapter(client: AsyncClient) -> None:
     """Strategy hint is computed from a live adapter chain + projection signal."""
     class FakeAdapter:
-        async def get_option_chain(self, underlying_scrip: str, exchange_segment: str, expiry: str) -> dict:
+        async def get_option_chain(self, underlying: str, expiry: str, strike_count: int) -> dict:
             return {
-                "status": "success",
-                "data": {
-                    "underlying_ltp": 19500.0,
-                    "option_chain": [
-                        {"strike": 19500, "option_type": "CE", "ltp": 150.0, "iv": 12.0},
-                        {"strike": 19500, "option_type": "PE", "ltp": 120.0, "iv": 11.0},
-                    ],
-                },
+                "s": "ok",
+                "underlying_ltp": 19500.0,
+                "option_chain": [
+                    {"strike": 19500, "option_type": "CE", "ltp": 150.0, "iv": 12.0},
+                    {"strike": 19500, "option_type": "PE", "ltp": 120.0, "iv": 11.0},
+                ],
             }
 
     app.state.data_adapter = FakeAdapter()
@@ -215,15 +215,13 @@ async def test_get_strategy_hint_with_adapter(client: AsyncClient) -> None:
 async def test_get_options_with_adapter(client: AsyncClient) -> None:
     """Options endpoint enriches a real adapter chain response."""
     class FakeAdapter:
-        async def get_option_chain(self, underlying_scrip: str, exchange_segment: str, expiry: str) -> dict:
+        async def get_option_chain(self, underlying: str, expiry: str, strike_count: int) -> dict:
             return {
-                "status": "success",
-                "data": {
-                    "option_chain": [
-                        {"strike": 19000, "option_type": "CE", "ltp": 150.0},
-                        {"strike": 19000, "option_type": "PE", "ltp": 120.0},
-                    ],
-                },
+                "s": "ok",
+                "option_chain": [
+                    {"strike": 19000, "option_type": "CE", "ltp": 150.0},
+                    {"strike": 19000, "option_type": "PE", "ltp": 120.0},
+                ],
             }
 
     app.state.data_adapter = FakeAdapter()
@@ -244,16 +242,14 @@ async def test_get_options_caches_chain_for_research(client: AsyncClient) -> Non
     """A successful chain fetch populates app.state.options_chain so the
     research options_posture tool is sourced from live data (not [UNSOURCED])."""
     class FakeAdapter:
-        async def get_option_chain(self, underlying_scrip: str, exchange_segment: str, expiry: str) -> dict:
+        async def get_option_chain(self, underlying: str, expiry: str, strike_count: int) -> dict:
             return {
-                "status": "success",
-                "data": {
-                    "underlying_ltp": 19500.0,
-                    "option_chain": [
-                        {"strike": 19500, "option_type": "CE", "ltp": 150.0, "iv": 12.0, "oi": 120000},
-                        {"strike": 19500, "option_type": "PE", "ltp": 120.0, "iv": 11.0, "oi": 130000},
-                    ],
-                },
+                "s": "ok",
+                "underlying_ltp": 19500.0,
+                "option_chain": [
+                    {"strike": 19500, "option_type": "CE", "ltp": 150.0, "iv": 12.0, "oi": 120000},
+                    {"strike": 19500, "option_type": "PE", "ltp": 120.0, "iv": 11.0, "oi": 130000},
+                ],
             }
 
     app.state.data_adapter = FakeAdapter()
@@ -276,7 +272,7 @@ async def test_get_options_caches_chain_for_research(client: AsyncClient) -> Non
 
 @pytest.mark.asyncio
 async def test_options_entitlement_503(client: AsyncClient) -> None:
-    """806 entitlement from the adapter surfaces as a 503 with an actionable detail."""
+    """Fyers 403/-373 entitlement from the adapter surfaces as a 503 with an actionable detail."""
     app.state.data_adapter = EntitledAdapter()
     try:
         resp = await client.get("/api/intelligence/options?symbol=NIFTY")
@@ -322,18 +318,55 @@ async def test_get_mode(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_mode_requires_confirmation_for_live(client: AsyncClient) -> None:
+async def test_set_mode_live_requires_typed_confirmation(client: AsyncClient) -> None:
+    # F-EXEC-001: no confirm at all → 400, mode unchanged.
     resp = await client.post("/api/execution/mode?mode=LIVE")
-    assert resp.status_code == 200
-    assert resp.json()["mode"] != "LIVE"
+    assert resp.status_code == 400
+    assert "typed confirmation" in resp.json()["detail"]
 
 
 @pytest.mark.asyncio
-async def test_set_mode_live_with_confirmation(client: AsyncClient) -> None:
+async def test_set_mode_live_query_confirm_is_rejected(client: AsyncClient) -> None:
+    # F-EXEC-001: a boolean query flag must never arm LIVE.
     resp = await client.post("/api/execution/mode?mode=LIVE&confirm=true")
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_set_mode_live_wrong_typed_confirm_is_rejected(client: AsyncClient) -> None:
+    resp = await client.post("/api/execution/mode?mode=LIVE", json={"confirm": "yes"})
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_set_mode_live_with_typed_confirmation(client: AsyncClient) -> None:
+    resp = await client.post("/api/execution/mode?mode=LIVE", json={"confirm": "LIVE"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["mode"] == "LIVE"
+    assert data["csrf_token"]  # per-session CSRF token minted on LIVE activation
+
+
+@pytest.mark.asyncio
+async def test_set_mode_observer_paper_keep_query_backward_compat(client: AsyncClient) -> None:
+    # OBSERVER/PAPER must keep working with the legacy confirm=true query flag.
+    resp = await client.post("/api/execution/mode?mode=PAPER&confirm=true")
+    assert resp.status_code == 200
+    assert resp.json()["mode"] == "PAPER"
+    resp = await client.post("/api/execution/mode?mode=OBSERVER&confirm=true")
+    assert resp.status_code == 200
+    assert resp.json()["mode"] == "OBSERVER"
+
+
+@pytest.mark.asyncio
+async def test_set_mode_leaving_live_clears_csrf_token(client: AsyncClient) -> None:
+    resp = await client.post("/api/execution/mode?mode=LIVE", json={"confirm": "LIVE"})
+    assert resp.status_code == 200
+    assert resp.json()["csrf_token"]
+    resp = await client.post("/api/execution/mode?mode=OBSERVER")
+    assert resp.status_code == 200
+    assert resp.json()["csrf_token"] is None
+    assert execution_router.get_csrf_token() is None
 
 
 @pytest.mark.asyncio
@@ -342,6 +375,40 @@ async def test_kill_switch(client: AsyncClient) -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert "active" in data
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_arm_stays_one_click(client: AsyncClient, tmp_path: Path) -> None:
+    kill_file = tmp_path / "kill"
+    execution_router._kill_switch_path = str(kill_file)
+    resp = await client.post("/api/execution/kill-switch?activate=true")
+    assert resp.status_code == 200
+    assert resp.json()["active"] is True
+    assert kill_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_disarm_requires_typed_confirmation(client: AsyncClient, tmp_path: Path) -> None:
+    kill_file = tmp_path / "kill"
+    execution_router._kill_switch_path = str(kill_file)
+    kill_file.touch()
+    resp = await client.post("/api/execution/kill-switch?activate=false")
+    assert resp.status_code == 400
+    assert "typed confirmation" in resp.json()["detail"]
+    assert kill_file.exists()  # still armed
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_disarm_with_typed_confirmation(client: AsyncClient, tmp_path: Path) -> None:
+    kill_file = tmp_path / "kill"
+    execution_router._kill_switch_path = str(kill_file)
+    kill_file.touch()
+    resp = await client.post(
+        "/api/execution/kill-switch?activate=false", json={"confirm": "DISARM"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["active"] is False
+    assert not kill_file.exists()
 
 
 # ── Scanner ────────────────────────────────────────────────────

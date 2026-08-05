@@ -1,7 +1,12 @@
-"""Encrypted local credential store for Dhan API keys and tokens.
+"""Encrypted local credential store for Fyers app credentials and tokens.
 
 Stores credentials at ~/.shettyxtreme/credentials.enc using Fernet encryption.
 Key derived from machine-specific identifier (hostname + username).
+
+Fyers uses a single-token model: one access token minted per OAuth
+authorization-code exchange, valid for the day. There is no separate data
+token and no JWT parsing — the client id comes from the OAuth redirect
+(`user_id`), not from the token payload.
 """
 from __future__ import annotations
 
@@ -9,6 +14,7 @@ import base64
 import getpass
 import hashlib
 import json
+import logging
 import socket
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,22 +22,35 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
+logger = logging.getLogger(__name__)
+
 _SHETTY_DIR = Path.home() / ".shettyxtreme"
 _CRED_PATH = _SHETTY_DIR / "credentials.enc"
+
+# Keys that mark a payload as legacy Dhan credentials.
+_LEGACY_KEYS: tuple[str, ...] = (
+    "trading_api_key",
+    "trading_api_secret",
+    "trading_access_token",
+    "data_api_key",
+    "data_access_token",
+    "data_token_expiry",
+    "api_key",
+    "api_secret",
+)
 
 
 @dataclass
 class CredentialStore:
-    """Encrypted credential storage for single Dhan API credential."""
+    """Encrypted credential storage for the Fyers API app + access token."""
 
-    api_key: str = ""
-    api_secret: str = ""
+    broker: str = "fyers"
+    app_id: str = ""
+    secret_id: str = ""
     access_token: str | None = None
     token_expiry: str | None = None
     client_id: str | None = None
     client_name: str | None = None
-    data_access_token: str | None = None
-    data_access_token_expiry: str | None = None
 
     @staticmethod
     def _fernet() -> Fernet:
@@ -47,8 +66,20 @@ class CredentialStore:
         _CRED_PATH.write_bytes(encrypted)
 
     @staticmethod
+    def _is_legacy_payload(data: dict) -> bool:
+        """True when a stored payload came from the Dhan credential era."""
+        if any(key in data for key in _LEGACY_KEYS):
+            return True
+        return data.get("broker") in (None, "dhan")
+
+    @staticmethod
     def load() -> CredentialStore | None:
-        """Decrypt and return stored credentials, or None if file missing."""
+        """Decrypt and return stored credentials, or None if file missing.
+
+        Legacy Dhan payloads are cleared and replaced with a fresh Fyers
+        store — the Dhan access token is not portable and Fyers requires a
+        new authorization-code flow.
+        """
         if not _CRED_PATH.exists():
             return None
         encrypted = _CRED_PATH.read_bytes()
@@ -57,61 +88,29 @@ class CredentialStore:
         except Exception:
             return None
         data = json.loads(payload)
-        if "trading_api_key" in data:
+        if CredentialStore._is_legacy_payload(data):
+            logger.info(
+                "Detected legacy Dhan credentials — clearing store; Fyers re-auth required"
+            )
             store = CredentialStore()
-            store.api_key = data.get("trading_api_key", "")
-            store.api_secret = data.get("trading_api_secret", "")
-            store.access_token = data.get("trading_access_token")
-            store.token_expiry = data.get("trading_token_expiry")
-            store.client_id = data.get("trading_client_id") or CredentialStore._extract_client_id_from_token(store.access_token)
-            store.client_name = data.get("client_name")
             store.save()
             return store
-        store = CredentialStore(**data)
-        # Auto-extract client_id from JWT if missing
-        if not store.client_id and store.access_token:
-            store.client_id = CredentialStore._extract_client_id_from_token(store.access_token)
-        return store
-
-    @staticmethod
-    def _extract_client_id_from_token(access_token: str | None) -> str:
-        """Extract dhanClientId from JWT access token."""
-        if not access_token:
-            return ""
-        try:
-            parts = access_token.split(".")
-            if len(parts) < 2:
-                return ""
-            payload = parts[1] + "=="
-            decoded = json.loads(base64.urlsafe_b64decode(payload))
-            return decoded.get("dhanClientId", "")
-        except Exception:
-            return ""
-
-    @staticmethod
-    def _extract_exp_from_token(access_token: str | None) -> str:
-        """Extract the `exp` claim (epoch seconds) from a JWT access token as ISO-8601."""
-        if not access_token:
-            return ""
-        try:
-            parts = access_token.split(".")
-            if len(parts) < 2:
-                return ""
-            payload = parts[1] + "=="
-            decoded = json.loads(base64.urlsafe_b64decode(payload))
-            exp = decoded.get("exp")
-            if not exp:
-                return ""
-            return datetime.fromtimestamp(int(exp), tz=UTC).isoformat()
-        except Exception:
-            return ""
+        return CredentialStore(
+            broker=data.get("broker", "fyers"),
+            app_id=data.get("app_id", ""),
+            secret_id=data.get("secret_id", ""),
+            access_token=data.get("access_token"),
+            token_expiry=data.get("token_expiry"),
+            client_id=data.get("client_id"),
+            client_name=data.get("client_name"),
+        )
 
     def is_complete(self) -> bool:
-        """True when API key and secret are present."""
-        return bool(self.api_key and self.api_secret)
+        """True when Fyers app credentials (App ID + Secret ID) are present."""
+        return bool(self.app_id and self.secret_id)
 
     def is_token_valid(self) -> bool:
-        """True when token exists and has not expired."""
+        """True when the access token exists and has not expired."""
         if not self.access_token or not self.token_expiry:
             return False
         expiry = datetime.fromisoformat(self.token_expiry)
@@ -119,25 +118,11 @@ class CredentialStore:
             expiry = expiry.replace(tzinfo=UTC)
         return expiry > datetime.now(UTC)
 
-    def is_data_token_valid(self) -> bool:
-        """True when the data-access token exists and has not expired."""
-        if not self.data_access_token or not self.data_access_token_expiry:
-            return False
-        expiry = datetime.fromisoformat(self.data_access_token_expiry)
-        if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=UTC)
-        return expiry > datetime.now(UTC)
-
     def update_token(self, access_token: str, expiry: str, client_id: str) -> None:
-        """Update access token, expiry, and client ID."""
+        """Update the access token, its expiry, and the client id."""
         self.access_token = access_token
         self.token_expiry = expiry
         self.client_id = client_id
-
-    def update_data_token(self, token: str, expiry: str | None) -> None:
-        """Update the data-access token (fallback used by the Dhan data adapter)."""
-        self.data_access_token = token
-        self.data_access_token_expiry = expiry
 
     def get_masked(self) -> dict:
         """Return credentials with secrets masked (last 4 chars visible)."""
@@ -149,11 +134,11 @@ class CredentialStore:
             return "***" + val[-4:]
 
         return {
-            "api_key": _mask(self.api_key),
-            "api_secret": _mask(self.api_secret),
+            "broker": self.broker,
+            "app_id": _mask(self.app_id),
+            "secret_id": _mask(self.secret_id),
             "access_token": _mask(self.access_token),
             "token_expiry": self.token_expiry or "",
             "client_id": self.client_id or "",
             "client_name": self.client_name or "",
-            "data_access_token": _mask(self.data_access_token),
         }

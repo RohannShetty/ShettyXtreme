@@ -1,5 +1,33 @@
 # ShettyXtreme Changelog
 
+## [2026-08-05] — v0.12.0: Fyers Migration (Phase 1)
+
+Suite: **1059 passed / 0 failed / 0 skipped**. Broker migration: Dhan → **Fyers** (ADR-008). `integration/dhan/` and `auth/dhan_oauth.py` deleted; `src/` is Dhan-free (grep-gated: zero `dhanhq`/`DhanTrading`/`DhanData` matches). Frozen rules FR-002/FR-003 and BOUNDARY-003 amended; ADR-007 superseded by ADR-008; ARCHITECTURE_V2 §11 rewritten as Fyers Integration.
+
+### Added
+- **Fyers REST transport** (`integration/fyers/client.py`): raw `httpx`, token-bucket throttle (~8/s), `Retry-After` backoff, error taxonomy (`FyersTokenExpired` on 401/-8/-15/-16/-17, `FyersDataEntitlementError` on 403/-373, `FyersRateLimitError` on 429).
+- **Fyers session** (`session.py`): daily token lifecycle, `GET /profile` liveness probe, persist/load through the Fernet credential store.
+- **Symbol resolver + instrument master** (`symbols.py`, `instrument_master.py`): internal names ↔ Fyers tickers with the weekly month-code (`1-9/O/N/D`) handling, exact-match master validation (the `-300` gotcha gate), public master download → SQLite.
+- **Fyers order socket** (`ws_client.py`): JSON order WS (`SUB_ORD`), 10s heartbeat, exponential backoff, 403-handshake → re-auth trigger — replaces Dhan postback webhooks; `postback_router.py` now bridges order-socket frames to `ORDER_UPDATED` (legacy HTTP path kept for the migration window).
+- **Fyers data socket** (`data_socket.py`): supervised SDK HSM socket wrapper with restart backoff; token-expiry codes 11001/-99 surfaced as `FyersTokenExpired`.
+- **Fyers adapters** (`trading_adapter.py`, `data_adapter.py`): implement `OrderExecutor`/`AccountInfo`/`MarketDataStream`/`DataProvider` (zero Protocol changes); history chunking (≤100d/req intraday, ≤366d daily), client-side bar aggregation, options chain with greeks.
+- **Fyers auth**: `auth/fyers_oauth.py` OAuth2 authorization-code helper, broker-discriminated credential store (`app_id`/`secret_id`), `/auth/fyers/callback` exchange, 60s health monitor + pre-market probe, validator → `/profile`.
+- **Terminal wiring**: `terminal_init.py` builds the Fyers adapter stack, bridges ticks onto the EventBus, and subscribes the order socket; routers de-Dhaned (market, watchlist, intelligence).
+- **Fyers instrument-master tests**: `tests/integration/` — client, session, symbols, instrument master, mappings, WS client, data socket, and adapter unit tests (mock transport, no network).
+
+### Removed
+- `integration/dhan/` (trading + data adapters), `auth/dhan_oauth.py`, Dhan wire-format tests (`test_dhan_trading_adapter.py`, `test_dhan_data_adapter.py`), shared Dhan `integration/instrument_master.py`, `dhanhq` dependency, `tests/terminal/conftest.py` dhanhq mock.
+
+### Fixed
+- `stream_manager.py` Dhan feed coupling removed; the market-data bridge now runs through the Fyers data adapter.
+- `configs/default_watchlist.yaml` holds internal symbols (was Dhan numeric security IDs).
+- Version drift resolved: all five version files at 0.11.0.
+
+### Known
+- Fyers token TTL is unpublished — daily interactive re-auth is the reliable path; the pre-market `/profile` probe is authoritative.
+- Data socket relies on the `fyers-apiv3` SDK (HSM protocol) — pinned with `--no-deps`; REST + order WS are raw and SDK-free.
+- No Fyers sandbox — real account, OBSERVER-first, small notionals.
+
 ## [2026-08-02] — v0.11.0: Trades Ledger + Knowledge v2 + Hygiene Wave
 
 Suite: **732 passed / 0 failed / 0 skipped** (was 703). Three tracks: the trades-ledger recording track that unblocks net-EV scoring (ticket 06), knowledge v2 (operator notes + tag refinement), and the deferred-minors hygiene wave.

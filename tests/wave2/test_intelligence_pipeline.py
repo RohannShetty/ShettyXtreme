@@ -18,8 +18,10 @@ from shettyxtreme.intelligence.pipeline import IntelligencePipeline
 from shettyxtreme.intelligence.regime.bus_bridge import RegimeBusBridge
 from shettyxtreme.terminal.projections import IntelligenceProjection
 
-#: Live voters the package exports — 3 decorator-registered + 2 explicit.
-EXPECTED_VOTERS = {"options_flow_voter", "micro_voter", "breadth_voter", "orb", "iv_rank"}
+#: Live voters the package exports — decorator-registered only.
+#: F-INTEL-001: orb_voter / iv_rank_voter stubs were removed from the registry —
+#: they voted constant directions (DOWN / UP) on features that are never computed.
+EXPECTED_VOTERS = {"options_flow_voter", "micro_voter", "breadth_voter"}
 
 
 def _make_tick(ltp: float, high: float | None = None, low: float | None = None) -> Tick:
@@ -47,8 +49,11 @@ async def test_pipeline_registers_all_live_voters() -> None:
     bus = EventBus()
     pipeline = IntelligencePipeline(bus)
     assert EXPECTED_VOTERS <= set(pipeline.signal_engine.voters)
-    assert pipeline.signal_engine.voters["orb"] is not None
-    assert pipeline.signal_engine.voters["iv_rank"] is not None
+    # F-INTEL-001 regression guard: the stub voters must not be registered —
+    # with no real features backing them they voted constant directions and
+    # dominated ~42% of the aggregate weight as noise.
+    assert "orb" not in pipeline.signal_engine.voters
+    assert "iv_rank" not in pipeline.signal_engine.voters
     # decorator-registered voters are synced through the registry
     assert "options_flow_voter" in pipeline.signal_engine.voters
 

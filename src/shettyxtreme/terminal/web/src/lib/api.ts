@@ -18,10 +18,14 @@ async function describeError(resp: Response): Promise<string> {
   return fallback;
 }
 
-async function request<T>(path: string, method: string): Promise<T> {
+async function request<T>(
+  path: string,
+  method: string,
+  headers?: Record<string, string>,
+): Promise<T> {
   let resp: Response;
   try {
-    resp = await fetch(path, { method, credentials: "same-origin" });
+    resp = await fetch(path, { method, credentials: "same-origin", headers });
   } catch {
     throw new Error(`Network error reaching ${path}`);
   }
@@ -35,8 +39,8 @@ export async function get<T>(path: string): Promise<T> {
   return request<T>(path, "GET");
 }
 
-export async function post<T>(path: string): Promise<T> {
-  return request<T>(path, "POST");
+export async function post<T>(path: string, headers?: Record<string, string>): Promise<T> {
+  return request<T>(path, "POST", headers);
 }
 
 export async function del(path: string): Promise<void> {
@@ -213,9 +217,10 @@ export type SessionCounts = {
 };
 export type SessionsResponse = { sessions: SessionRecord[]; counts: SessionCounts };
 
-// --- Auth / credential onboarding (P1) ---
+// --- Auth / credential onboarding (P1, Fyers) ---
 
 export type AuthStatus = {
+  broker: string;
   has_api_key: boolean;
   has_token: boolean;
   token_valid: boolean;
@@ -224,11 +229,9 @@ export type AuthStatus = {
   setup_complete: boolean;
   client_name: string | null;
   client_id: string | null;
-  data_token_valid: boolean;
-  data_token_expiry: string | null;
 };
 
-export type ConsentStart = { consent_app_id: string; login_url: string };
+export type AuthStart = { login_url: string; state: string };
 export type SaveResult = { success: boolean; message: string };
 export type ValidationResult = { valid: boolean; message: string };
 
@@ -236,32 +239,20 @@ export async function authStatus(): Promise<AuthStatus> {
   return get<AuthStatus>("/auth/status");
 }
 
-export async function saveCredentials(apiKey: string, apiSecret: string): Promise<SaveResult> {
-  return postBody<SaveResult>("/auth/credentials", { api_key: apiKey, api_secret: apiSecret });
+export async function saveCredentials(appId: string, secretId: string): Promise<SaveResult> {
+  return postBody<SaveResult>("/auth/credentials", { app_id: appId, secret_id: secretId });
 }
 
-export async function testCredentials(apiKey: string, apiSecret: string): Promise<ValidationResult> {
-  return postBody<ValidationResult>("/auth/test", { api_key: apiKey, api_secret: apiSecret });
+export async function testCredentials(appId: string, secretId: string): Promise<ValidationResult> {
+  return postBody<ValidationResult>("/auth/test", { app_id: appId, secret_id: secretId });
 }
 
-export async function startConsent(): Promise<ConsentStart> {
-  return post<ConsentStart>("/auth/start-consent");
+export async function startAuth(): Promise<AuthStart> {
+  return post<AuthStart>("/auth/start-auth");
 }
 
-export async function saveDirectToken(accessToken: string): Promise<SaveResult> {
-  return postBody<SaveResult>("/auth/token", { access_token: accessToken });
-}
-
-export async function savePinTotp(clientId: string, pin: string, totp: string): Promise<SaveResult> {
-  return postBody<SaveResult>("/auth/token/pin-totp", { client_id: clientId, pin, totp });
-}
-
-export async function saveDataToken(accessToken: string, expiry: string | null = null): Promise<SaveResult> {
-  return postBody<SaveResult>("/auth/data-token", { access_token: accessToken, expiry });
-}
-
-export async function reauth(): Promise<ConsentStart> {
-  return post<ConsentStart>("/auth/start-consent");
+export async function reauth(): Promise<AuthStart> {
+  return post<AuthStart>("/auth/start-auth");
 }
 
 export async function logoutAuth(): Promise<SaveResult> {
@@ -291,24 +282,34 @@ export type Proposal = {
   timestamp: string | null;
 };
 
-export type ExecutionMode = { mode: string };
+export type ExecutionMode = { mode: string; csrf_token: string | null };
 export type RiskSummary = {
   daily_pnl: number;
   margin_used: number;
-  margin_available: number;
+  margin_available: number | null; // null = unknown, never render as ₹0
   loss_limit: number;
   loss_limit_hit: boolean;
   max_positions: number;
   active_positions: number;
 };
 
+export async function approveProposal(
+  id: string,
+  confirm: boolean,
+  csrfToken: string | null,
+): Promise<Proposal> {
+  // LIVE placements require the per-session CSRF token minted on typed LIVE
+  // activation (F-EXEC-001).
+  const headers = csrfToken ? { "X-CSRF-Token": csrfToken } : undefined;
+  return post<Proposal>(
+    `/api/execution/proposals/${encodeURIComponent(id)}/approve?confirm=${confirm}`,
+    headers,
+  );
+}
+
 export async function getProposals(status?: string): Promise<Proposal[]> {
   const qs = status ? `?status=${encodeURIComponent(status)}` : "";
   return get<Proposal[]>(`/api/execution/proposals${qs}`);
-}
-
-export async function approveProposal(id: string, confirm: boolean): Promise<Proposal> {
-  return post<Proposal>(`/api/execution/proposals/${encodeURIComponent(id)}/approve?confirm=${confirm}`);
 }
 
 export async function rejectProposal(id: string, reason = ""): Promise<Proposal> {

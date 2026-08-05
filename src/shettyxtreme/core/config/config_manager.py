@@ -13,7 +13,7 @@ import yaml
 @dataclass
 class Config:
     mode: str = "observer"  # backtest | simulation | observer | live | paper
-    broker: str = "dhan"
+    broker: str = "fyers"
     log_level: str = "INFO"
     dry_run: bool = True
 
@@ -22,9 +22,10 @@ class Config:
     config_dir: str = "configs"
     log_dir: str = "logs"
 
-    # Broker credentials (loaded from env)
-    dhan_client_id: str | None = None
-    dhan_access_token: str | None = None
+    # Broker credentials (loaded from env; the OAuth flow is the primary
+    # path — these are optional overrides for headless runs)
+    fyers_app_id: str | None = None
+    fyers_secret_id: str | None = None
 
 class ConfigManager:
     def __init__(self, config_path: str | None = None):
@@ -48,9 +49,8 @@ class ConfigManager:
             "SHETTY_MODE": "mode",
             "SHETTY_BROKER": "broker",
             "SHETTY_DRY_RUN": "dry_run",
-            "DHAN_CLIENT_ID": "dhan_client_id",
-            "DHAN_ACCESS_TOKEN": "dhan_access_token",
-
+            "FYERS_APP_ID": "fyers_app_id",
+            "FYERS_SECRET_ID": "fyers_secret_id",
         }
         for env_key, config_key in env_map.items():
             val = os.environ.get(env_key)

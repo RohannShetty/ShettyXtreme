@@ -4,21 +4,26 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shettyxtreme"
-version = "0.11.0"
+version = "0.12.0"
 description = "Unified Indian-market trading intelligence and execution platform"
 requires-python = ">=3.11"
 authors = [{name = "Rohan Shetty", email = "shettyrohan2@gmail.com"}]
 
 dependencies = [
     "duckdb>=1.5.4",
-    # Reference implementation mirror: D:\DhanHQ-py-2.2.0 (PyPI dhanhq==2.2.0)
-    "dhanhq>=2.2.0,<2.3.0",
+    # Fyers broker SDK (F4/F6): HSM market-data socket only. Install with
+    # --no-deps: the SDK's pinned deps shadow stdlib (asyncio==3.4.3) — never
+    # install them. The SDK's fyers_logger hard-requires aws-lambda-powertools
+    # at import time, so it is declared explicitly here (safe: no stdlib
+    # shadowing). REST/order layers are raw httpx+websockets.
+    "fyers-apiv3>=3.1.15",
+    "aws-lambda-powertools>=2.0.0",
     "numpy>=1.24",
     "pandas>=2.0",
     "pydantic>=2.0",
     "pyyaml>=6.0",
-    "httpx>=0.24",
-    "websockets>=11",
+    "httpx>=0.27.0",
+    "websockets>=12.0",
     "rich>=13",
     "structlog>=23",
     "textual>=0.41",

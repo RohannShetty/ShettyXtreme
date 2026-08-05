@@ -10,7 +10,7 @@ Every task that touches code must end with the project's test command, EXACTLY a
 $env:PYTHONPATH=""; .venv\Scripts\python.exe -m pytest tests/ -q --tb=short --basetemp=C:\Users\rohan\AppData\Local\Temp\pytest-phase2 -p no:cacheprovider
 ```
 
-- Full suite must pass: 599 passed / 0 failed / 3 skipped.
+- Full suite must pass: 1012 passed / 0 failed / 0 skipped.
 - Use `.venv\Scripts\python.exe` everywhere (PATH `python` may be a different venv) and `--basetemp` on pytest (Windows teardown PermissionError quirk).
 - Frontend: `npm run check` (svelte-check, 0 errors) before `npm run build`.
 - NEVER assume a test framework or script — verify against the repo's actual commands.

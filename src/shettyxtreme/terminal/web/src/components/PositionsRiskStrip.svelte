@@ -10,6 +10,9 @@
     TableHeader,
     TableRow,
   } from "$lib/components/ui/table";
+  import EmptyState from "./state/EmptyState.svelte";
+  import LoadingState from "./state/LoadingState.svelte";
+  import ErrorState from "./state/ErrorState.svelte";
 
   type Position = {
     symbol: string;
@@ -25,7 +28,7 @@
   type Risk = {
     daily_pnl: number;
     margin_used: number;
-    margin_available: number;
+    margin_available: number | null; // null = unknown, never pretend it is 0
     loss_limit: number;
     loss_limit_hit: boolean;
     max_positions: number;
@@ -35,6 +38,7 @@
   let positions = $state<Position[]>([]);
   let risk = $state<Risk | null>(null);
   let error = $state("");
+  let loading = $state(true);
 
   onMount(() => {
     load();
@@ -43,11 +47,14 @@
 
   async function load(): Promise<void> {
     error = "";
+    loading = true;
     try {
       positions = await get<Position[]>("/api/execution/positions");
       risk = await get<Risk>("/api/execution/risk");
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
+    } finally {
+      loading = false;
     }
   }
 
@@ -64,12 +71,17 @@
     return value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
+  let marginUnknown = $derived(risk !== null && risk.margin_available === null);
   let marginRatio = $derived(
-    risk && risk.margin_used + risk.margin_available > 0
+    risk && risk.margin_available !== null && risk.margin_used + risk.margin_available > 0
       ? risk.margin_used / (risk.margin_used + risk.margin_available)
       : 0,
   );
-  let marginBreach = $derived(risk !== null && risk.margin_used > risk.margin_available);
+  let marginBreach = $derived(
+    risk !== null &&
+      risk.margin_available !== null &&
+      risk.margin_used > risk.margin_available,
+  );
   let marginClass = $derived(marginBreach ? "ratio-breach" : marginRatio > 0.8 ? "ratio-warn" : "");
 </script>
 
@@ -77,39 +89,44 @@
   <div class="pos-table">
     <h2>Positions</h2>
     <div class="table-wrap">
-      <Table>
-        <TableHeader>
-          <TableRow class="hover:bg-transparent">
-            <TableHead>Symbol</TableHead>
-            <TableHead class="text-right">Qty</TableHead>
-            <TableHead class="text-right">Avg</TableHead>
-            <TableHead class="text-right">M2M</TableHead>
-            <TableHead class="text-right">P&L</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {#each positions as p (p.symbol)}
-            <TableRow>
-              <TableCell class="font-mono font-semibold text-ink">{p.symbol}</TableCell>
-              <TableCell class="font-mono text-right tabular-nums">{p.net_quantity}</TableCell>
-              <TableCell class="font-mono text-right tabular-nums">{p.buy_avg ? fmtAvg(p.buy_avg) : "—"}</TableCell>
-              <TableCell class="font-mono text-right tabular-nums {pnlClass(p.m2m)}">{fmtMoney(p.m2m)}</TableCell>
-              <TableCell class="font-mono text-right tabular-nums {pnlClass(p.pnl)}">{fmtMoney(p.pnl)}</TableCell>
+      {#if loading && positions.length === 0}
+        <LoadingState label="Loading positions…" rows={3} />
+      {:else if positions.length === 0}
+        <EmptyState message="No open positions." />
+      {:else}
+        <Table>
+          <TableHeader>
+            <TableRow class="hover:bg-transparent">
+              <TableHead>Symbol</TableHead>
+              <TableHead class="text-right">Qty</TableHead>
+              <TableHead class="text-right">Avg</TableHead>
+              <TableHead class="text-right">M2M</TableHead>
+              <TableHead class="text-right">P&L</TableHead>
             </TableRow>
-          {/each}
-          {#if positions.length === 0}
-            <TableRow>
-              <TableCell colspan={5} class="text-faint">No open positions.</TableCell>
-            </TableRow>
-          {/if}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {#each positions as p (p.symbol)}
+              <TableRow>
+                <TableCell class="font-mono font-semibold text-ink">{p.symbol}</TableCell>
+                <TableCell class="font-mono text-right tabular-nums">{p.net_quantity}</TableCell>
+                <TableCell class="font-mono text-right tabular-nums">{p.buy_avg ? fmtAvg(p.buy_avg) : "—"}</TableCell>
+                <TableCell class="font-mono text-right tabular-nums {pnlClass(p.m2m)}">{fmtMoney(p.m2m)}</TableCell>
+                <TableCell class="font-mono text-right tabular-nums {pnlClass(p.pnl)}">{fmtMoney(p.pnl)}</TableCell>
+              </TableRow>
+            {/each}
+          </TableBody>
+        </Table>
+      {/if}
     </div>
   </div>
 
   <div class="risk-block">
     <h2>Risk</h2>
-    {#if risk}
+    {#if error}
+      <ErrorState message={error} onRetry={load} />
+    {:else if loading && risk === null}
+      <LoadingState label="Loading risk…" rows={2} />
+    {:else if risk}
       <div class="row">
         <span class="label">DAILY P&L</span>
         <span class="num value {pnlClass(risk.daily_pnl)}">{fmtMoney(risk.daily_pnl)}</span>
@@ -120,17 +137,21 @@
           <div class="bar">
             <div
               class="fill {marginClass}"
-              style="width: {Math.min(marginRatio * 100, 100)}%"
+              style="width: {marginUnknown ? 0 : Math.min(marginRatio * 100, 100)}%"
             ></div>
           </div>
-          <span class="num">{fmtMoney(risk.margin_used)} / {fmtMoney(risk.margin_available)}</span>
+          <span class="num">
+            {fmtMoney(risk.margin_used)} / {marginUnknown ? "—" : fmtMoney(risk.margin_available ?? 0)}
+          </span>
         </div>
       </div>
       <div class="row chips">
         {#if risk.loss_limit_hit}
           <span class="chip chip-danger">LOSS LIMIT HIT</span>
         {/if}
-        {#if marginBreach}
+        {#if marginUnknown}
+          <span class="chip chip-mute">MARGIN UNKNOWN</span>
+        {:else if marginBreach}
           <span class="chip chip-danger">MARGIN BREACH</span>
         {:else if marginRatio > 0.8}
           <span class="chip chip-warn">MARGIN > 80%</span>
@@ -138,10 +159,7 @@
         <span class="chip chip-info">{risk.active_positions}/{risk.max_positions} POSITIONS</span>
       </div>
     {:else}
-      <p class="empty">Loading risk…</p>
-    {/if}
-    {#if error}
-      <p class="error">{error}</p>
+      <EmptyState message="No risk data." />
     {/if}
   </div>
 </section>
@@ -242,14 +260,8 @@
     color: var(--info);
     border: 1px solid var(--info);
   }
-  .empty {
+  .chip-mute {
     color: var(--faint);
-    font-size: 12px;
-    padding: 8px 0;
-  }
-  .error {
-    color: var(--danger);
-    font-size: 11px;
-    margin: 0;
+    border: 1px solid var(--hairline-strong);
   }
 </style>

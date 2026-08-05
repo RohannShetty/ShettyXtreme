@@ -1,7 +1,7 @@
 # ShettyXtreme — Architecture Blueprint v2
 
-> **Status:** Approved blueprint (2026-08-01) — replaces `v1/` (July-12 archive).
-> **Superseded v1 stances:** OpenAlgo absorb-only → **standalone + vendoring**; dual Dhan credentials → **single-primary + data fallback**; Textual TUI → **Svelte web terminal**; AI-skeptical → **research-layer AI only**; product-for-others → **private use only**.
+> **Status:** Approved blueprint (2026-08-01) — replaces `v1/` (July-12 archive). §11 amended 2026-08-05 (ADR-008): **Dhan → Fyers migration**.
+> **Superseded v1 stances:** OpenAlgo absorb-only → **standalone + vendoring**; dual Dhan credentials → **single-primary + data fallback** (itself superseded by ADR-008's Fyers OAuth2); Textual TUI → **Svelte web terminal**; AI-skeptical → **research-layer AI only**; product-for-others → **private use only**.
 > **Evidence base:** 7 reference briefs in `docs/references/` (from Phase 0 parallel exploration), 12 decisions (D1-D12) in the Phase-0 interview log, vendoring pipeline in `vendor/`.
 
 ---
@@ -17,7 +17,7 @@
 | D5 | Blueprint | Full v2 rewrite (this doc) |
 | D6 | Market focus | Options-first (NIFTY/BANKNIFTY weekly); equities as terminal breadth |
 | D7 | Repo layout | `references/` gitignored clones + `vendor/` tracked + `scripts/sync_vendor.py` |
-| D8 | Dhan credentials | Single-primary (one consent token) + optional data fallback (PIN/TOTP); 806 = entitlement |
+| D8 | Broker credentials | Fyers OAuth2 authorization-code (app_id + secret_id + daily access token); single token serves trading REST + data REST + WS (ADR-008); 403/-373 = entitlement |
 | D9 | Frontend | Svelte + Vite served by FastAPI, governed by DESIGN.md |
 | D10 | Runtime mode | OBSERVER default; LIVE explicit per-session |
 | D11 | Prop-style | Own capital/accounts only |
@@ -38,9 +38,9 @@
         │
   CORE PLATFORM   (Domain models | Event bus | Interfaces/Protocols | Config | Storage | Session)  [STABLE]
         │
-  INTEGRATION LAYER (Dhan Trading Adapter | Dhan Data Adapter | instrument master | order validation)  [SWAPPABLE]
+  INTEGRATION LAYER (Fyers Trading Adapter | Fyers Data Adapter | instrument master | symbol resolver | order validation)  [SWAPPABLE]
         │
-  EXTERNAL DEPS   (DhanHQ-py 2.2.0 pinned | Dhan APIs | DuckDB | sqlite) — OpenAlgo NEVER at runtime
+  EXTERNAL DEPS   (Fyers API v3 raw httpx + websockets | SDK data socket supervised | DuckDB | sqlite) — OpenAlgo NEVER at runtime
 ```
 
 Knowledge layer (Phase-4) sits parallel to intelligence — imports core only, human-gated (D12).
@@ -48,13 +48,14 @@ Knowledge layer (Phase-4) sits parallel to intelligence — imports core only, h
 ## Core Data Flow
 
 ```
-Dhan Data WS (feed codes 15/17/21) → DhanDataAdapter → EventBus (MarketDataReceived)
+Fyers Data WS (HSM socket, supervised) → FyersDataAdapter → EventBus (MarketDataReceived)
   → FeatureEngine (streaming, O(1)/tick) → (FeaturesComputed)
   → RegimeClassifier → (RegimeUpdated)
   → SignalEngine (voters → conviction, D/P/G, NEUTRAL) → (SignalGenerated)
   → OptionsIntel (IV rank, PCR, signal-drift EV strike selection) → Strategy Hint
   → RiskEngine (entries-only, cost-aware) → (RiskAssessed)
-  → [OBSERVER: display in terminal]  |  [LIVE: ExecutionEngine → Dhan Trading API → (OrderPlaced)]
+  → [OBSERVER: display in terminal]  |  [LIVE: ExecutionEngine → Fyers Trading API → (OrderPlaced)]
+  → Fyers Order WS (JSON) → (ORDER_UPDATED fills)
   → LearningLoop (outcome → voter quality → weight adjustment)
 ```
 
@@ -73,7 +74,7 @@ Dhan Data WS (feed codes 15/17/21) → DhanDataAdapter → EventBus (MarketDataR
 | [08](sections/08-feature-map.md) | Feature map phased | What to build when |
 | [09](sections/09-shettybot-evolution.md) | ShettyBot DNA mapping | Lineage |
 | [10](sections/10-openalgo-utilization.md) | Vendor contract | OpenAlgo reuse rules |
-| [11](sections/11-dhan-integration.md) | Dhan strategy | Broker reality |
+| [11](sections/11-fyers-integration.md) | Fyers strategy | Broker reality |
 | [12](sections/12-ai-agentic-references.md) | Research-layer AI design | Phase-3 AI |
 | [13](sections/13-systematic-trading-breadth.md) | Quant resources checklist | Breadth gaps |
 | [14](sections/14-data-decision-intelligence.md) | Decision intelligence chain | How signals work |
@@ -92,7 +93,8 @@ Dhan Data WS (feed codes 15/17/21) → DhanDataAdapter → EventBus (MarketDataR
 - ADR-004 — research-layer AI only (D3)
 - ADR-005 — DESIGN.md contract + Svelte terminal (D4, D9)
 - ADR-006 — options-first market focus (D6)
-- ADR-007 — Dhan single-primary + data-fallback credentials (D8)
+- ADR-007 — Dhan single-primary + data-fallback credentials (D8) — **superseded by ADR-008**
+- ADR-008 — Fyers migration: replace Dhan as the primary broker (D8, 2026-08-05)
 
 ## Phase Map (detail in Section 17)
 

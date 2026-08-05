@@ -136,7 +136,10 @@ class RiskProjection:
         self._state: dict[str, Any] = {
             "daily_pnl": 0.0,
             "margin_used": 0.0,
-            "margin_available": 500000.0,
+            # Margin is UNKNOWN until the broker reports it (fix #2). A
+            # fabricated default would silently admit trades on phantom
+            # capital; None is the honest "no data yet" state.
+            "margin_available": None,
             "loss_limit": -5000.0,
             "loss_limit_hit": False,
             "max_positions": 5,
@@ -291,6 +294,38 @@ class IntelligenceProjection:
         bus.subscribe(Topic.SIGNAL_GENERATED, self.on_signal_v2)
 
 
+def _data_adapter_connected(adapter: Any) -> bool | None:
+    """Sync connectivity view that works for both adapter shapes.
+
+    Dhan-era adapters expose ``_connected``; the Fyers data adapter holds
+    the HSM data-socket wrapper (``_data_socket``) whose ``connected``
+    property is the live link. Returns None when neither exists — the
+    health projection must not claim "disconnected" without evidence.
+    """
+    connected = getattr(adapter, "_connected", None)
+    if connected is not None:
+        return bool(connected)
+    socket = getattr(adapter, "_data_socket", None)
+    if socket is not None:
+        return bool(getattr(socket, "connected", False))
+    return None
+
+
+def _data_adapter_stale(adapter: Any, threshold: float = 60.0) -> bool:
+    """True when the adapter reports no fresh ticks past the threshold.
+
+    The Fyers adapter aggregates bars client-side and does not track a
+    last-tick timestamp, so ``is_stale`` is absent — treated as not stale.
+    """
+    is_stale = getattr(adapter, "is_stale", None)
+    if is_stale is None:
+        return False
+    try:
+        return bool(is_stale(threshold=threshold))
+    except (TypeError, AttributeError):
+        return False
+
+
 # ── Health Projection ────────────────────────────────────────────────────────
 
 class HealthProjection:
@@ -302,6 +337,7 @@ class HealthProjection:
         self._trading_adapter: Any = None
         self._feature_engine: Any = None
         self._signal_engine: Any = None
+        self._token_health_provider: Any = None
 
     def subscribe(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus
@@ -313,22 +349,23 @@ class HealthProjection:
         trading_adapter: Any = None,
         feature_engine: Any = None,
         signal_engine: Any = None,
+        token_health_provider: Any = None,
     ) -> None:
+        """Configure live references; ``token_health_provider`` is a zero-arg
+        callable returning True while the trading token is valid."""
         self._event_bus = event_bus
         self._data_adapter = data_adapter
         self._trading_adapter = trading_adapter
         self._feature_engine = feature_engine
         self._signal_engine = signal_engine
+        self._token_health_provider = token_health_provider
 
     def get(self) -> dict[str, Any]:
-        import time
-
         now = datetime.now(UTC)
         components: list[dict[str, Any]] = []
 
-        # EventBus
+        # EventBus — running state only; latency is not measured here (never fabricated).
         eb_status = "healthy"
-        eb_latency = 0.0
         eb_msg = ""
         if self._event_bus is None:
             eb_status = "down"
@@ -336,73 +373,73 @@ class HealthProjection:
         elif not self._event_bus._running:
             eb_status = "down"
             eb_msg = "Not running"
-        else:
-            t0 = time.monotonic()
-            eb_latency = round((time.monotonic() - t0) * 1000, 2)
         components.append({
             "name": "event_bus",
             "status": eb_status,
-            "latency_ms": eb_latency,
+            "latency_ms": None,
             "last_check": now,
             "message": eb_msg,
         })
 
         # Data adapter
         da_status = "healthy"
-        da_latency = 0.0
         da_msg = ""
         if self._data_adapter is None:
             da_status = "down"
             da_msg = "Not initialized (no credentials)"
         elif getattr(self._data_adapter, "entitlement_error", False):
             da_status = "down"
-            da_msg = "Data API entitlement missing (806) — subscribe to Data APIs"
-        elif not getattr(self._data_adapter, "_connected", False):
-            da_status = "degraded"
+            da_msg = "Data API entitlement missing (Fyers 403/-373) — subscribe to Data APIs"
+        elif _data_adapter_connected(self._data_adapter) is False:
+            da_status = "disconnected"
             da_msg = "WebSocket not connected"
+        elif _data_adapter_stale(self._data_adapter):
+            da_status = "stale"
+            da_msg = "No market data ticks for >60s"
         components.append({
-            "name": "dhan_data",
+            "name": "data_adapter",
             "status": da_status,
-            "latency_ms": da_latency,
+            "latency_ms": None,
             "last_check": now,
             "message": da_msg,
         })
 
         # Trading adapter
         ta_status = "healthy"
-        ta_latency = 0.0
         ta_msg = ""
         if self._trading_adapter is None:
             ta_status = "down"
             ta_msg = "Not initialized (no credentials)"
+        elif self._token_health_provider is not None and not self._token_health_provider():
+            ta_status = "token_expired"
+            ta_msg = "Token expired — re-authentication required"
         components.append({
-            "name": "dhan_trading",
+            "name": "trading_adapter",
             "status": ta_status,
-            "latency_ms": ta_latency,
+            "latency_ms": None,
             "last_check": now,
             "message": ta_msg,
         })
 
         # Intelligence pipeline (features/signal engines)
         ip_status = "healthy"
-        ip_latency = 0.0
         ip_msg = ""
         if self._feature_engine is None or self._signal_engine is None:
-            ip_status = "degraded"
+            ip_status = "disconnected"
             ip_msg = "Intelligence pipeline not initialized"
         components.append({
             "name": "intelligence",
             "status": ip_status,
-            "latency_ms": ip_latency,
+            "latency_ms": None,
             "last_check": now,
             "message": ip_msg,
         })
 
-        # Storage
+        # Storage — no latency probe wired yet; never fabricate a value.
         components.append({
             "name": "storage",
             "status": "healthy",
-            "latency_ms": 2.0,
+            "latency_ms": None,
             "last_check": now,
             "message": "",
         })
@@ -412,7 +449,7 @@ class HealthProjection:
             if c["status"] == "down":
                 overall = "down"
                 break
-            if c["status"] == "degraded" and overall != "down":
+            if c["status"] != "healthy" and overall != "down":
                 overall = "degraded"
 
         return {"components": components, "overall": overall}

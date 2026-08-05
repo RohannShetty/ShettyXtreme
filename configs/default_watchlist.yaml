@@ -1,13 +1,21 @@
+# Default watchlist — internal symbols only (broker-neutral).
+#
+# `security_id` holds the *internal* symbol (previously Dhan numeric security
+# IDs like "13"/"25"). The Fyers symbol resolver (integration/fyers/symbols.py)
+# converts internal symbols to Fyers tickers at runtime:
+#   NIFTY     -> NSE:NIFTY50-INDEX
+#   BANKNIFTY -> NSE:NIFTYBANK-INDEX
+#   FINNIFTY  -> NSE:FINNIFTY-INDEX
 default_watchlist:
   indices:
     - name: NIFTY
-      security_id: "13"  # Dhan security ID for NIFTY
+      security_id: NIFTY      # internal symbol (was Dhan "13")
       exchange: NSE_FNO
     - name: BANKNIFTY
-      security_id: "25"  # Dhan security ID for BANKNIFTY  
+      security_id: BANKNIFTY  # internal symbol (was Dhan "25")
       exchange: NSE_FNO
     - name: FINNIFTY
-      security_id: "27"  # Dhan security ID for FINNIFTY
+      security_id: FINNIFTY   # internal symbol (was Dhan "27")
       exchange: NSE_FNO
   options:
     - name: NIFTY ATM CE

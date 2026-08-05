@@ -92,6 +92,45 @@ class TestSignalEngine:
         assert signal.direction == SignalDirection.UP
         assert signal.conviction > 0
 
+    def test_all_abstaining_voters_cannot_flip_signal(self) -> None:
+        """Abstention (direction=0, confidence=0) is truly weight-neutral.
+
+        F-INTEL-001 guard: a voter that abstains on missing features must never
+        move the aggregate away from NEUTRAL, even at extreme weight. The bug
+        this prevents: orb_voter / iv_rank_voter returned confident ±1 calls on
+        features that are never computed, so their weight always contributed
+        constant noise instead of abstaining.
+        """
+        votes = [
+            Vote(direction=0.0, confidence=0.0, weight=1.0, name="abstain_a"),
+            Vote(direction=0.0, confidence=0.0, weight=1.0, name="abstain_b"),
+            Vote(direction=0.0, confidence=0.0, weight=100.0, name="abstain_heavy"),
+        ]
+        for v in votes:
+            self.engine.register_voter(v.name, lambda fe, v=v: v, v.weight)
+        signal = self.engine.compute_signal()
+        assert signal.direction == SignalDirection.NEUTRAL
+        assert signal.conviction == 0.0
+
+    def test_abstaining_voter_never_dilutes_or_flips_real_signal(self) -> None:
+        """A zero-confidence abstainer contributes nothing to the aggregate.
+
+        Mixing an abstainer (with a large weight) into an all-UP vote set must
+        leave the direction and conviction unchanged — its weight is inert.
+        """
+        signal_before = self.engine.compute_signal()
+
+        self.engine.register_voter(
+            "abstain_heavy",
+            lambda fe: Vote(direction=0.0, confidence=0.0, weight=100.0, name="abstain_heavy"),
+            weight=100.0,
+        )
+        signal_after = self.engine.compute_signal()
+
+        assert signal_before.direction == SignalDirection.NEUTRAL
+        assert signal_after.direction == SignalDirection.NEUTRAL
+        assert signal_after.conviction == 0.0
+
     def test_plugin_discovery(self) -> None:
         """Register a custom voter via register_voter, verify it's used."""
         def my_voter(features: dict[str, float]) -> Vote:

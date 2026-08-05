@@ -35,13 +35,13 @@ _PIPELINE_SYMBOL = "NIFTY"
 class IntelligencePipeline:
     """Wires FeatureEngine + SignalEngine to an EventBus and keeps them live.
 
-    Voters come from two sources (judgment call, see P4a report):
-    1. the package's decorator registry (options_flow_voter, micro_voter,
-       breadth_voter — imported above so their ``@voter`` registrations run),
-       synced via ``consume_registry=True``; 3-arg voters are wrapped by the
-       engine's ShadowAdapter and vote under the engine's live regime.
-    2. the two exported 1-arg voters (orb_voter, iv_rank_voter) that are NOT
-       decorator-registered — registered explicitly on the engine.
+    Voters come from the package's decorator registry (options_flow_voter,
+    micro_voter, breadth_voter — imported above so their ``@voter``
+    registrations run), synced via ``consume_registry=True``; 3-arg voters are
+    wrapped by the engine's ShadowAdapter and vote under the engine's live
+    regime. The former explicit orb_voter / iv_rank_voter stubs were removed
+    (F-INTEL-001): they voted constant directions on features that are never
+    computed, dominating ~42% of aggregate weight as noise.
     """
 
     def __init__(self, event_bus: EventBus) -> None:
@@ -49,8 +49,6 @@ class IntelligencePipeline:
         self.feature_engine = FeatureEngine(event_bus, symbol=_PIPELINE_SYMBOL)
         self._register_indicators()
         self.signal_engine = SignalEngine(self.feature_engine, consume_registry=True)
-        self.signal_engine.register_voter("orb", voters.orb_voter, weight=1.0)
-        self.signal_engine.register_voter("iv_rank", voters.iv_rank_voter, weight=1.0)
         self._subscribed = False
 
     def _register_indicators(self) -> None:

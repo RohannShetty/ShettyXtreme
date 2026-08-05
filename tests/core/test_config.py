@@ -11,20 +11,20 @@ class TestConfigManagerDefaults:
         cm = ConfigManager()
         cfg = cm.config
         assert cfg.mode == "observer"
-        assert cfg.broker == "dhan"
+        assert cfg.broker == "fyers"
         assert cfg.dry_run is True
         assert cfg.log_level == "INFO"
 
     def test_loads_yaml_values(self, config_manager):
         cfg = config_manager.config
         assert cfg.mode == "paper"
-        assert cfg.broker == "dhan"
+        assert cfg.broker == "fyers"
         assert cfg.log_level == "DEBUG"
         assert cfg.dry_run is True
 
-    def test_dhan_client_id_from_yaml(self, config_manager):
+    def test_fyers_app_id_from_yaml(self, config_manager):
         cfg = config_manager.config
-        assert cfg.dhan_client_id == "test_client"
+        assert cfg.fyers_app_id == "test_app"
 
     def test_unknown_key_in_yaml_ignored(self, tmp_data_dir):
         import yaml
@@ -55,11 +55,10 @@ class TestConfigManagerEnvOverrides:
         cm = ConfigManager()
         assert cm.config.dry_run is True
 
-    def test_dhan_credentials_from_env(self, monkeypatch):
+    def test_fyers_credentials_from_env(self, monkeypatch):
         from shettyxtreme.core.config import ConfigManager
-        monkeypatch.setenv("DHAN_CLIENT_ID", "env_client")
-        monkeypatch.setenv("DHAN_ACCESS_TOKEN", "env_token")
+        monkeypatch.setenv("FYERS_APP_ID", "env_app")
+        monkeypatch.setenv("FYERS_SECRET_ID", "env_secret")
         cm = ConfigManager()
-        assert cm.config.dhan_client_id == "env_client"
-        assert cm.config.dhan_access_token == "env_token"
-
+        assert cm.config.fyers_app_id == "env_app"
+        assert cm.config.fyers_secret_id == "env_secret"

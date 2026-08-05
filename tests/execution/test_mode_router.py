@@ -1,0 +1,239 @@
+"""ModeRoutingExecutor cancel/modify routing tests (F-CORE-005).
+
+Covers: cancel_order routes by mode (LIVE -> live adapter, PAPER/OBSERVER ->
+paper engine), LIVE cancel gates (session validity + kill switch + missing
+adapter), modify_order LIVE gates, modify_order rejected outside LIVE.
+"""
+from __future__ import annotations
+
+from unittest.mock import AsyncMock
+
+import pytest
+
+from shettyxtreme.core.interfaces.order_executor import (
+    Order,
+    OrderResult,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+)
+from shettyxtreme.execution.mode_router import ModeRoutingExecutor
+from shettyxtreme.execution.paper_trading import PaperTradingEngine
+
+
+class _SessionExpiredAdapter:
+    """Fake live adapter with is_session_valid -> False.
+
+    The router probes the *class* and calls the method with the instance, so
+    this mirrors the real adapter's plain instance method (not a classmethod).
+    """
+
+    def is_session_valid(self) -> bool:
+        return False
+
+    async def cancel_order(self, order_id: str) -> bool:
+        return True
+
+    async def modify_order(self, order_id: str, order: Order) -> OrderResult:
+        return OrderResult(order_id=order_id, status=OrderStatus.OPEN, message="ok")
+
+
+def _make_router(
+    mode: str = "PAPER",
+    live: object | None = None,
+    kill: bool = False,
+    paper: PaperTradingEngine | None = None,
+) -> ModeRoutingExecutor:
+    return ModeRoutingExecutor(
+        paper_engine=paper if paper is not None else PaperTradingEngine(),
+        mode_provider=lambda: mode,
+        kill_switch_provider=lambda: kill,
+        live_provider=lambda: live,
+    )
+
+
+def _order() -> Order:
+    return Order(
+        symbol="NIFTY",
+        exchange="NFO",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=75,
+        price=100.0,
+    )
+
+
+# ── cancel_order: routing by mode ──────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_cancel_live_routes_to_live_not_paper() -> None:
+    live = AsyncMock()
+    live.cancel_order = AsyncMock(return_value=True)
+    paper = PaperTradingEngine()
+    paper.cancel_order = AsyncMock(return_value=True)
+    router = _make_router(mode="LIVE", live=live, paper=paper)
+
+    result = await router.cancel_order("LIVE-1")
+
+    assert result is True
+    live.cancel_order.assert_awaited_once_with("LIVE-1")
+    paper.cancel_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_paper_routes_to_paper_not_live() -> None:
+    live = AsyncMock()
+    live.cancel_order = AsyncMock(return_value=True)
+    paper = PaperTradingEngine()
+    paper.cancel_order = AsyncMock(return_value=True)
+    router = _make_router(mode="PAPER", live=live, paper=paper)
+
+    result = await router.cancel_order("PAPER-1")
+
+    assert result is True
+    paper.cancel_order.assert_awaited_once_with("PAPER-1")
+    live.cancel_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_observer_routes_to_paper() -> None:
+    paper = PaperTradingEngine()
+    paper.cancel_order = AsyncMock(return_value=True)
+    router = _make_router(mode="OBSERVER", paper=paper)
+
+    result = await router.cancel_order("OBS-1")
+
+    assert result is True
+    paper.cancel_order.assert_awaited_once_with("OBS-1")
+
+
+@pytest.mark.asyncio
+async def test_cancel_live_missing_adapter_rejected() -> None:
+    router = _make_router(mode="LIVE", live=None)
+
+    result = await router.cancel_order("LIVE-1")
+
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_live_session_invalid_blocked() -> None:
+    live = _SessionExpiredAdapter()
+    router = _make_router(mode="LIVE", live=live)
+
+    result = await router.cancel_order("LIVE-1")
+
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_live_kill_switch_blocks() -> None:
+    live = AsyncMock()
+    live.cancel_order = AsyncMock(return_value=True)
+    router = _make_router(mode="LIVE", live=live, kill=True)
+
+    result = await router.cancel_order("LIVE-1")
+
+    assert result is False
+    live.cancel_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_paper_missing_engine_returns_false() -> None:
+    router = _make_router(mode="PAPER", paper=None)
+
+    result = await router.cancel_order("PAPER-1")
+
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_unknown_mode_returns_false() -> None:
+    router = _make_router(mode="WEIRD")
+
+    result = await router.cancel_order("X-1")
+
+    assert result is False
+
+
+# ── modify_order: LIVE gates ───────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_modify_live_routes_to_adapter() -> None:
+    live = AsyncMock()
+    live.modify_order = AsyncMock(
+        return_value=OrderResult(order_id="LIVE-1", status=OrderStatus.OPEN, message="ok")
+    )
+    router = _make_router(mode="LIVE", live=live)
+
+    result = await router.modify_order("LIVE-1", _order())
+
+    assert result.status == OrderStatus.OPEN
+    live.modify_order.assert_awaited_once_with("LIVE-1", _order())
+
+
+@pytest.mark.asyncio
+async def test_modify_live_missing_adapter_rejected() -> None:
+    router = _make_router(mode="LIVE", live=None)
+
+    result = await router.modify_order("LIVE-1", _order())
+
+    assert result.status == OrderStatus.REJECTED
+    assert "not initialized" in result.message
+
+
+@pytest.mark.asyncio
+async def test_modify_live_session_invalid_blocked() -> None:
+    live = _SessionExpiredAdapter()
+    router = _make_router(mode="LIVE", live=live)
+
+    result = await router.modify_order("LIVE-1", _order())
+
+    assert result.status == OrderStatus.REJECTED
+    assert "token expired" in result.message
+
+
+@pytest.mark.asyncio
+async def test_modify_live_kill_switch_blocks() -> None:
+    live = AsyncMock()
+    live.modify_order = AsyncMock(
+        return_value=OrderResult(order_id="LIVE-1", status=OrderStatus.OPEN, message="ok")
+    )
+    router = _make_router(mode="LIVE", live=live, kill=True)
+
+    result = await router.modify_order("LIVE-1", _order())
+
+    assert result.status == OrderStatus.REJECTED
+    assert "kill switch" in result.message
+    live.modify_order.assert_not_awaited()
+
+
+# ── modify_order: rejected outside LIVE ────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_modify_observer_rejected() -> None:
+    router = _make_router(mode="OBSERVER")
+
+    result = await router.modify_order("OBS-1", _order())
+
+    assert result.status == OrderStatus.REJECTED
+    assert "OBSERVER" in result.message
+
+
+@pytest.mark.asyncio
+async def test_modify_paper_rejected() -> None:
+    router = _make_router(mode="PAPER")
+
+    result = await router.modify_order("PAPER-1", _order())
+
+    assert result.status == OrderStatus.REJECTED
+
+
+@pytest.mark.asyncio
+async def test_modify_unknown_mode_rejected() -> None:
+    router = _make_router(mode="WEIRD")
+
+    result = await router.modify_order("X-1", _order())
+
+    assert result.status == OrderStatus.REJECTED
+    assert "unknown execution mode" in result.message

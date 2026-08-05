@@ -41,6 +41,7 @@
   let session: Session | null = $state(null);
   let credStatus: AuthStatus | null = $state(null);
   let theme: Theme = $state(getTheme());
+  let refreshTimer: number | undefined;
 
   function toggleTheme(): void {
     theme = theme === "dark" ? "light" : "dark";
@@ -50,6 +51,13 @@
   onMount(() => {
     load();
     loadCreds();
+    refreshTimer = window.setInterval(() => {
+      load();
+      loadCreds();
+    }, 30_000);
+    return () => {
+      if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
+    };
   });
 
   async function load(): Promise<void> {
@@ -73,9 +81,57 @@
     }
   }
 
-  function statusClass(status: string): string {
+  // Broker-neutral connection pip (S0 honesty hardening).
+  // Backend contract statuses: healthy / stale / disconnected / token_expired / down.
+  // Legacy Dhan component names are matched too so the pip stays honest mid-migration.
+  const BROKER_COMPONENTS = ["data_adapter", "trading_adapter", "dhan_data", "dhan_trading"];
+
+  type PipState = "live" | "stale" | "disconnected" | "expired" | "unknown";
+
+  function brokerComponents(): ComponentHealth[] {
+    return (health?.components ?? []).filter((c) => BROKER_COMPONENTS.includes(c.name));
+  }
+
+  function statusRank(status: string): number {
     const s = String(status).toLowerCase();
-    return s === "healthy" ? "st-ok" : s === "degraded" ? "st-warn" : "st-down";
+    if (s === "token_expired") return 4;
+    if (s === "down" || s === "disconnected") return 3;
+    if (s === "stale" || s === "degraded") return 2;
+    if (s === "healthy") return 1;
+    return 0;
+  }
+
+  function pipState(): PipState {
+    const comps = brokerComponents();
+    if (comps.length === 0) return "unknown";
+    let worst = 0;
+    for (const c of comps) worst = Math.max(worst, statusRank(c.status));
+    if (worst >= 4) return "expired";
+    if (worst === 3) return "disconnected";
+    if (worst === 2) return "stale";
+    return "live";
+  }
+
+  function pipLabel(state: PipState): string {
+    switch (state) {
+      case "live":
+        return "LIVE";
+      case "stale":
+        return "STALE";
+      case "disconnected":
+        return "DISCONNECTED";
+      case "expired":
+        return "EXPIRED";
+      default:
+        return "…";
+    }
+  }
+
+  function pipDetail(): string {
+    const comps = brokerComponents();
+    if (comps.length === 0) return "No broker adapter status reported";
+    const worst = [...comps].sort((a, b) => statusRank(b.status) - statusRank(a.status))[0];
+    return worst ? `${worst.name}: ${worst.message || worst.status}` : "";
   }
 
   function sessionText(status: string): string {
@@ -84,8 +140,10 @@
 
   function entitlementMessage(): string {
     if (!health) return "";
-    const dhan = health.components.find((c) => c.name === "dhan_data");
-    const msg = dhan?.message ?? "";
+    const adapter = health.components.find(
+      (c) => c.name === "data_adapter" || c.name === "dhan_data",
+    );
+    const msg = adapter?.message ?? "";
     return msg.includes("entitlement") || msg.includes("(806)") ? msg : "";
   }
 
@@ -104,16 +162,14 @@
   <KillSwitch />
 
   <div class="health">
-    {#if health}
-      {#each health.components as c (c.name)}
-        <span class="comp" title={c.message || c.name}>
-          <span class="dot {statusClass(c.status)}"></span>
-          <span class="comp-name">{c.name}</span>
-        </span>
-      {/each}
-    {:else}
-      <span class="comp-name muted">health…</span>
-    {/if}
+    <span
+      class="pip pip-{pipState()}"
+      title={pipDetail()}
+      aria-label="Connection status: {pipLabel(pipState())}"
+    >
+      <span class="pip-dot" aria-hidden="true"></span>
+      <span class="pip-label">{pipLabel(pipState())}</span>
+    </span>
   </div>
 
   {#if entitlementMessage()}
@@ -137,7 +193,7 @@
         <span class="dot"></span>REAUTH
       </a>
     {:else}
-      <a class="cred-chip mute" href="#/setup" title="Set up Dhan credentials">
+      <a class="cred-chip mute" href="#/setup" title="Set up Fyers credentials">
         <span class="dot"></span>SETUP
       </a>
     {/if}
@@ -219,36 +275,70 @@
     margin-left: auto;
     overflow: hidden;
   }
-  .comp {
-    display: flex;
+  .pip {
+    display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
     font-size: 10px;
-    color: var(--muted);
+    font-weight: 700;
+    letter-spacing: 0.06em;
     white-space: nowrap;
-    max-width: 220px;
+    text-transform: uppercase;
   }
-  .comp-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .dot {
-    width: 7px;
-    height: 7px;
+  .pip-dot {
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
     flex: none;
   }
-  .st-ok {
+  .pip-live .pip-dot {
     background: var(--success);
+    animation: pip-pulse 1.2s ease-in-out infinite;
   }
-  .st-warn {
+  .pip-live .pip-label {
+    color: var(--success);
+  }
+  .pip-stale .pip-dot {
     background: var(--warning);
   }
-  .st-down {
+  .pip-stale .pip-label {
+    color: var(--warning);
+  }
+  .pip-disconnected .pip-dot {
     background: var(--danger);
   }
-  .muted {
+  .pip-disconnected .pip-label {
+    color: var(--danger);
+  }
+  .pip-expired .pip-dot {
+    background: var(--danger);
+  }
+  .pip-expired .pip-label {
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 14%, transparent);
+    border: 1px solid var(--danger);
+    border-radius: 2px;
+    padding: 1px 5px;
+  }
+  .pip-unknown .pip-dot {
+    background: var(--faint);
+  }
+  .pip-unknown .pip-label {
     color: var(--faint);
+  }
+  @keyframes pip-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pip-live .pip-dot {
+      animation: none;
+    }
   }
   .ent-chip {
     background: color-mix(in srgb, var(--danger) 14%, transparent);

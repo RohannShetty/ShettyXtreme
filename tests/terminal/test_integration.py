@@ -1,7 +1,7 @@
 """Integration tests for the ShettyXtreme Terminal FastAPI app.
 
 Verifies HTTP routing and response shapes without starting the real
-EventBus or Dhan adapters.  Projections are installed on app.state by
+EventBus or broker adapters.  Projections are installed on app.state by
 the client fixture so state-dependent endpoints run for real.
 """
 from __future__ import annotations
@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from shettyxtreme.terminal.api import execution_router
 from shettyxtreme.terminal.api.app import app
@@ -50,7 +51,7 @@ def test_settings_redirects(client: TestClient) -> None:
 
 
 def test_oauth_callback_redirects_to_spa(client: TestClient) -> None:
-    resp = client.get("/auth/dhan/callback?tokenId=bogus", follow_redirects=False)
+    resp = client.get("/auth/fyers/callback?auth_code=bogus", follow_redirects=False)
     assert resp.status_code == 307
     location = resp.headers["location"]
     assert location.startswith("/static/")
@@ -108,3 +109,31 @@ def test_scanner_alerts_empty(client: TestClient) -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert isinstance(body, list)
+
+
+# ── WebSocket origin validation (F-EXEC-001) ───────────────────────────────
+
+
+def test_ws_accepts_production_origin(client: TestClient) -> None:
+    with client.websocket_connect(
+        "/ws", headers={"origin": "http://127.0.0.1:8000"}
+    ) as ws:
+        ws.send_text("ping")
+        assert "pong" in ws.receive_text()
+
+
+def test_ws_accepts_vite_dev_origin(client: TestClient) -> None:
+    with client.websocket_connect(
+        "/ws", headers={"origin": "http://localhost:3000"}
+    ) as ws:
+        ws.send_text("ping")
+        assert "pong" in ws.receive_text()
+
+
+def test_ws_rejects_foreign_origin(client: TestClient) -> None:
+    # A foreign site must be cut off before the socket is accepted.
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(
+            "/ws", headers={"origin": "http://evil.example"}
+        ) as ws:
+            ws.send_text("ping")

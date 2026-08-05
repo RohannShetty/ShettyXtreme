@@ -58,8 +58,12 @@ class BarBuilderState:
         self.close = ltp
         self.volume += max(0, tick.volume)
         self.tick_count += 1
-        if tick.oi is not None:
-            self.oi = tick.oi
+        # The bus Tick (core.data_models.Tick) has no ``oi`` field — the Fyers
+        # bridge drops it in ``_to_bus_tick``. Guard with getattr so a live
+        # tick never raises AttributeError mid-apply.
+        oi = getattr(tick, "oi", None)
+        if oi is not None:
+            self.oi = oi
 
     def is_complete(self, tick_time: datetime) -> bool:
         """Check if a tick timestamp falls in the next period."""
@@ -143,12 +147,15 @@ class BarBuilder:
         return self._state[tick.symbol][tf]
 
     def _create_state(self, tick: Tick, tf: int) -> BarBuilderState:
-        """Create a new BarBuilderState for (symbol, tf) starting at tick time."""
+        """Create an empty BarBuilderState for (symbol, tf) spanning the tick's period.
+
+        F-INTEL-002: the tick is intentionally NOT applied here — the caller
+        applies it exactly once after (re)binding the state, so volume and
+        tick_count are never doubled on a new bar.
+        """
         period_start = floor_timestamp(tick.timestamp, tf)
         period_end = period_start + timedelta(minutes=tf)
-        state = BarBuilderState(period_start, period_end)
-        state.apply_tick(tick)
-        return state
+        return BarBuilderState(period_start, period_end)
 
     async def _finalise_bar(
         self, symbol: str, exchange: str, tf: int,

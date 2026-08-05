@@ -117,6 +117,13 @@ async def test_risk_broadcast_on_decision(mock_broadcast):
     assert args[0][1]["daily_pnl"] == -2000.0
 
 
+def test_risk_margin_unknown_initial_state() -> None:
+    """Margin starts UNKNOWN (None), never a fabricated 500000.0 (fix #2)."""
+    proj = RiskProjection()
+    state = proj.get()
+    assert state["margin_available"] is None
+
+
 @pytest.mark.asyncio
 @patch("shettyxtreme.terminal.projections.ws_bridge.broadcast", new_callable=AsyncMock)
 async def test_risk_broadcast_on_alert(mock_broadcast):
@@ -225,7 +232,7 @@ async def test_signal_v2_with_dpg_updates_projection() -> None:
 
 
 def test_health_reports_entitlement_down() -> None:
-    """dhan_data component goes down with the 806 entitlement message."""
+    """data_adapter component goes down with the Fyers 403/-373 entitlement message."""
     proj = HealthProjection()
     adapter = MagicMock()
     adapter.entitlement_error = True
@@ -233,10 +240,46 @@ def test_health_reports_entitlement_down() -> None:
 
     result = proj.get()
 
-    dhan = next(c for c in result["components"] if c["name"] == "dhan_data")
-    assert dhan["status"] == "down"
-    assert "entitlement" in dhan["message"]
-    assert "(806)" in dhan["message"]
+    comp = next(c for c in result["components"] if c["name"] == "data_adapter")
+    assert comp["status"] == "down"
+    assert "entitlement" in comp["message"]
+    assert "403" in comp["message"]
+
+
+def test_health_latency_not_fabricated() -> None:
+    """No component reports a non-zero latency that was never measured (fix #3)."""
+    proj = HealthProjection()
+    result = proj.get()
+
+    assert result["components"]
+    for c in result["components"]:
+        assert c["latency_ms"] is None
+
+
+def test_health_data_stale_when_no_ticks() -> None:
+    """Connected adapter with no fresh ticks reports stale, not healthy."""
+    proj = HealthProjection()
+    adapter = MagicMock()
+    adapter.entitlement_error = False
+    adapter._connected = True
+    adapter.is_stale.return_value = True
+    proj.configure(data_adapter=adapter)
+
+    result = proj.get()
+
+    comp = next(c for c in result["components"] if c["name"] == "data_adapter")
+    assert comp["status"] == "stale"
+
+
+def test_health_trading_token_expired() -> None:
+    """Trading adapter with an invalid token reports token_expired."""
+    proj = HealthProjection()
+    proj.configure(trading_adapter=MagicMock(), token_health_provider=lambda: False)
+
+    result = proj.get()
+
+    comp = next(c for c in result["components"] if c["name"] == "trading_adapter")
+    assert comp["status"] == "token_expired"
 
 
 @pytest.mark.asyncio

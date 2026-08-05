@@ -1,6 +1,6 @@
 ---
 frozen_rules_count: 7
-last_amended: "2026-07-12T00:00:00Z"
+last_amended: "2026-08-05T00:00:00Z"
 ---
 
 # Frozen Rules
@@ -14,15 +14,15 @@ These rules must never be violated — by any agent, in any phase.
 
 NSE/BSE market structure, instrument types, expiry calendars, trading sessions, and settlement rules are first-class citizens. No international-market adapter pattern is applied to Indian markets — they are native, not special cases.
 
-## FR-002: Dhan-Native Integration
-**Established:** 2026-07-12 | **Status:** Active
+## FR-002: Fyers-Native Integration
+**Established:** 2026-07-12 | **Amended:** 2026-08-05 | **Status:** Active
 
-Dhan is the primary broker. All broker features (auth, orders, positions, data) work optimally with Dhan first. Other brokers are secondary and routed through OpenAlgo's abstraction.
+Fyers is the primary broker. All broker features (auth, orders, positions, data) work optimally with Fyers first. Other brokers are secondary and wired behind the `core/interfaces` Protocols (ADR-008).
 
-## FR-003: OpenAlgo Delegation
-**Established:** 2026-07-12 | **Status:** Active
+## FR-003: Broker Plumbing Behind Protocols
+**Established:** 2026-07-12 | **Amended:** 2026-08-05 | **Status:** Active
 
-Order execution, broker abstraction, and WebSocket plumbing are delegated to OpenAlgo. We do NOT reimplement these. Our integration layer wraps, adapts, and extends — it does not duplicate.
+Order execution, broker abstraction, and WebSocket plumbing are implemented in `integration/<broker>/` behind the `core/interfaces` Protocols — never reimplemented in core. The integration layer wraps and adapts broker SDKs; it does not leak broker wire formats above `integration/`.
 
 ## FR-004: Anti-Corruption Layer
 **Established:** 2026-07-12 | **Status:** Active

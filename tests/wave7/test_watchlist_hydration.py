@@ -2,6 +2,9 @@
 
 Follows the wave9 fake-state pattern: the shared app's state is set
 directly per test (no lifespan), mirroring test_market_router.py.
+Fyers contract: hydration calls ``adapter.get_ohlc(symbol) -> dict``
+(with open/high/low/close/ltp) per symbol, falling back to
+``adapter.get_ltp(symbol) -> float`` when the OHLC payload lacks an ltp.
 """
 from __future__ import annotations
 
@@ -14,52 +17,26 @@ from httpx import ASGITransport, AsyncClient
 from shettyxtreme.terminal.api.app import app
 from shettyxtreme.terminal.projections import WatchlistProjection
 
-# Real dhanhq /marketfeed/ohlc success body per security:
-#   data[segment][id] = {"last_price": float, "ohlc": {open, close, high, low}}
-OHLC_SUCCESS = {
-    "status": "success",
-    "data": {
-        "NSE_EQ": {
-            "2885": {
-                "last_price": 2901.35,
-                "ohlc": {"open": 2850.0, "close": 2840.25, "high": 2910.0, "low": 2840.0},
-            },
-        },
-    },
-}
-
-LTP_ONLY_SUCCESS = {
-    "status": "success",
-    "data": {"NSE_EQ": {"2885": {"last_price": 2901.35}}},
-}
-
-FAILURE_BODY = {"status": "error", "message": "rate limited"}
-
-HALTED_BODY = {
-    "status": "success",
-    "data": {"NSE_EQ": {"2885": {"last_price": None}}},
-}
-
 
 class FakeDataAdapter:
     """AsyncMock-style adapter recording call args and returning canned bodies."""
 
     def __init__(
         self,
-        ohlc_body: dict[str, Any] | None = None,
-        ltp_body: dict[str, Any] | None = None,
+        ohlc_map: dict[str, dict[str, Any]] | None = None,
+        ltp_map: dict[str, float] | None = None,
     ) -> None:
-        self.ohlc_body = ohlc_body if ohlc_body is not None else OHLC_SUCCESS
-        self.ltp_body = ltp_body if ltp_body is not None else LTP_ONLY_SUCCESS
+        self.ohlc_map = ohlc_map or {}
+        self.ltp_map = ltp_map or {}
         self.calls: list[tuple] = []
 
-    async def get_ohlc(self, securities) -> dict[str, Any]:
-        self.calls.append(("ohlc", securities))
-        return self.ohlc_body
+    async def get_ohlc(self, symbol: str) -> dict[str, Any]:
+        self.calls.append(("ohlc", symbol))
+        return self.ohlc_map.get(symbol, {})
 
-    async def get_ltp(self, securities) -> dict[str, Any]:
-        self.calls.append(("ltp", securities))
-        return self.ltp_body
+    async def get_ltp(self, symbol: str) -> float:
+        self.calls.append(("ltp", symbol))
+        return self.ltp_map.get(symbol, 0.0)
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -78,11 +55,18 @@ async def client() -> AsyncIterator[AsyncClient]:
         yield ac
 
 
+def _ohlc(ltp: float, close: float, open_: float = 2850.0) -> dict[str, Any]:
+    return {"open": open_, "high": max(open_, ltp) + 10.0, "low": min(open_, ltp) - 10.0,
+            "close": close, "ltp": ltp}
+
+
 @pytest.mark.asyncio
 async def test_hydrates_zero_ltp_rows_with_ohlc(client: AsyncClient) -> None:
     proj = app.state.watchlist_projection
-    proj.add("RELIANCE", "NSE", security_id="2885")
-    app.state.data_adapter = FakeDataAdapter()
+    proj.add("RELIANCE", "NSE", security_id="RELIANCE")
+    app.state.data_adapter = FakeDataAdapter(
+        ohlc_map={"RELIANCE": _ohlc(2901.35, 2840.25)},
+    )
 
     resp = await client.get("/api/watchlist")
 
@@ -91,13 +75,13 @@ async def test_hydrates_zero_ltp_rows_with_ohlc(client: AsyncClient) -> None:
     assert row["symbol"] == "RELIANCE"
     assert row["ltp"] == 2901.35
     assert row["change_pct"] == pytest.approx(2.15)
-    assert row["security_id"] == "2885"
+    assert row["security_id"] == "RELIANCE"
 
 
 @pytest.mark.asyncio
 async def test_live_ltp_wins_rest_not_called(client: AsyncClient) -> None:
     proj = app.state.watchlist_projection
-    proj.add("RELIANCE", "NSE", security_id="2885")
+    proj.add("RELIANCE", "NSE", security_id="RELIANCE")
     app.state.watchlist_projection.get_item("RELIANCE")["ltp"] = 2950.0
     adapter = FakeDataAdapter()
     app.state.data_adapter = adapter
@@ -113,7 +97,7 @@ async def test_live_ltp_wins_rest_not_called(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_adapter_none_leaves_rows_unchanged(client: AsyncClient) -> None:
     proj = app.state.watchlist_projection
-    proj.add("RELIANCE", "NSE", security_id="2885")
+    proj.add("RELIANCE", "NSE", security_id="RELIANCE")
 
     resp = await client.get("/api/watchlist")
 
@@ -126,8 +110,8 @@ async def test_adapter_none_leaves_rows_unchanged(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_rest_failure_leaves_rows_unchanged(client: AsyncClient) -> None:
     proj = app.state.watchlist_projection
-    proj.add("RELIANCE", "NSE", security_id="2885")
-    app.state.data_adapter = FakeDataAdapter(ohlc_body=FAILURE_BODY, ltp_body=FAILURE_BODY)
+    proj.add("RELIANCE", "NSE", security_id="RELIANCE")
+    app.state.data_adapter = FakeDataAdapter()  # empty maps -> no data
 
     resp = await client.get("/api/watchlist")
 
@@ -138,42 +122,33 @@ async def test_rest_failure_leaves_rows_unchanged(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ohlc_failure_falls_back_to_ltp_only(client: AsyncClient) -> None:
+async def test_ohlc_without_ltp_falls_back_to_get_ltp(client: AsyncClient) -> None:
     proj = app.state.watchlist_projection
-    proj.add("RELIANCE", "NSE", security_id="2885")
-    app.state.data_adapter = FakeDataAdapter(ohlc_body=FAILURE_BODY)
+    proj.add("RELIANCE", "NSE", security_id="RELIANCE")
+    # OHLC payload present but no ltp key -> fall back to get_ltp.
+    app.state.data_adapter = FakeDataAdapter(
+        ohlc_map={"RELIANCE": {"open": 2850.0, "close": 2840.25, "ltp": 0}},
+        ltp_map={"RELIANCE": 2901.35},
+    )
 
     resp = await client.get("/api/watchlist")
 
     assert resp.status_code == 200
     (row,) = resp.json()
     assert row["ltp"] == 2901.35
-    assert row["change_pct"] == 0.0
+    assert row["change_pct"] == pytest.approx(2.15)
+    assert ("ltp", "RELIANCE") in adapter_calls(client)
+
+
+def adapter_calls(client: AsyncClient) -> list[tuple]:
+    return app.state.data_adapter.calls
 
 
 @pytest.mark.asyncio
-async def test_halted_security_last_price_null_leaves_row_unchanged(client: AsyncClient) -> None:
+async def test_halted_security_no_data_leaves_row_unchanged(client: AsyncClient) -> None:
     proj = app.state.watchlist_projection
-    proj.add("RELIANCE", "NSE", security_id="2885")
-    app.state.data_adapter = FakeDataAdapter(ohlc_body=HALTED_BODY)
-
-    resp = await client.get("/api/watchlist")
-
-    assert resp.status_code == 200
-    (row,) = resp.json()
-    assert row["ltp"] == 0.0
-
-
-@pytest.mark.asyncio
-async def test_halted_security_empty_string_price_leaves_row_unchanged(client: AsyncClient) -> None:
-    proj = app.state.watchlist_projection
-    proj.add("RELIANCE", "NSE", security_id="2885")
-    app.state.data_adapter = FakeDataAdapter(
-        ohlc_body={
-            "status": "success",
-            "data": {"NSE_EQ": {"2885": {"last_price": ""}}},
-        }
-    )
+    proj.add("RELIANCE", "NSE", security_id="RELIANCE")
+    app.state.data_adapter = FakeDataAdapter()  # halted -> no OHLC/ltp
 
     resp = await client.get("/api/watchlist")
 
@@ -185,10 +160,10 @@ async def test_halted_security_empty_string_price_leaves_row_unchanged(client: A
 @pytest.mark.asyncio
 async def test_adapter_raising_never_breaks_response(client: AsyncClient) -> None:
     proj = app.state.watchlist_projection
-    proj.add("RELIANCE", "NSE", security_id="2885")
+    proj.add("RELIANCE", "NSE", security_id="RELIANCE")
 
     class RaisingAdapter(FakeDataAdapter):
-        async def get_ohlc(self, securities) -> dict[str, Any]:
+        async def get_ohlc(self, symbol: str) -> dict[str, Any]:
             raise RuntimeError("boom")
 
     app.state.data_adapter = RaisingAdapter()
@@ -202,30 +177,16 @@ async def test_adapter_raising_never_breaks_response(client: AsyncClient) -> Non
 
 
 @pytest.mark.asyncio
-async def test_mixed_segments_grouped_correctly(client: AsyncClient) -> None:
+async def test_mixed_symbols_hydrated_individually(client: AsyncClient) -> None:
     proj = app.state.watchlist_projection
-    proj.add("RELIANCE", "NSE", security_id="2885")
-    proj.add("NIFTY", "NFO", security_id="13")
-    adapter = FakeDataAdapter(
-        ohlc_body={
-            "status": "success",
-            "data": {
-                "NSE_EQ": {
-                    "2885": {
-                        "last_price": 2901.35,
-                        "ohlc": {"open": 2850.0, "close": 2840.25, "high": 2910.0, "low": 2840.0},
-                    },
-                },
-                "NSE_FNO": {
-                    "13": {
-                        "last_price": 22555.5,
-                        "ohlc": {"open": 22500.0, "close": 22450.0, "high": 22600.0, "low": 22400.0},
-                    },
-                },
-            },
-        }
+    proj.add("RELIANCE", "NSE", security_id="RELIANCE")
+    proj.add("NIFTY", "NFO", security_id="NIFTY")
+    app.state.data_adapter = FakeDataAdapter(
+        ohlc_map={
+            "RELIANCE": _ohlc(2901.35, 2840.25),
+            "NIFTY": _ohlc(22555.5, 22450.0, open_=22500.0),
+        },
     )
-    app.state.data_adapter = adapter
 
     resp = await client.get("/api/watchlist")
 
@@ -233,4 +194,5 @@ async def test_mixed_segments_grouped_correctly(client: AsyncClient) -> None:
     rows = {r["symbol"]: r for r in resp.json()}
     assert rows["RELIANCE"]["ltp"] == 2901.35
     assert rows["NIFTY"]["ltp"] == 22555.5
-    assert adapter.calls == [("ohlc", {"NSE_EQ": ["2885"], "NSE_FNO": ["13"]})]
+    assert ("ohlc", "RELIANCE") in adapter_calls(client)
+    assert ("ohlc", "NIFTY") in adapter_calls(client)

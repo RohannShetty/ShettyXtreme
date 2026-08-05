@@ -92,3 +92,18 @@ def test_record_outcome_without_vote_inserts(tmp_data_dir: str) -> None:
     reports = t.get_voter_report()
     assert any(r.name == "orphan" for r in reports)
     t.close()
+
+
+def test_voter_quality_timestamps_are_utc(tmp_data_dir: str) -> None:
+    """Vote timestamps are stored as UTC-aware ISO strings (Fix #4)."""
+    t = _tracker(tmp_data_dir)
+    t.record_vote("v1", 1.0, 0.8, "s1")
+    row = t._conn.execute(
+        "SELECT timestamp FROM voter_outcomes WHERE voter_name = ? AND signal_id = ?",
+        ("v1", "s1"),
+    ).fetchone()
+    assert row is not None
+    ts = row["timestamp"]
+    assert isinstance(ts, str)
+    assert ts.endswith("+00:00")
+    t.close()

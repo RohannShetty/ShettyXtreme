@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from shettyxtreme.learning.outcome_tracker import OutcomeLabel
 
@@ -61,7 +61,7 @@ class VoterQualityTracker:
                 float(direction),
                 float(confidence),
                 None,
-                datetime.now().isoformat(),
+                datetime.now(UTC).isoformat(),
             ),
         )
         self._conn.commit()
@@ -86,7 +86,7 @@ class VoterQualityTracker:
                     0.0,
                     0.0,
                     outcome.value,
-                    datetime.now().isoformat(),
+                    datetime.now(UTC).isoformat(),
                 ),
             )
         else:

@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import os
+import secrets
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from shettyxtreme.terminal.api.models import (
     KillSwitchResponse,
@@ -42,6 +44,10 @@ _current_mode: str = _load_mode()
 # Initialized at import time (not lazily in activate_kill_switch) so a kill
 # switch armed by a previous process is honored across restarts.
 _kill_switch_path: str = str(Path.home() / ".shetty_kill_switch")
+# Per-session CSRF token, minted only when LIVE mode is activated with the
+# typed confirmation. Required (X-CSRF-Token header) on LIVE placements so a
+# bare form post / boolean query flag can never place a real order (F-EXEC-001).
+_csrf_token: str | None = None
 
 
 def get_mode_value() -> str:
@@ -52,6 +58,45 @@ def get_mode_value() -> str:
 def is_kill_switch_armed() -> bool:
     """True when the file-based kill switch is armed (blocks placement)."""
     return bool(_kill_switch_path) and os.path.exists(_kill_switch_path)
+
+
+def _mint_csrf_token() -> str:
+    """Mint a fresh per-session CSRF token (LIVE activation only)."""
+    global _csrf_token
+    _csrf_token = secrets.token_urlsafe(32)
+    return _csrf_token
+
+
+def _clear_csrf_token() -> None:
+    """Invalidate the CSRF token when the LIVE session ends."""
+    global _csrf_token
+    _csrf_token = None
+
+
+def get_csrf_token() -> str | None:
+    """Current per-session CSRF token, or None outside a LIVE session."""
+    return _csrf_token
+
+
+def _require_csrf_token(request: Request) -> None:
+    """LIVE placements must carry the per-session CSRF token (X-CSRF-Token).
+
+    The token is minted when the operator types the LIVE confirmation, so a
+    CSRF'd form post (which cannot set custom headers) can never place a real
+    broker order (F-EXEC-001).
+    """
+    expected = _csrf_token
+    if not expected:
+        raise HTTPException(
+            status_code=403,
+            detail="no CSRF token issued - activate LIVE mode with typed confirmation first",
+        )
+    supplied = request.headers.get("x-csrf-token")
+    if not supplied or supplied != expected:
+        raise HTTPException(
+            status_code=403,
+            detail="invalid or missing X-CSRF-Token header",
+        )
 
 
 def _engine(request: Request) -> Any | None:
@@ -122,7 +167,9 @@ async def get_risk(request: Request) -> RiskResponse:
     return RiskResponse(
         daily_pnl=daily_pnl,
         margin_used=risk.get("margin_used", 0.0),
-        margin_available=risk.get("margin_available", 500000.0),
+        # Honest no-data state: None (serialized as null), never a fabricated
+        # default that implies margin the account may not have (fix #2).
+        margin_available=risk.get("margin_available"),
         loss_limit=loss_limit,
         loss_limit_hit=daily_pnl < loss_limit,
         max_positions=risk.get("max_positions", 5),
@@ -132,25 +179,50 @@ async def get_risk(request: Request) -> RiskResponse:
 
 @router.get("/mode", response_model=ModeResponse)
 async def get_mode() -> ModeResponse:
-    """Return current execution mode."""
-    return ModeResponse(mode=_current_mode)
+    """Return current execution mode (+ per-session CSRF token, if any)."""
+    return ModeResponse(mode=_current_mode, csrf_token=get_csrf_token())
+
+
+class ModeSwitchRequest(BaseModel):
+    """Typed confirmation carried in the request body (never a query flag)."""
+
+    confirm: str | None = None
 
 
 @router.post("/mode", response_model=ModeResponse)
-async def set_mode(request: Request, mode: str, confirm: bool = False) -> ModeResponse:
+async def set_mode(
+    request: Request,
+    mode: str,
+    confirm: bool = False,  # legacy query flag; kept for non-LIVE backward compat
+    payload: ModeSwitchRequest | None = None,
+) -> ModeResponse:
     """Switch execution mode. Valid modes: OBSERVER, LIVE, PAPER.
 
-    LIVE requires explicit per-session confirmation (confirm=true, D10).
+    LIVE requires typed per-session confirmation (D10): the string "LIVE"
+    must be sent in the request body. A boolean query flag (confirm=true)
+    never arms LIVE (F-EXEC-001). OBSERVER/PAPER keep the legacy query
+    behavior and need no confirmation.
     """
     global _current_mode
     valid = {"OBSERVER", "LIVE", "PAPER"}
     requested = mode.upper()
     if requested not in valid:
         return ModeResponse(mode=_current_mode)
-    if requested == "LIVE" and not confirm:
-        return ModeResponse(mode=_current_mode)
+    if requested == "LIVE":
+        typed = (payload.confirm if payload else None) or ""
+        if typed != "LIVE":
+            raise HTTPException(
+                status_code=400,
+                detail="LIVE mode requires typed confirmation: send {\"confirm\": \"LIVE\"} in the request body",
+            )
+    previous = _current_mode
     _current_mode = requested
     _save_mode(_current_mode)
+    if requested == "LIVE":
+        _mint_csrf_token()
+    elif previous == "LIVE":
+        # Leaving LIVE invalidates the per-session CSRF token (D10).
+        _clear_csrf_token()
     # Publish config changed event
     try:
         bus = request.app.state.event_bus
@@ -159,7 +231,7 @@ async def set_mode(request: Request, mode: str, confirm: bool = False) -> ModeRe
             await bus.publish(Event(Topic.CONFIG_CHANGED, {"mode": _current_mode}, source="execution_router"))
     except Exception:
         pass
-    return ModeResponse(mode=_current_mode)
+    return ModeResponse(mode=_current_mode, csrf_token=get_csrf_token())
 
 
 @router.get("/kill-switch", response_model=KillSwitchResponse)
@@ -171,11 +243,22 @@ async def get_kill_switch() -> KillSwitchResponse:
     return KillSwitchResponse(active=active, activated_at=datetime.now(UTC) if active else None)
 
 
+class KillSwitchRequest(BaseModel):
+    """Typed confirmation for the kill-switch disarm (D10 parity)."""
+
+    confirm: str | None = None
+
+
 @router.post("/kill-switch", response_model=KillSwitchResponse)
-async def activate_kill_switch(activate: bool = True) -> KillSwitchResponse:
+async def activate_kill_switch(
+    activate: bool = True,
+    payload: KillSwitchRequest | None = None,
+) -> KillSwitchResponse:
     """Activate or deactivate the kill switch.
 
-    Creates or removes a file-based kill switch indicator.
+    Arming stays a single click (activate=true). Disarming (activate=false)
+    requires the typed confirmation string "DISARM" in the request body —
+    same rule as LIVE mode (F-EXEC-001).
     """
     global _kill_switch_path
     if not _kill_switch_path:
@@ -184,9 +267,14 @@ async def activate_kill_switch(activate: bool = True) -> KillSwitchResponse:
     if activate:
         Path(_kill_switch_path).touch()
         return KillSwitchResponse(active=True, activated_at=datetime.now(UTC))
-    else:
-        Path(_kill_switch_path).unlink(missing_ok=True)
-        return KillSwitchResponse(active=False)
+    typed = (payload.confirm if payload else None) or ""
+    if typed != "DISARM":
+        raise HTTPException(
+            status_code=400,
+            detail="disarming the kill switch requires typed confirmation: send {\"confirm\": \"DISARM\"} in the request body",
+        )
+    Path(_kill_switch_path).unlink(missing_ok=True)
+    return KillSwitchResponse(active=False)
 
 
 # ── Proposals (OBSERVER propose→approve flow, D10) ─────────────────────────
@@ -213,8 +301,9 @@ async def approve_proposal(
 ) -> ProposalResponse:
     """Approve a proposal: risk check → validate → route per mode (D10).
 
-    OBSERVER never places; LIVE requires an explicit confirm=true on top of
-    the mode-switch gate; an armed kill switch blocks placement.
+    OBSERVER never places; LIVE requires the per-session CSRF token (minted
+    by typed LIVE activation) plus explicit confirm=true; an armed kill
+    switch blocks placement.
     """
     engine = _engine(request)
     if engine is None:
@@ -225,11 +314,13 @@ async def approve_proposal(
             status_code=400,
             detail="OBSERVER mode never places orders - switch to PAPER or LIVE",
         )
-    if mode == "LIVE" and not confirm:
-        raise HTTPException(
-            status_code=400,
-            detail="LIVE placement requires explicit confirmation (confirm=true)",
-        )
+    if mode == "LIVE":
+        _require_csrf_token(request)
+        if not confirm:
+            raise HTTPException(
+                status_code=400,
+                detail="LIVE placement requires explicit confirmation (confirm=true)",
+            )
     if is_kill_switch_armed():
         raise HTTPException(status_code=400, detail="kill switch armed - placement blocked")
     try:

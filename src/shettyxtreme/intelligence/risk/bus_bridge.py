@@ -26,7 +26,10 @@ class RiskBusBridge:
         self._event_bus = event_bus
         self._daily_pnl = 0.0
         self._margin_used = 0.0
-        self._margin_available = 0.0
+        # Margin starts UNKNOWN (None). Ticks/position updates carry no margin,
+        # so publishing any placeholder here would clobber the real value the
+        # margin poller publishes via RISK_DECISION (fix #2 honesty rule).
+        self._margin_available: float | None = None
         self._loss_limit = loss_limit
 
     async def start(self) -> None:
@@ -55,11 +58,15 @@ class RiskBusBridge:
         decision = {
             "daily_pnl": self._daily_pnl,
             "margin_used": self._margin_used,
-            "margin_available": self._margin_available,
             "loss_limit": self._loss_limit,
             "loss_limit_hit": self._daily_pnl < self._loss_limit,
             "max_positions": _MAX_POSITIONS,
         }
+        # Only carry margin when a real source reported it (fix #2). Omitting
+        # the key lets consumers keep the poller's last real value instead of
+        # being overwritten by an unknown/placeholder figure.
+        if self._margin_available is not None:
+            decision["margin_available"] = self._margin_available
         await self._event_bus.publish(
             Event(
                 topic=Topic.RISK_DECISION,

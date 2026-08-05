@@ -102,7 +102,10 @@ async def test_lifespan_wires_intelligence_pipeline() -> None:
         assert getattr(app.state, "signal_engine", None) is not None
         assert app.state.intelligence_pipeline == "started"
         voter_names = set(app.state.signal_engine.voters)
-        assert {"options_flow_voter", "micro_voter", "breadth_voter", "orb", "iv_rank"} <= voter_names
+        assert {"options_flow_voter", "micro_voter", "breadth_voter"} <= voter_names
+        # F-INTEL-001: stub voters (orb / iv_rank) must not be registered —
+        # they voted constant directions on features that are never computed.
+        assert not {"orb", "iv_rank"} & voter_names
         # Ticks published on the real bus flow through the wiring end-to-end.
         bus = app.state.event_bus
         now = datetime.now(UTC)

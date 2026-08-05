@@ -90,11 +90,12 @@ def _signal_event(data: dict) -> Event:
 
 @pytest_asyncio.fixture(autouse=True)
 async def setup_state(monkeypatch, tmp_path) -> AsyncIterator[None]:
-    """Fresh module mode/kill-switch state per test; clear app.state engine."""
+    """Fresh module mode/kill-switch/CSRF state per test; clear app.state engine."""
     mode_file = tmp_path / "mode.txt"
     monkeypatch.setattr(execution_router, "_MODE_FILE", mode_file)
     execution_router._current_mode = execution_router._load_mode()
     execution_router._kill_switch_path = ""
+    execution_router._csrf_token = None
     app.state.execution_engine = None
     app.state.paper_engine = None
     yield
@@ -203,9 +204,16 @@ async def test_approve_paper_routes_to_paper_engine(client: AsyncClient) -> None
 
 # ── Approve → LIVE (mocked adapter) ────────────────────────────────────────
 
-@pytest.mark.asyncio
-async def test_approve_live_routes_to_adapter_with_confirm(client: AsyncClient) -> None:
+def _arm_live(csrf_token: str = "test-csrf") -> None:
+    """Put the router in LIVE mode with a minted per-session CSRF token
+    (normally done by set_mode when the operator types the LIVE confirm)."""
     execution_router._current_mode = "LIVE"
+    execution_router._csrf_token = csrf_token
+
+
+@pytest.mark.asyncio
+async def test_approve_live_routes_to_adapter_with_csrf(client: AsyncClient) -> None:
+    _arm_live()
     fake = AsyncMock()
     fake.place_order = AsyncMock(
         return_value=OrderResult(order_id="D123", status=OrderStatus.OPEN, message="ok")
@@ -216,7 +224,10 @@ async def test_approve_live_routes_to_adapter_with_confirm(client: AsyncClient) 
     await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
     proposal = (await _proposals(client))[0]
 
-    resp = await client.post(f"/api/execution/proposals/{proposal['id']}/approve?confirm=true")
+    resp = await client.post(
+        f"/api/execution/proposals/{proposal['id']}/approve?confirm=true",
+        headers={"X-CSRF-Token": "test-csrf"},
+    )
     assert resp.status_code == 200
     assert resp.json()["status"] == "APPROVED"
     assert fake.place_order.await_count == 1
@@ -227,8 +238,35 @@ async def test_approve_live_routes_to_adapter_with_confirm(client: AsyncClient) 
 
 
 @pytest.mark.asyncio
-async def test_approve_live_requires_confirm(client: AsyncClient) -> None:
-    execution_router._current_mode = "LIVE"
+async def test_approve_live_full_flow_via_typed_mode_switch(client: AsyncClient) -> None:
+    """Typed mode switch mints the token; approve uses it — no hand-set state."""
+    fake = AsyncMock()
+    fake.place_order = AsyncMock(
+        return_value=OrderResult(order_id="D123", status=OrderStatus.OPEN, message="ok")
+    )
+    engine, _ = _make_engine(mode="LIVE", live_adapter=fake)
+    app.state.execution_engine = engine
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
+    proposal = (await _proposals(client))[0]
+
+    resp = await client.post("/api/execution/mode?mode=LIVE", json={"confirm": "LIVE"})
+    assert resp.status_code == 200
+    token = resp.json()["csrf_token"]
+    assert token
+
+    resp = await client.post(
+        f"/api/execution/proposals/{proposal['id']}/approve?confirm=true",
+        headers={"X-CSRF-Token": token},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "APPROVED"
+    assert fake.place_order.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_approve_live_requires_csrf_token(client: AsyncClient) -> None:
+    _arm_live()
     fake = AsyncMock()
     engine, _ = _make_engine(mode="LIVE", live_adapter=fake)
     app.state.execution_engine = engine
@@ -236,7 +274,46 @@ async def test_approve_live_requires_confirm(client: AsyncClient) -> None:
     await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
     proposal = (await _proposals(client))[0]
 
-    resp = await client.post(f"/api/execution/proposals/{proposal['id']}/approve")
+    # No X-CSRF-Token header → 403, nothing placed (F-EXEC-001).
+    resp = await client.post(f"/api/execution/proposals/{proposal['id']}/approve?confirm=true")
+    assert resp.status_code == 403
+    assert "CSRF" in resp.json()["detail"]
+    assert fake.place_order.await_count == 0
+    assert (await _proposals(client))[0]["status"] == "PENDING"
+
+
+@pytest.mark.asyncio
+async def test_approve_live_rejects_wrong_csrf_token(client: AsyncClient) -> None:
+    _arm_live()
+    fake = AsyncMock()
+    engine, _ = _make_engine(mode="LIVE", live_adapter=fake)
+    app.state.execution_engine = engine
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
+    proposal = (await _proposals(client))[0]
+
+    resp = await client.post(
+        f"/api/execution/proposals/{proposal['id']}/approve?confirm=true",
+        headers={"X-CSRF-Token": "wrong"},
+    )
+    assert resp.status_code == 403
+    assert fake.place_order.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_approve_live_requires_confirm(client: AsyncClient) -> None:
+    _arm_live()
+    fake = AsyncMock()
+    engine, _ = _make_engine(mode="LIVE", live_adapter=fake)
+    app.state.execution_engine = engine
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
+    proposal = (await _proposals(client))[0]
+
+    resp = await client.post(
+        f"/api/execution/proposals/{proposal['id']}/approve",
+        headers={"X-CSRF-Token": "test-csrf"},
+    )
     assert resp.status_code == 400
     assert "confirmation" in resp.json()["detail"]
     assert fake.place_order.await_count == 0

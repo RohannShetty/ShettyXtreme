@@ -25,6 +25,7 @@
 
   let proposals = $state<Proposal[]>([]);
   let mode = $state("OBSERVER");
+  let csrfToken = $state<string | null>(null);
   let risk: RiskSummary | null = $state(null);
   let error = $state("");
   let feedback = $state("");
@@ -50,6 +51,7 @@
       ]);
       proposals = p.filter((x) => x.status === "PENDING");
       mode = m.mode;
+      csrfToken = m.csrf_token;
       risk = r;
       error = "";
     } catch (err) {
@@ -94,7 +96,7 @@
     busy = true;
     feedback = "";
     try {
-      const updated = await approveProposal(p.id, mode === "LIVE");
+      const updated = await approveProposal(p.id, mode === "LIVE", mode === "LIVE" ? csrfToken : null);
       proposals = proposals.filter((x) => x.id !== p.id);
       feedback = `${updated.side} ${updated.symbol} → ${updated.status}`;
       target = null;
@@ -232,7 +234,7 @@
       {#if risk}
         <div class="summary mono risk">
           <div class="sum-row"><span>DAILY P&L</span><b class={risk.daily_pnl >= 0 ? "up" : "down"}>{fmtMoney(risk.daily_pnl)}</b></div>
-          <div class="sum-row"><span>MARGIN AVAIL</span><b>{fmtMoney(risk.margin_available)}</b></div>
+          <div class="sum-row"><span>MARGIN AVAIL</span><b>{risk.margin_available !== null ? fmtMoney(risk.margin_available) : "—"}</b></div>
           <div class="sum-row"><span>LOSS LIMIT</span><b>{fmtMoney(risk.loss_limit)}</b></div>
           <div class="sum-row"><span>ACTIVE POS</span><b>{risk.active_positions}/{risk.max_positions}</b></div>
         </div>

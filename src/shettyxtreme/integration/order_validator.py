@@ -1,8 +1,17 @@
-"""Order validation for Dhan orders.
+"""Order validation for Dhan and Fyers orders.
 
 Validates exchanges, actions, price types, product types, and validity
-before submitting orders to Dhan. Raises ValueError with descriptive
+before submitting orders. Raises ValueError with descriptive
 messages on invalid combinations.
+
+Value sets cover both brokers during the Dhan -> Fyers migration:
+
+    Exchanges:    Dhan {NSE, BSE, NFO, BFO, MCX, *_FNO, IDX_I} +
+                  Fyers {NSE, BSE, NFO, BFO, MCX}
+    Price types:  Dhan {MARKET, LIMIT, SL, SL-M} = Fyers {MARKET, LIMIT, SL, SL_M}
+    Product:      Dhan {MIS, NRML, CNC, MARGIN} +
+                  Fyers {CNC, INTRADAY, MARGIN, MTF}
+    Validity:     {DAY, IOC} (Fyers order API uses DAY/IOC)
 """
 from __future__ import annotations
 
@@ -13,10 +22,14 @@ from shettyxtreme.core.interfaces.order_executor import (
     ProductType,
 )
 
+# Fyers exchanges are a subset of the Dhan set; keep the union until the
+# Dhan path is deleted (Phase 1 exit).
 VALID_EXCHANGES: set[str] = {"NSE", "BSE", "NFO", "BFO", "MCX", "NSE_FNO", "BSE_FNO", "MCX_FNO", "IDX_I"}
 VALID_ACTIONS: set[str] = {"BUY", "SELL"}
-VALID_PRICE_TYPES: set[str] = {"MARKET", "LIMIT", "SL", "SL-M"}
-VALID_PRODUCT_TYPES: set[str] = {"MIS", "NRML", "CNC", "MARGIN"}
+# Fyers order types: MARKET, LIMIT, SL, SL_M (SL_M normalizes to SL-M below).
+VALID_PRICE_TYPES: set[str] = {"MARKET", "LIMIT", "SL", "SL-M", "SL_M"}
+# Dhan products (MIS/NRML) plus Fyers products (INTRADAY/MTF) share CNC/MARGIN.
+VALID_PRODUCT_TYPES: set[str] = {"MIS", "NRML", "CNC", "MARGIN", "INTRADAY", "MTF"}
 VALID_VALIDITY: set[str] = {"DAY", "IOC"}
 
 
@@ -107,19 +120,19 @@ class OrderValidator:
             )
 
         # Price must be provided for LIMIT and SL orders
-        if price_type in ("LIMIT", "SL"):
-            if order.price is None or order.price <= 0:
-                raise ValueError(
-                    f"Price type '{price_type}' requires a positive price, "
-                    f"got {order.price}."
-                )
+        if price_type in ("LIMIT", "SL") and (order.price is None or order.price <= 0):
+            raise ValueError(
+                f"Price type '{price_type}' requires a positive price, "
+                f"got {order.price}."
+            )
 
         # Trigger price required for SL and SL-M
-        if price_type in ("SL", "SL-M"):
-            if order.trigger_price is None or order.trigger_price <= 0:
-                raise ValueError(
-                    f"Price type '{price_type}' requires a positive trigger_price, "
-                    f"got {order.trigger_price}."
-                )
+        if price_type in ("SL", "SL-M") and (
+            order.trigger_price is None or order.trigger_price <= 0
+        ):
+            raise ValueError(
+                f"Price type '{price_type}' requires a positive trigger_price, "
+                f"got {order.trigger_price}."
+            )
 
         return True
