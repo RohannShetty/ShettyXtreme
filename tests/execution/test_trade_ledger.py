@@ -71,6 +71,47 @@ def test_pair_fills_long_and_short() -> None:
     assert pairs[0]["pnl"] == 750.0  # short: (entry 200 - exit 190) * 75
 
 
+def test_pair_fills_requeues_partial_remainders() -> None:
+    """F-KNOW-005: a partial close leaves the entry remainder queued.
+
+    The 30-qty SELL only closes part of the 75-qty BUY; the remaining 45 must
+    pair against the next SELL instead of being silently dropped.
+    """
+    fills = [
+        _fill(order_id="A", side="BUY", price=100.0, qty=75),
+        _fill(order_id="B", side="SELL", price=110.0, qty=30),
+        _fill(order_id="C", side="SELL", price=112.0, qty=45),
+    ]
+    pairs = pair_fills(fills)
+    assert len(pairs) == 2
+    assert pairs[0]["quantity"] == 30
+    assert pairs[0]["pnl"] == (110.0 - 100.0) * 30
+    assert pairs[1]["quantity"] == 45
+    assert pairs[1]["pnl"] == (112.0 - 100.0) * 45
+    # The remainder came from the SAME entry fill (A), FIFO-preserved.
+    assert pairs[1]["entry_fill"]["order_id"] == "A"
+
+
+def test_pair_fills_remainder_carries_to_next_opposite() -> None:
+    """F-KNOW-005: an oversized close re-queues its own remainder short.
+
+    The 100-qty SELL closes the 75-qty BUY and leaves a 25-qty short that the
+    next BUY must close — under the old code the 25-qty remainder vanished.
+    """
+    fills = [
+        _fill(order_id="A", side="BUY", price=100.0, qty=75),
+        _fill(order_id="B", side="SELL", price=110.0, qty=100),
+        _fill(order_id="C", side="BUY", price=108.0, qty=25),
+    ]
+    pairs = pair_fills(fills)
+    assert len(pairs) == 2
+    assert pairs[0]["quantity"] == 75
+    assert pairs[0]["pnl"] == (110.0 - 100.0) * 75
+    assert pairs[1]["quantity"] == 25
+    assert pairs[1]["pnl"] == round((110.0 - 108.0) * 25, 4)  # short close: entry - exit
+    assert pairs[1]["entry_fill"]["order_id"] == "B"
+
+
 from shettyxtreme.core.event_bus.event_bus import Event, Topic
 from shettyxtreme.execution.ledger_recorder import LedgerRecorder
 

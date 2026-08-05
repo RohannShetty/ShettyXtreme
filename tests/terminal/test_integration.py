@@ -51,7 +51,17 @@ def test_settings_redirects(client: TestClient) -> None:
 
 
 def test_oauth_callback_redirects_to_spa(client: TestClient) -> None:
-    resp = client.get("/auth/fyers/callback?auth_code=bogus", follow_redirects=False)
+    # F-AUTH-002: a legitimate callback must echo the state persisted at
+    # start-auth. start-auth is not callable here (no credentials in this
+    # integration harness), so simulate the cookie the real flow sets and
+    # verify the callback still redirects into the SPA.
+    client.cookies.set(
+        "_fyers_oauth_state", "test_state", path="/auth/fyers/callback"
+    )
+    resp = client.get(
+        "/auth/fyers/callback?auth_code=bogus&state=test_state",
+        follow_redirects=False,
+    )
     assert resp.status_code == 307
     location = resp.headers["location"]
     assert location.startswith("/static/")

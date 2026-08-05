@@ -2,6 +2,25 @@
 
 type JsonError = { detail?: unknown; message?: string };
 
+const FETCH_TIMEOUT_MS = 10000;
+
+/** fetch with an AbortController deadline. A stalled request aborts after
+ *  FETCH_TIMEOUT_MS instead of hanging forever (in-flight requests used to
+ *  pile up); the caller maps the AbortError to "Request timeout". */
+async function fetchWithTimeout(path: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(path, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === "AbortError";
+}
+
 async function describeError(resp: Response): Promise<string> {
   const fallback = `Request to ${resp.url || resp.statusText} failed (HTTP ${resp.status})`;
   try {
@@ -25,8 +44,9 @@ async function request<T>(
 ): Promise<T> {
   let resp: Response;
   try {
-    resp = await fetch(path, { method, credentials: "same-origin", headers });
-  } catch {
+    resp = await fetchWithTimeout(path, { method, credentials: "same-origin", headers });
+  } catch (err) {
+    if (isAbortError(err)) throw new Error("Request timeout");
     throw new Error(`Network error reaching ${path}`);
   }
   if (!resp.ok) {
@@ -46,8 +66,9 @@ export async function post<T>(path: string, headers?: Record<string, string>): P
 export async function del(path: string): Promise<void> {
   let resp: Response;
   try {
-    resp = await fetch(path, { method: "DELETE", credentials: "same-origin" });
-  } catch {
+    resp = await fetchWithTimeout(path, { method: "DELETE", credentials: "same-origin" });
+  } catch (err) {
+    if (isAbortError(err)) throw new Error("Request timeout");
     throw new Error(`Network error reaching ${path}`);
   }
   if (!resp.ok) {
@@ -58,13 +79,14 @@ export async function del(path: string): Promise<void> {
 export async function postBody<T>(path: string, body: unknown): Promise<T> {
   let resp: Response;
   try {
-    resp = await fetch(path, {
+    resp = await fetchWithTimeout(path, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-  } catch {
+  } catch (err) {
+    if (isAbortError(err)) throw new Error("Request timeout");
     throw new Error(`Network error reaching ${path}`);
   }
   if (!resp.ok) {

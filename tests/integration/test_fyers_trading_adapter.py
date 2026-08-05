@@ -19,7 +19,11 @@ from shettyxtreme.core.interfaces.order_executor import (
     OrderType,
     ProductType,
 )
-from shettyxtreme.integration.fyers.client import FyersTokenExpired
+from shettyxtreme.integration.fyers.client import (
+    FyersAPIError,
+    FyersDataEntitlementError,
+    FyersTokenExpired,
+)
 from shettyxtreme.integration.fyers.session import FyersSession
 from shettyxtreme.integration.fyers.trading_adapter import FyersTradingAdapter
 
@@ -368,8 +372,11 @@ class TestLifecycle:
     ) -> None:
         session.token_expiry = datetime.now(UTC) - timedelta(seconds=1)
         assert await adapter.is_connected() is False
-        session.token_expiry = None
+        session.token_expiry = datetime.now(UTC) + timedelta(hours=1)
         assert await adapter.is_connected() is True
+        # Unknown expiry = cannot be proven live = invalid (F-INT-009).
+        session.token_expiry = None
+        assert await adapter.is_connected() is False
 
 
 class TestTokenExpiry:
@@ -382,10 +389,72 @@ class TestTokenExpiry:
         assert result.status == OrderStatus.REJECTED
         assert result.rejected_reason is not None
 
+
+# Account endpoints and the empty payload each degrades to on a transient error.
+_ACCOUNT_ENDPOINTS: dict[str, str] = {
+    "get_positions": "/positions",
+    "get_holdings": "/holdings",
+    "get_order_book": "/orders",
+    "get_trade_book": "/tradebook",
+    "get_margin": "/funds",
+}
+_ACCOUNT_EMPTY: dict[str, Any] = {
+    "get_positions": [],
+    "get_holdings": [],
+    "get_order_book": [],
+    "get_trade_book": [],
+    "get_margin": {},
+}
+
+
+class TestAccountErrorClassification:
+    """F-INT-011 regression: account endpoints must not mask fatal errors.
+
+    Token expiry and the -373 data entitlement used to degrade to ``[]``/``{}``
+    like every other :class:`FyersError`, hiding a dead token or a missing
+    entitlement behind a healthy-looking empty account. Fatal errors now
+    raise (token expiry so re-auth gates fire; -373 with endpoint context);
+    only transient errors (rate limits, API errors) degrade.
+    """
+
+    @pytest.mark.parametrize("method", list(_ACCOUNT_EMPTY))
     @pytest.mark.asyncio
-    async def test_get_positions_returns_empty(
-        self, adapter: FyersTradingAdapter, client: AsyncMock
+    async def test_token_expiry_raises(
+        self, adapter: FyersTradingAdapter, client: AsyncMock, method: str
     ) -> None:
         client.get = AsyncMock(side_effect=FyersTokenExpired("token expired"))
-        assert await adapter.get_positions() == []
-        assert await adapter.get_margin() == {}
+        with pytest.raises(FyersTokenExpired):
+            await getattr(adapter, method)()
+
+    @pytest.mark.parametrize("method", list(_ACCOUNT_EMPTY))
+    @pytest.mark.asyncio
+    async def test_entitlement_raises_with_context(
+        self, adapter: FyersTradingAdapter, client: AsyncMock, method: str
+    ) -> None:
+        client.get = AsyncMock(
+            side_effect=FyersDataEntitlementError(
+                "App lacks the Fyers data entitlement (403/-373)",
+                code=-373,
+                status_code=403,
+            )
+        )
+        with pytest.raises(FyersDataEntitlementError) as excinfo:
+            await getattr(adapter, method)()
+        assert excinfo.value.code == -373
+        # The endpoint context is attached so the operator sees which call
+        # cannot run without the entitlement.
+        assert _ACCOUNT_ENDPOINTS[method] in str(excinfo.value)
+
+    @pytest.mark.parametrize("method,empty", list(_ACCOUNT_EMPTY.items()))
+    @pytest.mark.asyncio
+    async def test_other_errors_degrade(
+        self,
+        adapter: FyersTradingAdapter,
+        client: AsyncMock,
+        method: str,
+        empty: Any,
+    ) -> None:
+        client.get = AsyncMock(
+            side_effect=FyersAPIError("boom", code=-99, status_code=500)
+        )
+        assert await getattr(adapter, method)() == empty

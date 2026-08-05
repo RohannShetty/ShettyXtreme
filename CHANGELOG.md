@@ -1,5 +1,28 @@
 # ShettyXtreme Changelog
 
+## [2026-08-05] — v0.13.0: Phase 3 Cockpit Redesign + Phase 4 Lane A Quick Wins
+
+Suite: **1051 passed / 0 failed / 0 skipped** (was 1016 at Lane A start). Phase 3: full cockpit UI redesign (commit `516b60d`) — pure black `#0a0a0a`/white palette with warm amber accent (Indian price convention preserved: red=up `#f6525c`, green=down `#2ebd85`), live WS streaming + keyboard nav across all panels. Phase 4 Lane A: six execution/security quick wins with regression tests.
+
+### Added (Phase 3 cockpit redesign)
+- Shell layout with right-col overlay drawer <1440px, header LTP hero, styled positions/risk strip (S1).
+- Watchlist STALE chips + tick flash, ChainGrid live WS streaming + keyboard navigation (S2).
+- ProposalQueue OBSERVER prominence + LIVE typed-confirm, ModeSwitcher `Ctrl+M` (S4).
+- Scanner/Hints/Analytics regime badges + conviction levels + STALE chips (S5).
+- Research/Knowledge/Settings/Logs toggle switches + keyboard nav (S6).
+
+### Fixed (Phase 4 Lane A quick wins)
+- **F-TERM-007**: legacy `POST /api/postback/dhan` now requires `Authorization: Bearer <stored Fyers access token>` — arbitrary unauthenticated payloads can no longer mint `ORDER_UPDATED` events into the ledger (401 without/with wrong token).
+- **F-AUTH-002**: OAuth login CSRF closed — `start_auth` persists the `state` in an HttpOnly, Lax-samesite cookie scoped to the callback path; `fyers_callback` rejects missing/mismatched state with 400 before exchanging the auth code.
+- **F-EXEC-004**: paper MARKET orders now fill at the last LTP from the data feed instead of `order.price` (0.0); without an LTP the order is rejected honestly — no more poisoned paper P&L / learning data.
+- **F-CORE-003**: `PaperTradingEngine.get_pnl()` no longer raises `AttributeError` on the first fill (`Fill` carries no `pnl` field — guarded with `getattr`).
+- **F-TERM-006**: weekday before 09:15 now reports "Market opens at 09:15 today" instead of "opens tomorrow".
+- **F-KNOW-005**: `pair_fills` re-queues partial-fill remainders (FIFO preserved) instead of dropping them — a 30-qty close against a 75-qty entry leaves 45 queued for the next fill.
+- **Version drift**: all five version files aligned to 0.13.0 (`__init__.py`, `app.py`, `pyproject.toml`, frontend `package.json`, `CHANGELOG.md`).
+
+### Known
+- Frontend bundle unchanged this release — the Phase 3 redesign bundle was committed in `516b60d`; Phase 4 Lane A is backend-only.
+
 ## [2026-08-05] — v0.12.0: Fyers Migration (Phase 1)
 
 Suite: **1059 passed / 0 failed / 0 skipped**. Broker migration: Dhan → **Fyers** (ADR-008). `integration/dhan/` and `auth/dhan_oauth.py` deleted; `src/` is Dhan-free (grep-gated: zero `dhanhq`/`DhanTrading`/`DhanData` matches). Frozen rules FR-002/FR-003 and BOUNDARY-003 amended; ADR-007 superseded by ADR-008; ARCHITECTURE_V2 §11 rewritten as Fyers Integration.

@@ -125,7 +125,23 @@ class MaxPositionFilter:
 
 
 class RegimeFilter:
-    """Blocks entry if regime is incompatible with the signal direction."""
+    """Regime gating filter — currently an HONEST STUB.
+
+    Neither ``Signal`` nor ``Portfolio`` carries the market regime, so the
+    risk filter chain has no regime source to gate on. Real regime data is
+    computed in the live pipeline by ``intelligence/regime/regime_classifier``
+    and delivered to subscribers via the ``regime.changed`` EventBus event
+    (see ``intelligence/regime/bus_bridge.py``) — not through ``check()``.
+
+    Until regime data is plumbed into the risk chain, this filter returns a
+    neutral ALLOW with an explicit stub marker so callers and audit trails can
+    see that no regime gating occurred. Do not silently drop it from the
+    chain — it keeps the ``RiskFilter`` protocol uniform and the audit trail
+    complete, and the ``is_stub`` flag makes its no-op nature explicit.
+    """
+
+    #: Explicit marker: this filter performs no regime gating yet.
+    is_stub = True
 
     def __init__(self, allowed_regimes: list[str] | None = None) -> None:
         if allowed_regimes is None:
@@ -135,7 +151,13 @@ class RegimeFilter:
     name = "regime"
 
     def check(self, signal: Signal, portfolio: Portfolio) -> RiskDecision:
-        return RiskDecision.allow(self.name)
+        # Honest stub: no regime source in the risk chain. Neutral ALLOW with
+        # an explicit marker; see the class docstring for the rationale.
+        return RiskDecision(
+            allowed=True,
+            reason="stub: no regime source in risk chain — neutral",
+            filter_name=self.name,
+        )
 
 
 # ---------------------------------------------------------------------------

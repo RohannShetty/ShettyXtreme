@@ -50,7 +50,12 @@ def _get_market_session(ist: datetime) -> tuple[str, str, str]:
     if 15.5 <= time_decimal < 16.0:
         return "post_close", "Post-close window ends at 16:00", ist.replace(hour=16, minute=0, second=0).isoformat()
 
-    # Closed
+    # Closed: a weekday before the pre-open window still opens TODAY at 9:15;
+    # only after the close (or on weekends) does the next session land on a
+    # later day (F-TERM-006).
+    if weekday < 5 and time_decimal < 9.15:
+        next_open = ist.replace(hour=9, minute=15, second=0, microsecond=0)
+        return "closed", "Market opens at 09:15 today", next_open.isoformat()
     next_day = ist + timedelta(days=1)
     if weekday == 4:  # Friday after close → Monday
         next_day = ist + timedelta(days=3)

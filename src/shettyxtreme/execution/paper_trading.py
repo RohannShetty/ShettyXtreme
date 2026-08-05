@@ -95,7 +95,9 @@ class PaperTradingEngine:
     def get_pnl(self) -> dict[str, Any]:
         """Return P&L summary dict."""
         self._recalculate_pnl()
-        realised = sum(t.pnl or 0.0 for t in self._fills)
+        # F-CORE-003: Fill carries no pnl field — guard with getattr so the
+        # first fill (non-empty _fills) does not raise AttributeError.
+        realised = sum(getattr(t, "pnl", None) or 0.0 for t in self._fills)
         unrealised = 0.0
         for pos in self._positions.values():
             ltp = self._ltp_cache.get(pos.symbol)
@@ -150,9 +152,27 @@ class PaperTradingEngine:
 
     async def _fill_order(self, order: Order) -> OrderResult:
         """Fill an order and update positions."""
+        fill_price = order.price
+        if order.order_type == "MARKET":
+            # F-EXEC-004: a MARKET order fills at the last traded price, not
+            # the order's (zero) limit price. No LTP yet → reject honestly;
+            # filling at 0.0 would poison paper P&L and learning data.
+            ltp = self._ltp_cache.get(order.symbol)
+            if ltp is None or ltp <= 0:
+                order.status = "REJECTED"
+                result = OrderResult(
+                    order_id=order.order_id, status="REJECTED",
+                    message=f"MARKET order rejected: no LTP available for {order.symbol}",
+                )
+                await self._emit_order_rejected(result, order.symbol)
+                return result
+            fill_price = ltp
+            # The fill price drives positions/events downstream — record it on
+            # the order so _update_positions and broadcasts use the real price.
+            order.price = fill_price
         order.status = "FILLED"
         order.filled_quantity = order.quantity
-        order.average_price = order.price
+        order.average_price = fill_price
         now = datetime.now(UTC)
         self._trade_seq += 1
         fill = Fill(
@@ -162,7 +182,7 @@ class PaperTradingEngine:
             exchange=order.exchange,
             side=order.side,
             quantity=order.quantity,
-            price=order.price,
+            price=fill_price,
             timestamp=now,
             order_tag=order.tag,
         )

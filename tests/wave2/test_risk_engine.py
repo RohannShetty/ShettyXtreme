@@ -6,7 +6,7 @@ import pytest
 from shettyxtreme.core.data_models import Position
 from shettyxtreme.intelligence.risk import (
     RiskEngine, RiskDecision, Portfolio,
-    LossLimitFilter, MarginFilter, MaxPositionFilter,
+    LossLimitFilter, MarginFilter, MaxPositionFilter, RegimeFilter,
 )
 from shettyxtreme.intelligence.signals.signal_engine import (
     Signal, SignalDirection, Vote,
@@ -128,6 +128,26 @@ class TestMaxPositionFilter:
         ]
         portfolio = _make_portfolio(positions=positions)
         decision = engine.check_entry(signal, portfolio)
+        assert decision.allowed
+
+
+# ---------------------------------------------------------------------------
+# Regime — honest stub (F-INTEL-004)
+# ---------------------------------------------------------------------------
+class TestRegimeFilter:
+    def test_regime_filter_is_honest_stub(self) -> None:
+        """RegimeFilter must NOT silently pass — neutral ALLOW with a stub marker."""
+        filt = RegimeFilter()
+        assert filt.is_stub is True
+        decision = filt.check(_make_signal(), _make_portfolio())
+        assert decision.allowed
+        assert decision.filter_name == "regime"
+        assert "stub" in decision.reason
+
+    def test_regime_filter_does_not_block_engine_entry(self) -> None:
+        """The default engine chain (which includes RegimeFilter) still ALLOWs."""
+        engine = RiskEngine()
+        decision = engine.check_entry(_make_signal(), _make_portfolio())
         assert decision.allowed
 
 

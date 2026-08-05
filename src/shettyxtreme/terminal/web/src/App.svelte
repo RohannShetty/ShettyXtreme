@@ -291,17 +291,5 @@
     .drawer-head {
       display: flex;
     }
-    /* LogDrawer self-overlays below 1440px; dock it inside the right dock
-       instead so the two never fight for the viewport edge. */
-    .right-col :global(.drawer) {
-      position: static !important;
-      transform: none !important;
-      width: auto !important;
-      min-width: 0 !important;
-      background: var(--surface-overlay) !important;
-      border-left: none !important;
-      border-radius: 0 !important;
-      transition: none !important;
-    }
   }
 </style>

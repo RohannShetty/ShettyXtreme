@@ -141,9 +141,10 @@ def test_fyers_callback_success() -> None:
         "/auth/credentials",
         json={"app_id": "APP123", "secret_id": "SECRET456"},
     )
+    state = client.post("/auth/start-auth").json()["state"]
 
     resp = client.get(
-        "/auth/fyers/callback?auth_code=code_jwt&user_id=FY123&state=state123"
+        f"/auth/fyers/callback?auth_code=code_jwt&user_id=FY123&state={state}"
     )
     assert resp.status_code == 307
     assert "connected=true" in resp.headers["location"]
@@ -153,6 +154,43 @@ def test_fyers_callback_success() -> None:
     assert store.client_id == "FY123"
     assert store.token_expiry == "2026-12-31T23:59:59+00:00"
     assert store.is_token_valid() is True
+
+
+def test_fyers_callback_state_mismatch_rejected() -> None:
+    """F-AUTH-002: a callback echoing the wrong state is a CSRF attempt → 400."""
+    app = _make_app()
+    client = TestClient(app, follow_redirects=False)
+
+    client.post(
+        "/auth/credentials",
+        json={"app_id": "APP123", "secret_id": "SECRET456"},
+    )
+    client.post("/auth/start-auth")  # persists state cookie
+
+    resp = client.get(
+        "/auth/fyers/callback?auth_code=code_jwt&user_id=FY123&state=WRONG_STATE"
+    )
+    assert resp.status_code == 400
+    assert "state mismatch" in resp.json()["detail"].lower()
+    assert _get_store().access_token is None  # no exchange happened
+
+
+def test_fyers_callback_missing_state_rejected() -> None:
+    """F-AUTH-002: no persisted state (never started auth) → 400."""
+    app = _make_app()
+    client = TestClient(app, follow_redirects=False)
+
+    client.post(
+        "/auth/credentials",
+        json={"app_id": "APP123", "secret_id": "SECRET456"},
+    )
+    # Note: start-auth is deliberately NOT called — no state cookie exists.
+
+    resp = client.get(
+        "/auth/fyers/callback?auth_code=code_jwt&user_id=FY123&state=anything"
+    )
+    assert resp.status_code == 400
+    assert _get_store().access_token is None
 
 
 def test_fyers_callback_triggers_bootstrap(monkeypatch) -> None:
@@ -170,8 +208,9 @@ def test_fyers_callback_triggers_bootstrap(monkeypatch) -> None:
         "/auth/credentials",
         json={"app_id": "APP123", "secret_id": "SECRET456"},
     )
+    state = client.post("/auth/start-auth").json()["state"]
 
-    resp = client.get("/auth/fyers/callback?auth_code=code_jwt&user_id=FY123")
+    resp = client.get(f"/auth/fyers/callback?auth_code=code_jwt&user_id=FY123&state={state}")
     assert resp.status_code == 307
     assert "connected=true" in resp.headers["location"]
     assert calls == ["boot", "boot"]  # credentials save + callback
@@ -189,8 +228,9 @@ def test_fyers_callback_bootstrap_raises_still_connects(monkeypatch) -> None:
         "/auth/credentials",
         json={"app_id": "APP123", "secret_id": "SECRET456"},
     )
+    state = client.post("/auth/start-auth").json()["state"]
 
-    resp = client.get("/auth/fyers/callback?auth_code=code_jwt&user_id=FY123")
+    resp = client.get(f"/auth/fyers/callback?auth_code=code_jwt&user_id=FY123&state={state}")
     assert resp.status_code == 307
     assert "connected=true" in resp.headers["location"]
 
@@ -207,8 +247,9 @@ def test_fyers_callback_failure_redirects_fixed_error() -> None:
         "/auth/credentials",
         json={"app_id": "APP123", "secret_id": "SECRET456"},
     )
+    state = client.post("/auth/start-auth").json()["state"]
 
-    resp = client.get("/auth/fyers/callback?auth_code=bad_code&user_id=FY123")
+    resp = client.get(f"/auth/fyers/callback?auth_code=bad_code&user_id=FY123&state={state}")
     assert resp.status_code == 307
     location = resp.headers["location"]
     assert "error=Authentication+failed" in location

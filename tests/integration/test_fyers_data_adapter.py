@@ -53,7 +53,14 @@ class _FakeDataSocket:
 
 @pytest.fixture
 def session() -> FyersSession:
-    return FyersSession(app_id=APP_ID, secret_id=SECRET, access_token=TOKEN)
+    # Future expiry so the session is provably live (F-INT-009: unknown
+    # expiry is treated as expired, so fixtures must carry a real one).
+    return FyersSession(
+        app_id=APP_ID,
+        secret_id=SECRET,
+        access_token=TOKEN,
+        token_expiry=datetime.now(UTC) + timedelta(hours=1),
+    )
 
 
 @pytest.fixture
@@ -309,6 +316,14 @@ class TestAvailabilityAndLifecycle:
         self, adapter: FyersDataAdapter, session: FyersSession
     ) -> None:
         session.token_expiry = datetime.now(UTC) - timedelta(seconds=1)
+        assert await adapter.is_available() is False
+
+    @pytest.mark.asyncio
+    async def test_is_available_false_when_expiry_unknown(
+        self, adapter: FyersDataAdapter, session: FyersSession
+    ) -> None:
+        """F-INT-009: an unverifiable (unknown-expiry) token is not available."""
+        session.token_expiry = None
         assert await adapter.is_available() is False
 
     @pytest.mark.asyncio

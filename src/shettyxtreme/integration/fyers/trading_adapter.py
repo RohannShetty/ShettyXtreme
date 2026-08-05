@@ -29,6 +29,7 @@ from shettyxtreme.core.interfaces.order_executor import (
     OrderType,
 )
 from shettyxtreme.integration.fyers.client import (
+    FyersDataEntitlementError,
     FyersError,
     FyersHTTPClient,
     FyersTokenExpired,
@@ -247,6 +248,31 @@ class FyersTradingAdapter:
                 return entry
         return None
 
+    @staticmethod
+    def _raise_fatal_account_error(exc: FyersError, endpoint: str) -> None:
+        """Re-raise fatal account-endpoint failures; let everything else degrade.
+
+        Account endpoints used to swallow every :class:`FyersError` and return
+        an empty payload, which masked a dead token (:class:`FyersTokenExpired`)
+        and a missing data entitlement (:class:`FyersDataEntitlementError`, code
+        -373 — the Dhan-806 twin) behind a healthy-looking empty account. Those
+        two must surface (F-INT-011):
+
+        - token expiry re-raises so the upstream re-auth gates fire;
+        - the -373 entitlement re-raises with endpoint context so the operator
+          sees the app cannot read account data without the entitlement.
+
+        Rate limits and transient API errors still degrade to ``[]``/``{}``.
+        """
+        if isinstance(exc, FyersDataEntitlementError):
+            raise FyersDataEntitlementError(
+                f"{exc.message} — {endpoint} (code {exc.code})",
+                code=exc.code,
+                status_code=exc.status_code,
+            ) from exc
+        if isinstance(exc, FyersTokenExpired):
+            raise exc
+
     # ------------------------------------------------------------------ OrderExecutor
 
     async def place_order(self, order: Order) -> OrderResult:
@@ -300,6 +326,7 @@ class FyersTradingAdapter:
             resp = await self._client.get("/positions")
         except FyersError as exc:
             logger.warning("Fyers get_positions failed: %s", exc)
+            self._raise_fatal_account_error(exc, "GET /positions")
             return []
         raw = resp.get("netPositions", []) if isinstance(resp, dict) else []
         positions: list[Position] = []
@@ -331,6 +358,7 @@ class FyersTradingAdapter:
             resp = await self._client.get("/holdings")
         except FyersError as exc:
             logger.warning("Fyers get_holdings failed: %s", exc)
+            self._raise_fatal_account_error(exc, "GET /holdings")
             return []
         raw = resp.get("holdings", []) if isinstance(resp, dict) else []
         holdings: list[Holding] = []
@@ -358,6 +386,7 @@ class FyersTradingAdapter:
             resp = await self._client.get("/orders")
         except FyersError as exc:
             logger.warning("Fyers get_order_book failed: %s", exc)
+            self._raise_fatal_account_error(exc, "GET /orders")
             return []
         raw = resp.get("orderBook", []) if isinstance(resp, dict) else []
         orders: list[OrderBook] = []
@@ -385,6 +414,7 @@ class FyersTradingAdapter:
             resp = await self._client.get("/tradebook")
         except FyersError as exc:
             logger.warning("Fyers get_trade_book failed: %s", exc)
+            self._raise_fatal_account_error(exc, "GET /tradebook")
             return []
         if not isinstance(resp, dict):
             return []
@@ -397,6 +427,7 @@ class FyersTradingAdapter:
             resp = await self._client.get("/funds")
         except FyersError as exc:
             logger.warning("Fyers get_margin failed: %s", exc)
+            self._raise_fatal_account_error(exc, "GET /funds")
             return {}
         fund_limit = resp.get("fund_limit", []) if isinstance(resp, dict) else []
 

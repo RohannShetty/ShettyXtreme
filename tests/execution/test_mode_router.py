@@ -237,3 +237,31 @@ async def test_modify_unknown_mode_rejected() -> None:
 
     assert result.status == OrderStatus.REJECTED
     assert "unknown execution mode" in result.message
+
+
+# ── place_order: LIVE session gate on unknown expiry (F-INT-009) ───────────
+
+@pytest.mark.asyncio
+async def test_live_place_blocked_when_session_expiry_unknown() -> None:
+    """F-INT-009 regression: unknown token expiry gates LIVE placement.
+
+    Fyers does not publish a token TTL, so a session without a recorded
+    expiry cannot be proven live. The session-validity gate must treat it as
+    expired and force re-auth instead of waving the order through to the
+    broker — this is what makes the LIVE gate honest. Uses the real
+    FyersTradingAdapter so the gate is exercised end-to-end, not via a fake.
+    """
+    from shettyxtreme.integration.fyers.session import FyersSession
+    from shettyxtreme.integration.fyers.trading_adapter import FyersTradingAdapter
+
+    session = FyersSession(app_id="APP", secret_id="SEC", access_token="TOK")
+    assert session.token_expiry is None
+    live = FyersTradingAdapter(
+        session=session, client=AsyncMock(), symbol_resolver=None
+    )
+    router = _make_router(mode="LIVE", live=live)
+
+    result = await router.place_order(_order())
+
+    assert result.status == OrderStatus.REJECTED
+    assert "re-auth" in result.message

@@ -37,9 +37,16 @@ class TestIsValid:
         session = FyersSession(APP, SECRET, TOKEN, token_expiry=datetime(2099, 1, 1))
         assert session.is_valid() is True
 
-    def test_unknown_expiry_cannot_be_proven_expired(self) -> None:
+    def test_unknown_expiry_is_treated_as_expired(self) -> None:
+        """F-INT-009 regression: an unknown expiry cannot be proven valid.
+
+        Fyers does not publish a TTL; a session without a recorded expiry is
+        treated as expired so the LIVE session-validity gate forces re-auth
+        instead of waving an unverifiable token through.
+        """
         session = FyersSession(APP, SECRET, TOKEN)
-        assert session.is_valid() is True
+        assert session.token_expiry is None
+        assert session.is_valid() is False
 
 
 class TestProbeLiveness:
@@ -104,7 +111,8 @@ class TestPersistLoad:
         loaded = FyersSession.load(store)
         assert loaded is not None
         assert loaded.token_expiry is None
-        assert loaded.is_valid() is True
+        # Unknown expiry = cannot be proven live = treated as expired (F-INT-009).
+        assert loaded.is_valid() is False
 
     def test_persist_load_round_trip_with_fyers_fields(self) -> None:
         """Regression (F2 x F5): persist/load must round-trip the Fyers

@@ -4,8 +4,10 @@ Fyers does not publish its access-token TTL (community "~6 AM IST" claims are
 unverifiable), so the design leans on daily interactive re-auth plus a
 ``GET /profile`` liveness probe as the source of truth.
 
-- :meth:`FyersSession.is_valid` is the cheap expiry check — it only fails when
-  an expiry is known and past. When expiry is unknown it returns True; pair it
+- :meth:`FyersSession.is_valid` is the cheap expiry check — it fails when an
+  expiry is known and past, and also when the expiry is unknown (``None``):
+  a token that cannot be proven live is treated as expired so the LIVE gate
+  forces re-auth instead of waving an unverifiable token through. Pair it
   with :meth:`FyersSession.probe_liveness` for an authoritative answer.
 - :meth:`FyersSession.probe_liveness` calls ``GET /profile``; the transport
   maps HTTP 401 / error codes -8/-15/-16/-17 to :class:`FyersTokenExpired`,
@@ -56,13 +58,19 @@ class FyersSession:
         self.token_expiry = token_expiry
 
     def is_valid(self) -> bool:
-        """Cheap expiry check — True when the token is not known to be expired.
+        """Cheap expiry check — True only when the token is provably live.
 
-        An unknown expiry (``None``) cannot be proven expired, so this returns
-        True; call :meth:`probe_liveness` for the authoritative answer.
+        An unknown expiry (``None``) cannot be proven valid — Fyers does not
+        publish a TTL, so a session without a recorded expiry is treated as
+        expired (force re-auth) rather than waved through. This is what makes
+        the LIVE session-validity gate honest (F-INT-009): an unverifiable
+        token never reaches the wire. The auth flow always records the
+        heuristic expiry on login, so unknown expiry only arises for stale or
+        legacy sessions — exactly the ones that must re-auth. Pair this check
+        with :meth:`probe_liveness` for the authoritative answer.
         """
         if self.token_expiry is None:
-            return True
+            return False
         expiry = self.token_expiry
         if expiry.tzinfo is None:
             expiry = expiry.replace(tzinfo=UTC)

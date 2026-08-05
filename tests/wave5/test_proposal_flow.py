@@ -188,6 +188,10 @@ async def test_approve_paper_routes_to_paper_engine(client: AsyncClient) -> None
     assert proposal["side"] == "BUY"
     assert proposal["symbol"] == "NIFTY"
 
+    # F-EXEC-004: a MARKET order needs a live LTP to fill — simulate the
+    # data feed so the paper engine fills at 18450.0 instead of rejecting.
+    paper._ltp_cache["NIFTY"] = 18450.0
+
     resp = await client.post(f"/api/execution/proposals/{proposal['id']}/approve")
     assert resp.status_code == 200
     data = resp.json()
@@ -200,6 +204,7 @@ async def test_approve_paper_routes_to_paper_engine(client: AsyncClient) -> None
     assert orders[0].symbol == "NIFTY"
     assert orders[0].side == "BUY"
     assert orders[0].status == "FILLED"
+    assert orders[0].average_price == 18450.0  # filled at LTP, not 0.0
 
 
 # ── Approve → LIVE (mocked adapter) ────────────────────────────────────────

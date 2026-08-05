@@ -5,7 +5,7 @@ import asyncio
 import logging
 import secrets
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
@@ -119,7 +119,7 @@ async def save_credentials(body: CredentialBody) -> SaveResult:
 
 
 @router.post("/start-auth", response_model=AuthStartResponse)
-async def start_auth(request: Request) -> AuthStartResponse:
+async def start_auth(request: Request, response: Response) -> AuthStartResponse:
     store = _get_store()
     if not store.app_id:
         raise HTTPException(
@@ -130,6 +130,18 @@ async def start_auth(request: Request) -> AuthStartResponse:
         raise HTTPException(status_code=503, detail="Auth helper not initialised")
     redirect_uri = str(request.base_url).rstrip("/") + "/auth/fyers/callback"
     state = secrets.token_urlsafe(16)
+    # Persist the OAuth state so the callback can verify the redirect really
+    # came from the login we started (F-AUTH-002 — login CSRF). HttpOnly so
+    # page JS can't read it; Lax samesite so the cross-site redirect from the
+    # broker carries it; scoped to the callback path only.
+    response.set_cookie(
+        key="_fyers_oauth_state",
+        value=state,
+        httponly=True,
+        samesite="lax",
+        max_age=600,
+        path="/auth/fyers/callback",
+    )
     login_url = _oauth.generate_auth_url(
         app_id=store.app_id,
         redirect_uri=redirect_uri,
@@ -145,10 +157,25 @@ async def fyers_callback(
     user_id: str | None = None,
     state: str | None = None,
 ) -> RedirectResponse:
+    if not auth_code:
+        logger.debug("Fyers callback missing auth_code (state=%s)", state)
+        return RedirectResponse(url="/static/?error=Authentication+failed#/setup")
+    expected_state = request.cookies.get("_fyers_oauth_state")
+    if (
+        not expected_state
+        or not state
+        or not secrets.compare_digest(state, expected_state)
+    ):
+        # F-AUTH-002: the callback is only legitimate when the redirect echoes
+        # the state we persisted at start-auth. Missing or mismatched → 400
+        # (raised before the try block so the HTTPException is not swallowed
+        # by the broad exchange-failure handler below).
+        logger.warning(
+            "Fyers callback state check failed (received=%s, has_cookie=%s)",
+            bool(state), bool(expected_state),
+        )
+        raise HTTPException(status_code=400, detail="OAuth state mismatch")
     try:
-        if not auth_code:
-            logger.debug("Fyers callback missing auth_code (state=%s)", state)
-            return RedirectResponse(url="/static/?error=Authentication+failed#/setup")
         store = _get_store()
         if _oauth is None:
             return RedirectResponse(url="/static/?error=Authentication+failed#/setup")
@@ -168,7 +195,10 @@ async def fyers_callback(
             await run_terminal_init()
         except Exception:
             logger.exception("terminal data pipeline init after login failed")
-        return RedirectResponse(url="/static/?connected=true#/setup")
+        response = RedirectResponse(url="/static/?connected=true#/setup")
+        # The state is single-use — clear it once the exchange succeeded.
+        response.delete_cookie("_fyers_oauth_state", path="/auth/fyers/callback")
+        return response
 
     except FyersAuthError as exc:
         logger.debug("Fyers OAuth exchange failed: %s", exc)

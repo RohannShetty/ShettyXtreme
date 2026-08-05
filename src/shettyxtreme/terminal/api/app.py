@@ -142,6 +142,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _event_bus = EventBus()
     _event_bus_task = asyncio.create_task(_event_bus.start())
     postback_router.set_event_bus(_event_bus)
+    postback_router.set_credential_store(store)
     _health_monitor = TokenHealthMonitor(store, _event_bus)
     await _health_monitor.start()
 
@@ -474,7 +475,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="ShettyXtreme Terminal",
-    version="0.12.0",
+    version="0.13.0",
     lifespan=lifespan,
 )
 

@@ -14,10 +14,12 @@ bare order dict. Anything that does not carry an order id is ignored.
 from __future__ import annotations
 
 import logging
+import secrets
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
+from shettyxtreme.auth.credential_store import CredentialStore
 from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
 from shettyxtreme.terminal.api.models import PostbackResponse
 
@@ -26,11 +28,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/postback", tags=["postback"])
 
 _event_bus: EventBus | None = None
+_store: CredentialStore | None = None
 
 
 def set_event_bus(bus: EventBus | None) -> None:
     global _event_bus
     _event_bus = bus
+
+
+def set_credential_store(store: CredentialStore | None) -> None:
+    """Bind the credential store used to authenticate legacy postbacks.
+
+    Wired in the app lifespan next to ``set_event_bus``; the store reference
+    is live, so post-login token updates are seen without re-wiring.
+    """
+    global _store
+    _store = store
 
 
 def _order_id(value: Any) -> str:
@@ -103,7 +116,25 @@ async def consume_order_message(message: Any) -> None:
         logger.exception("Fyers order socket message handling failed")
 
 
-@router.post("/dhan", response_model=PostbackResponse)
+def _require_auth(authorization: str | None = Header(default=None)) -> None:
+    """Require the terminal's own Fyers access token (bearer) for the legacy POST.
+
+    The legacy ``/api/postback/dhan`` endpoint mints ORDER_UPDATED events that
+    the ledger recorder treats as real fills (F-TERM-007). Without a gate, any
+    process that can reach this port could inject phantom fills into the paper
+    ledger, P&L, and analytics. The caller must prove it holds the terminal's
+    own stored access token — the same credential that gates trading.
+    """
+    if _store is None or not _store.access_token:
+        raise HTTPException(status_code=401, detail="Postback auth not configured")
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+    if not token or not secrets.compare_digest(token, _store.access_token):
+        raise HTTPException(status_code=401, detail="Invalid bearer token")
+
+
+@router.post("/dhan", response_model=PostbackResponse, dependencies=[Depends(_require_auth)])
 async def handle_legacy_postback(request: Request) -> PostbackResponse:
     """Legacy webhook endpoint — accepts Dhan-era payloads, emits ORDER_UPDATED.
 

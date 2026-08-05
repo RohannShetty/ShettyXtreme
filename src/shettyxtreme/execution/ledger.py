@@ -38,6 +38,10 @@ def pair_fills(fills: list[dict]) -> list[dict]:
     Short (SELL then BUY): pnl = (entry_price - exit_price) * qty.
     Unpaired remainder stays open — no pair emitted.
 
+    Partial fills keep their remainder queued (F-KNOW-005): a 75-qty BUY met
+    by a 30-qty SELL pairs 30 now and leaves 45 of the BUY in the queue to
+    pair against the next SELL, FIFO-order preserved.
+
     Fills without a resolvable symbol are logged at ERROR and excluded
     from pairing: pairing them would phantom-pair cross-symbol fills
     (e.g. a NIFTY buy postback against a BANKNIFTY sell postback).
@@ -55,32 +59,45 @@ def pair_fills(fills: list[dict]) -> list[dict]:
             continue
         by_symbol.setdefault(str(symbol), []).append(fill)
     for group in by_symbol.values():
-        longs: list[dict] = []
-        shorts: list[dict] = []
+        # Each queue entry is (fill, remaining_qty). Remainders are kept at
+        # the head of the queue so FIFO order holds across partial matches.
+        longs: list[tuple[dict, int]] = []
+        shorts: list[tuple[dict, int]] = []
         for fill in group:
             side = str(fill.get("side", "")).upper()
+            qty = int(fill["quantity"])
             if side == "BUY":
-                if shorts:
-                    entry = shorts.pop(0)
-                    qty = min(int(entry["quantity"]), int(fill["quantity"]))
-                    pnl = (float(entry["price"]) - float(fill["price"])) * qty
+                while qty > 0 and shorts:
+                    entry, entry_remaining = shorts[0]
+                    paired = min(entry_remaining, qty)
+                    pnl = (float(entry["price"]) - float(fill["price"])) * paired
                     pairs.append(
                         {"symbol": fill.get("symbol"), "entry_fill": entry,
-                         "exit_fill": fill, "quantity": qty, "pnl": round(pnl, 4)}
+                         "exit_fill": fill, "quantity": paired, "pnl": round(pnl, 4)}
                     )
-                else:
-                    longs.append(fill)
+                    qty -= paired
+                    if entry_remaining > paired:
+                        shorts[0] = (entry, entry_remaining - paired)
+                    else:
+                        shorts.pop(0)
+                if qty > 0:
+                    longs.append((fill, qty))
             elif side == "SELL":
-                if longs:
-                    entry = longs.pop(0)
-                    qty = min(int(entry["quantity"]), int(fill["quantity"]))
-                    pnl = (float(fill["price"]) - float(entry["price"])) * qty
+                while qty > 0 and longs:
+                    entry, entry_remaining = longs[0]
+                    paired = min(entry_remaining, qty)
+                    pnl = (float(fill["price"]) - float(entry["price"])) * paired
                     pairs.append(
                         {"symbol": fill.get("symbol"), "entry_fill": entry,
-                         "exit_fill": fill, "quantity": qty, "pnl": round(pnl, 4)}
+                         "exit_fill": fill, "quantity": paired, "pnl": round(pnl, 4)}
                     )
-                else:
-                    shorts.append(fill)
+                    qty -= paired
+                    if entry_remaining > paired:
+                        longs[0] = (entry, entry_remaining - paired)
+                    else:
+                        longs.pop(0)
+                if qty > 0:
+                    shorts.append((fill, qty))
     return pairs
 
 
