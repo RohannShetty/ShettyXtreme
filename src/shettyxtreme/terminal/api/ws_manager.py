@@ -62,7 +62,14 @@ class WebSocketManager:
         logger.info("WebSocket client connected (%d total)", len(self._connections))
 
     async def disconnect(self, websocket: WebSocket) -> None:
-        """Remove a disconnected WebSocket client."""
+        """Remove a disconnected WebSocket client.
+
+        Idempotent (F-TERM-002): client-drop and server-shutdown paths can
+        race, so a second call for an already-removed connection must be a
+        silent no-op rather than raising ``ValueError`` from ``list.remove``.
+        """
+        if websocket not in self._connections:
+            return
         self._connections.remove(websocket)
         self._topics.pop(websocket, None)
         logger.info("WebSocket client disconnected (%d remain)", len(self._connections))

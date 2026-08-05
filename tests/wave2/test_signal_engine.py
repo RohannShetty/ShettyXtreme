@@ -1,11 +1,13 @@
 """Tests for SignalEngine and Voter plugin system."""
 from __future__ import annotations
 
+import time
 from unittest.mock import MagicMock
 from typing import Any
 
 import pytest
 
+from shettyxtreme.intelligence.features.feature_engine import FeatureEngine
 from shettyxtreme.intelligence.regime import Regime
 from shettyxtreme.intelligence.signals.signal_engine import (
     SignalEngine, SignalDirection, Signal, Vote,
@@ -234,3 +236,50 @@ class TestSignalPathWiring:
     def test_dpg_defaults_when_no_voters(self) -> None:
         sig = self.engine.compute_signal()
         assert sig.D == 0.0 and sig.P == 1.0 and sig.G == "contested"
+
+
+# ---------------------------------------------------------------------------
+# F-INTEL-006: stale feature data must not produce fresh-looking signals
+# ---------------------------------------------------------------------------
+class TestStaleSignalGuard:
+    """Signals computed from stale feature snapshots are skipped + flagged."""
+
+    def _engine(self, last_update: float) -> SignalEngine:
+        fe = FeatureEngine(event_bus=MagicMock())
+        fe.last_update = last_update
+        engine = SignalEngine(feature_engine=fe, max_age_seconds=60.0)
+        engine.register_voter("u", lambda f: Vote(1.0, 0.8, 1.0, "u"))
+        return engine
+
+    def test_fresh_features_produce_non_stale_signal(self) -> None:
+        """Fresh data (within max_age_seconds) computes a normal signal."""
+        engine = self._engine(last_update=time.time())
+        sig = engine.compute_signal()
+        assert sig.stale is False
+        assert sig.direction == SignalDirection.UP
+        assert sig.conviction > 0
+        assert len(sig.voters) == 1
+
+    def test_stale_features_produce_stale_neutral_signal(self) -> None:
+        """Data older than max_age_seconds → computation skipped, stale=True."""
+        engine = self._engine(last_update=time.time() - 120.0)
+        sig = engine.compute_signal()
+        assert sig.stale is True
+        assert sig.direction == SignalDirection.NEUTRAL
+        assert sig.conviction == 0.0
+        assert sig.voters == []  # voters were not consulted
+
+    def test_no_data_yet_is_stale(self) -> None:
+        """A FeatureEngine that never saw a fresh tick is stale."""
+        engine = self._engine(last_update=0.0)
+        sig = engine.compute_signal()
+        assert sig.stale is True
+        assert sig.direction == SignalDirection.NEUTRAL
+
+    def test_mock_feature_engine_without_freshness_tracking_is_fresh(self) -> None:
+        """Test doubles without ``last_update`` keep legacy behavior."""
+        engine = SignalEngine(feature_engine=MagicMock(features={}), max_age_seconds=60.0)
+        engine.register_voter("u", lambda f: Vote(1.0, 0.8, 1.0, "u"))
+        sig = engine.compute_signal()
+        assert sig.stale is False
+        assert sig.direction == SignalDirection.UP

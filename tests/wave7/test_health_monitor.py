@@ -351,3 +351,76 @@ async def test_premarket_probe_runs_once_per_day(bus: EventBus) -> None:
 
     assert len(warnings) == 1
     assert client.get.await_count == 1
+
+
+# ── F-AUTH-001: probe must use the stored credentials ───────────────────────
+
+@pytest.mark.asyncio
+async def test_premarket_probe_uses_credentialed_client_when_available(
+    bus: EventBus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pre-market liveness probe must probe WITH the stored credentials.
+
+    Regression: ``TokenHealthMonitor.__init__`` defaulted ``_http_client`` to
+    a credential-less ``FyersHTTPClient()``, so ``self._http_client or
+    FyersHTTPClient(app_id, access_token)`` always picked the credential-less
+    client — a false 'TOKEN EXPIRED' alarm fired every morning before market
+    open even with valid credentials.
+    """
+    created: list[tuple[str, str | None]] = []
+
+    class RecordingClient:
+        def __init__(self, app_id: str = "", access_token: str | None = None) -> None:
+            created.append((app_id, access_token))
+
+        async def get(self, path: str) -> dict:
+            return {"s": "ok"}
+
+    monkeypatch.setattr("shettyxtreme.auth.health_monitor.FyersHTTPClient", RecordingClient)
+
+    monitor = TokenHealthMonitor(credential_store=FakeFyersStore(), event_bus=bus)
+
+    await monitor._maybe_premarket_probe(now=_ist_time(8, 46))
+
+    assert created == [("APP123", "tok_probe")]
+
+
+@pytest.mark.asyncio
+async def test_premarket_probe_skips_when_no_token(
+    bus: EventBus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a stored token the probe constructs no client and publishes
+    no (false) expiry warning — the credential-less fallback path."""
+    class NoTokenStore:
+        app_id = "APP123"
+        access_token = None
+
+    built: list[tuple[str, str | None]] = []
+
+    class RecordingClient:
+        def __init__(self, app_id: str = "", access_token: str | None = None) -> None:
+            built.append((app_id, access_token))
+
+        async def get(self, path: str) -> dict:
+            return {"s": "ok"}
+
+    monkeypatch.setattr("shettyxtreme.auth.health_monitor.FyersHTTPClient", RecordingClient)
+
+    warnings: list[Event] = []
+
+    async def handler(event: Event) -> None:
+        warnings.append(event)
+
+    bus.subscribe(Topic.CREDENTIAL_WARNING, handler)
+
+    monitor = TokenHealthMonitor(credential_store=NoTokenStore(), event_bus=bus)
+
+    await monitor._maybe_premarket_probe(now=_ist_time(8, 46))
+
+    task = asyncio.create_task(bus.start())
+    await asyncio.sleep(0.05)
+    await bus.stop()
+    await task
+
+    assert built == []
+    assert warnings == []

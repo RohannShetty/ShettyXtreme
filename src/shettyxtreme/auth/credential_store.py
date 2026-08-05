@@ -3,6 +3,16 @@
 Stores credentials at ~/.shettyxtreme/credentials.enc using Fernet encryption.
 Key derived from machine-specific identifier (hostname + username).
 
+Key-derivation audit (Oracle #5, 2026-08-05): the encryption key is NOT a
+static fallback and NOT a hardware secret. It is derived per machine as
+``urlsafe_b64encode(sha256(hostname + username).digest())`` — machine-bound
+in practice (different host/user derive different keys, so the ciphertext is
+not portable) and deterministic per machine (saves survive restarts). Two
+known limitations, both accepted for a local single-workstation tool:
+    * hostname+username is guessable, so an attacker holding the ciphertext
+      could brute-force the key offline — no DPAPI/TPM binding;
+    * two machines with identical hostname AND username would share a key.
+
 Fyers uses a single-token model: one access token minted per OAuth
 authorization-code exchange, valid for the day. There is no separate data
 token and no JWT parsing — the client id comes from the OAuth redirect

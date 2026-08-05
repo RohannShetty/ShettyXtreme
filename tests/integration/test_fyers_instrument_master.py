@@ -1,16 +1,26 @@
 """F1 — Fyers instrument master (SQLite) tests.
 
 Exercises download->store (refresh with an injected fetcher), lookup,
-search, URL-encoded lookups, and failure isolation.
+search, URL-encoded lookups, failure isolation, and the F-INT-008 staleness
+gate (refresh when stale, skip when fresh).
 """
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 from shettyxtreme.integration.fyers.instrument_master import FyersInstrumentMaster
 
 from .conftest import MASTER_FIXTURE, fyers_epoch, fyers_row
+
+
+def _fake_master_get(url: str) -> bytes:
+    """Default fetcher: serve a small one-row master for any URL."""
+    if url.endswith("NSE_CM_sym_master.json"):
+        return json.dumps(
+            {"NSE:SBIN-EQ": fyers_row("NSE:SBIN-EQ", series="EQ")}
+        ).encode("utf-8")
+    return b"{}"
 
 
 class TestInstrumentMaster:
@@ -108,5 +118,115 @@ class TestInstrumentMaster:
         try:
             assert (tmp_path / "data" / "fyers_instruments.db").exists()
             assert db.count_instruments() == 0
+        finally:
+            db.close()
+
+
+class TestInstrumentMasterStaleness:
+    """F-INT-008 — the mirror refreshes when stale and skips when fresh."""
+
+    def test_needs_refresh_when_empty(self, tmp_path) -> None:
+        db = FyersInstrumentMaster(db_path=str(tmp_path / "f.db"))
+        try:
+            assert db.needs_refresh() is True
+        finally:
+            db.close()
+
+    def test_needs_refresh_false_when_fresh(self, tmp_path) -> None:
+        db = FyersInstrumentMaster(db_path=str(tmp_path / "f.db"), masters=("NSE_CM",))
+        try:
+            db.refresh(http_get=_fake_master_get)
+            assert db.count_instruments() == 1
+            assert db.last_refreshed() is not None
+            assert db.needs_refresh() is False
+        finally:
+            db.close()
+
+    def test_needs_refresh_true_when_stale(self, tmp_path) -> None:
+        db = FyersInstrumentMaster(db_path=str(tmp_path / "f.db"), masters=("NSE_CM",))
+        try:
+            db.refresh(http_get=_fake_master_get)
+            # Backdate the refresh stamp past the 24h default threshold.
+            db._set_meta(
+                "last_refreshed",
+                (datetime.now(UTC) - timedelta(hours=25)).isoformat(),
+            )
+            assert db.needs_refresh() is True
+            assert db.needs_refresh(max_age_hours=48) is False
+        finally:
+            db.close()
+
+    def test_needs_refresh_true_with_zero_max_age(self, tmp_path) -> None:
+        db = FyersInstrumentMaster(
+            db_path=str(tmp_path / "f.db"), masters=("NSE_CM",), max_age_hours=0
+        )
+        try:
+            db.refresh(http_get=_fake_master_get)
+            # Any elapsed time > 0 makes a 0h threshold stale.
+            assert db.needs_refresh() is True
+        finally:
+            db.close()
+
+    def test_needs_refresh_true_when_timestamp_missing(self, tmp_path) -> None:
+        """A populated pre-F-INT-008 DB (rows, no stamp) self-heals."""
+        db = FyersInstrumentMaster(db_path=str(tmp_path / "f.db"))
+        try:
+            db._upsert_master(MASTER_FIXTURE)
+            assert db.count_instruments() > 0
+            assert db.last_refreshed() is None
+            assert db.needs_refresh() is True
+        finally:
+            db.close()
+
+    def test_failed_refresh_does_not_reset_clock(self, tmp_path) -> None:
+        """A total download failure must not stamp last_refreshed — the
+        mirror stays stale and the next bootstrap retries."""
+        db = FyersInstrumentMaster(db_path=str(tmp_path / "f.db"), masters=("BAD",))
+        try:
+            def fail(url: str) -> bytes:
+                raise RuntimeError("connection refused")
+
+            counts = db.refresh(http_get=fail)
+            assert counts == {"BAD": 0}
+            assert db.last_refreshed() is None
+            assert db.needs_refresh() is True
+        finally:
+            db.close()
+
+    def test_ensure_fresh_refreshes_when_stale(self, tmp_path) -> None:
+        db = FyersInstrumentMaster(db_path=str(tmp_path / "f.db"), masters=("NSE_CM",))
+        try:
+            db.refresh(http_get=_fake_master_get)
+            db._set_meta(
+                "last_refreshed",
+                (datetime.now(UTC) - timedelta(hours=25)).isoformat(),
+            )
+            result = db.ensure_fresh(http_get=_fake_master_get)
+            assert result == {"NSE_CM": 1}
+            assert db.needs_refresh() is False
+        finally:
+            db.close()
+
+    def test_ensure_fresh_skips_when_fresh(self, tmp_path) -> None:
+        db = FyersInstrumentMaster(db_path=str(tmp_path / "f.db"), masters=("NSE_CM",))
+        try:
+            db.refresh(http_get=_fake_master_get)
+            calls: list[str] = []
+
+            def spy(url: str) -> bytes:
+                calls.append(url)
+                return _fake_master_get(url)
+
+            assert db.ensure_fresh(http_get=spy) is None
+            assert calls == []  # fresh mirror — no HTTP fetch at all
+        finally:
+            db.close()
+
+    def test_ensure_fresh_populates_empty_db(self, tmp_path) -> None:
+        db = FyersInstrumentMaster(db_path=str(tmp_path / "f.db"), masters=("NSE_CM",))
+        try:
+            result = db.ensure_fresh(http_get=_fake_master_get)
+            assert result == {"NSE_CM": 1}
+            assert db.count_instruments() == 1
         finally:
             db.close()

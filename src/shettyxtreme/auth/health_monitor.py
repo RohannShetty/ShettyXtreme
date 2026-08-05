@@ -36,7 +36,13 @@ class TokenHealthMonitor:
         self._credential_store = credential_store
         self._event_bus = event_bus
         self._cadence_seconds = cadence_seconds
-        self._http_client = http_client or FyersHTTPClient()
+        # No default client: the pre-market probe builds a credentialed
+        # FyersHTTPClient from the store when credentials exist. Eagerly
+        # creating a credential-less client here made ``_http_client or
+        # FyersHTTPClient(app_id, access_token)`` always pick the
+        # credential-less one — a false daily 'TOKEN EXPIRED' alarm
+        # (F-AUTH-001).
+        self._http_client = http_client
         self._task: asyncio.Task | None = None
         self._running: bool = False
         self._last_premarket_probe: date | None = None
@@ -101,10 +107,13 @@ class TokenHealthMonitor:
 
             self._last_premarket_probe = now_ist.date()
             access_token = getattr(self._credential_store, "access_token", None)
-            if not access_token:
+            app_id = getattr(self._credential_store, "app_id", "")
+            # Probe only when there is something real to authenticate with —
+            # otherwise the call is guaranteed to fail and would raise a
+            # false 'TOKEN EXPIRED' alarm every morning (F-AUTH-001).
+            if not access_token or not app_id:
                 return
 
-            app_id = getattr(self._credential_store, "app_id", "")
             client = self._http_client or FyersHTTPClient(
                 app_id=app_id, access_token=access_token
             )

@@ -95,6 +95,19 @@ def _auth_error_socket(code: int) -> type[MockFyersDataSocket]:
     return _AuthErrorSocket
 
 
+class MockTransientAuthSocket(MockFyersDataSocket):
+    """First instance fires a token-expiry error on connect(); later ones
+    are healthy — models a transient fatal error that the app recovers."""
+
+    fired = False
+
+    def connect(self) -> None:
+        super().connect()
+        if not MockTransientAuthSocket.fired:
+            MockTransientAuthSocket.fired = True
+            self.kwargs["on_error"]({"code": 11001, "message": "Invalid Token"})
+
+
 @pytest.fixture(autouse=True)
 def _reset_mock_instances() -> None:
     MockFyersDataSocket.instances.clear()
@@ -246,6 +259,103 @@ class TestSupervisor:
             assert any(
                 "NSE:SBIN-EQ" in syms for syms, _ in instances[1].subscribe_calls
             )
+        finally:
+            await wrapper.disconnect()
+
+
+class TestRecovery:
+    @pytest.mark.asyncio
+    @patch(_PATCH_TARGET, MockTransientAuthSocket)
+    async def test_reconnect_recovers_after_transient_fatal_error(self) -> None:
+        """F-INT-003: a fatal error stops the supervisor and releases its
+        ownership; reconnect() clears the error and brings the socket back."""
+        MockTransientAuthSocket.fired = False
+        wrapper = FyersDataSocketWrapper(
+            APP_ID, TOKEN,
+            restart_base_delay=0.01, restart_max_delay=0.02, jitter_max=0.0,
+        )
+        await wrapper.subscribe(["NSE:SBIN-EQ"])
+        try:
+            await wrapper.connect()
+            await _until(
+                lambda: wrapper.fatal_error is not None,
+                timeout=3.0, msg="fatal error",
+            )
+            # The supervisor must have fully exited and released ownership,
+            # otherwise reconnect() would no-op on a stale _running flag.
+            await _until(
+                lambda: not wrapper._running,
+                timeout=3.0, msg="supervisor stopped",
+            )
+            assert isinstance(wrapper.fatal_error, FyersTokenExpired)
+            assert wrapper._socket is None
+            assert wrapper.connected is False
+
+            await wrapper.reconnect()
+            await _until(
+                lambda: wrapper.connected, timeout=3.0, msg="reconnected",
+            )
+            assert wrapper.fatal_error is None
+            assert wrapper._socket is not None
+            # Outstanding subscriptions re-applied on the fresh socket.
+            assert any(
+                "NSE:SBIN-EQ" in syms for syms, _ in wrapper._socket.subscribe_calls
+            )
+        finally:
+            await wrapper.disconnect()
+
+    @pytest.mark.asyncio
+    @patch(_PATCH_TARGET, MockTransientAuthSocket)
+    async def test_connect_after_fatal_error_restarts_supervisor(self) -> None:
+        """F-INT-003: a plain connect() after a fatal error also recovers —
+        the supervisor releases _running on exit, so connect() restarts."""
+        MockTransientAuthSocket.fired = False
+        wrapper = FyersDataSocketWrapper(
+            APP_ID, TOKEN,
+            restart_base_delay=0.01, restart_max_delay=0.02, jitter_max=0.0,
+        )
+        try:
+            await wrapper.connect()
+            await _until(
+                lambda: not wrapper._running,
+                timeout=3.0, msg="stopped after fatal error",
+            )
+            assert wrapper.fatal_error is not None
+
+            assert await wrapper.connect() is True
+            await _until(
+                lambda: wrapper.connected, timeout=3.0, msg="restarted",
+            )
+            assert wrapper.fatal_error is None
+        finally:
+            await wrapper.disconnect()
+
+
+class TestBackoffReporting:
+    @pytest.mark.asyncio
+    @patch(_PATCH_TARGET, MockDroppingSocket)
+    async def test_connected_false_during_restart_backoff(self) -> None:
+        """F-INT-010: connected is False while the supervisor waits out its
+        restart backoff, and stays False after a local disconnect."""
+        wrapper = FyersDataSocketWrapper(
+            APP_ID, TOKEN,
+            restart_base_delay=1.0, restart_max_delay=1.0, jitter_max=0.0,
+        )
+        try:
+            await wrapper.connect()
+            await _until(
+                lambda: wrapper._reconnecting, timeout=3.0, msg="backoff flag",
+            )
+            assert wrapper.connected is False
+            assert wrapper.restart_attempts >= 1
+            # The dead socket object is retained during backoff — but the
+            # wrapper must not report itself as connected while reconnecting.
+            assert wrapper._socket is not None
+
+            await wrapper.disconnect()
+            assert wrapper._reconnecting is False
+            assert wrapper.connected is False
+            assert wrapper._socket is None
         finally:
             await wrapper.disconnect()
 

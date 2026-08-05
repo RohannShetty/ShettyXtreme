@@ -12,12 +12,18 @@ twin) is Fyers HTTP 403 / error ``-373`` — surfaced as
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from shettyxtreme.integration.fyers.client import FyersDataEntitlementError
+from shettyxtreme.integration.fyers.client import (
+    FyersDataEntitlementError,
+    FyersRateLimitError,
+    FyersTokenExpired,
+)
 from shettyxtreme.terminal.api.models import (
     MarketBar,
     MarketBarsResponse,
@@ -55,6 +61,46 @@ def _ensure_data_entitlement(adapter: Any) -> None:
     """Surface a missing data entitlement as a 503 when the adapter flags it."""
     if getattr(adapter, "entitlement_error", False):
         raise HTTPException(status_code=503, detail=_ENTITLEMENT_MSG)
+
+
+def _adapter_error_response(exc: Exception) -> HTTPException:
+    """Map an adapter transport failure to a structured, non-leaking error.
+
+    Transient failures (network timeout, rate limit) are 503 — the caller
+    can retry. Permanent failures (auth/config, other API errors) are 500.
+    The raw exception text is never exposed to the client (F-TERM-005).
+    """
+    if isinstance(exc, FyersTokenExpired):
+        return HTTPException(
+            status_code=500,
+            detail={
+                "error_code": "auth_failed",
+                "message": "Fyers credentials invalid or expired",
+            },
+        )
+    if isinstance(exc, FyersRateLimitError):
+        return HTTPException(
+            status_code=503,
+            detail={
+                "error_code": "rate_limited",
+                "message": "Fyers rate limit exceeded — retry later",
+            },
+        )
+    if isinstance(exc, (asyncio.TimeoutError, httpx.TransportError)):
+        return HTTPException(
+            status_code=503,
+            detail={
+                "error_code": "upstream_unavailable",
+                "message": "Fyers market data temporarily unavailable — retry later",
+            },
+        )
+    return HTTPException(
+        status_code=500,
+        detail={
+            "error_code": "adapter_error",
+            "message": "Fyers market data request failed",
+        },
+    )
 
 
 def _resolve_symbol(request: Request, symbol: str, exchange: str) -> str | None:
@@ -105,6 +151,10 @@ async def get_market_bars(
         bars = await adapter.get_intraday_bars(resolved, str(tf), days, exchange)
     except FyersDataEntitlementError as exc:
         raise HTTPException(status_code=503, detail=_ENTITLEMENT_MSG) from exc
+    except Exception as exc:
+        raise _adapter_error_response(exc) from exc
+    except Exception as exc:
+        raise _adapter_error_response(exc) from exc
     cap = days * _MAX_BARS_PER_DAY
     result = [
         MarketBar(
@@ -144,6 +194,10 @@ async def get_market_ltp(
             ltp = _as_price(await adapter.get_ltp(resolved))
     except FyersDataEntitlementError as exc:
         raise HTTPException(status_code=503, detail=_ENTITLEMENT_MSG) from exc
+    except Exception as exc:
+        raise _adapter_error_response(exc) from exc
+    except Exception as exc:
+        raise _adapter_error_response(exc) from exc
     if ltp is None:
         raise HTTPException(status_code=502, detail="LTP not found in response")
     return MarketLtpResponse(

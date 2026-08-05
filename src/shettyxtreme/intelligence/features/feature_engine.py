@@ -26,12 +26,22 @@ class FeaturesComputed:
 
 
 class FeatureEngine:
-    def __init__(self, event_bus: EventBus, symbol: str = "UNKNOWN") -> None:
+    def __init__(
+        self,
+        event_bus: EventBus,
+        symbol: str = "UNKNOWN",
+        max_age_seconds: float = STALE_THRESHOLD_SECONDS,
+    ) -> None:
         self.event_bus = event_bus
         self.symbol = symbol
+        self.max_age_seconds = max_age_seconds
         self._indicators: dict[str, Any] = {}
         self._plugins: dict[str, Callable[[Tick], list[Feature]]] = {}
         self.features: dict[str, float] = {}
+        #: Epoch seconds of the last FRESH (non-stale) tick that updated features.
+        #: 0.0 means no fresh data has ever been processed. Consumers (SignalEngine)
+        #: use this to detect stale feature snapshots at their own boundary.
+        self.last_update: float = 0.0
 
     def register(self, name: str, indicator: Any) -> None:
         self._indicators[name] = indicator
@@ -49,7 +59,7 @@ class FeatureEngine:
     async def process_tick(self, tick: Tick) -> None:
         now = time.time()
         tick_ts = tick.timestamp.timestamp() if hasattr(tick.timestamp, 'timestamp') else float(tick.timestamp)
-        stale = (now - tick_ts) > STALE_THRESHOLD_SECONDS
+        stale = (now - tick_ts) > self.max_age_seconds
 
         if stale:
             fc = FeaturesComputed(features={}, stale=True)
@@ -60,6 +70,7 @@ class FeatureEngine:
                     self.features[name] = result
                 elif indicator.value is not None:
                     self.features[name] = indicator.value
+            self.last_update = now
             fc = FeaturesComputed(features=dict(self.features), stale=False)
 
         await self.event_bus.publish(Event(Topic.FEATURES_COMPUTED, fc, source="feature_engine"))

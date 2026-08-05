@@ -93,6 +93,7 @@ class FyersDataSocketWrapper:
         self._stop_event = threading.Event()
         self._disconnected = threading.Event()
         self._running = False
+        self._reconnecting = False
         self._restart_attempt = 0
         self._last_error: Any = None
         self._fatal_error: Exception | None = None
@@ -123,8 +124,12 @@ class FyersDataSocketWrapper:
 
     @property
     def connected(self) -> bool:
-        """True while the supervisor owns a live SDK socket."""
-        return self._socket is not None
+        """True while the supervisor owns a live SDK socket.
+
+        False during reconnect backoff (the supervisor is still running but
+        waiting to rebuild the socket) and after a fatal error / stop.
+        """
+        return self._socket is not None and not self._reconnecting
 
     async def is_connected(self) -> bool:
         """Async protocol view of :attr:`connected` (used by the F4 adapter)."""
@@ -166,6 +171,17 @@ class FyersDataSocketWrapper:
             None, self._supervisor
         )
         return True
+
+    async def reconnect(self) -> bool:
+        """Clear any fatal error and (re)start the supervisor.
+
+        The explicit recovery path after a fatal condition (e.g. the app
+        refreshed an expired token and the supervisor stopped): ``_fatal_error``
+        is cleared and a fresh supervisor is started. No-op when the
+        supervisor is already running.
+        """
+        self._fatal_error = None
+        return await self.connect()
 
     async def disconnect(self) -> None:
         """Stop the supervisor and close the SDK socket (local close)."""
@@ -225,43 +241,62 @@ class FyersDataSocketWrapper:
     # ---- supervisor (runs on the executor thread) ----
 
     def _supervisor(self) -> None:
-        while not self._stop_event.is_set():
-            pending = {
-                dt: list(syms) for dt, syms in self._subscriptions.items() if syms
-            }
-            socket = self._build_socket()
-            self._socket = socket
-            self._disconnected.clear()
-            try:
-                socket.connect()
-            except Exception as exc:
-                self._last_error = exc
-                self._notify_error(exc)
-            else:
-                self._apply_subscriptions(socket, pending)
-                while not self._stop_event.is_set():
-                    if self._disconnected.wait(timeout=0.5):
-                        break
-            if self._stop_event.is_set():
-                break
-            if self._fatal_error is not None:
-                break
-            self._restart_attempt += 1
-            if self._restart_attempt > self._max_restart_attempts:
-                self._fatal_error = FyersError(
-                    "Fyers data socket restart attempts exhausted "
-                    f"({self._max_restart_attempts})"
+        try:
+            while not self._stop_event.is_set():
+                # F-INT-003: each supervisor life starts clean — a stale
+                # fatal error from a previous socket (e.g. a transient token
+                # expiry that the app recovered) must not poison a fresh
+                # connection attempt.
+                self._fatal_error = None
+                pending = {
+                    dt: list(syms) for dt, syms in self._subscriptions.items() if syms
+                }
+                socket = self._build_socket()
+                self._socket = socket
+                self._reconnecting = False
+                self._disconnected.clear()
+                try:
+                    socket.connect()
+                except Exception as exc:
+                    self._last_error = exc
+                    self._notify_error(exc)
+                else:
+                    self._apply_subscriptions(socket, pending)
+                    while not self._stop_event.is_set():
+                        if self._disconnected.wait(timeout=0.5):
+                            break
+                if self._stop_event.is_set():
+                    break
+                if self._fatal_error is not None:
+                    break
+                self._restart_attempt += 1
+                if self._restart_attempt > self._max_restart_attempts:
+                    self._fatal_error = FyersError(
+                        "Fyers data socket restart attempts exhausted "
+                        f"({self._max_restart_attempts})"
+                    )
+                    self._notify_error(self._fatal_error)
+                    break
+                delay = self._restart_delay(self._restart_attempt)
+                logger.warning(
+                    "Fyers data socket dropped — restart %d/%d in %.2fs",
+                    self._restart_attempt, self._max_restart_attempts, delay,
                 )
-                self._notify_error(self._fatal_error)
-                break
-            delay = self._restart_delay(self._restart_attempt)
-            logger.warning(
-                "Fyers data socket dropped — restart %d/%d in %.2fs",
-                self._restart_attempt, self._max_restart_attempts, delay,
-            )
-            if self._stop_event.wait(delay):
-                break
-        self._socket = None
+                # F-INT-010: the previous socket is dead and we are in
+                # backoff — the wrapper must not report itself as connected
+                # while waiting to rebuild the link.
+                self._reconnecting = True
+                if self._stop_event.wait(delay):
+                    break
+        finally:
+            # F-INT-003: release supervisor ownership on exit (fatal error,
+            # exhausted retries, or stop) so a later connect()/reconnect()
+            # actually restarts the supervisor instead of no-op'ing on a
+            # stale _running flag.
+            self._reconnecting = False
+            self._socket = None
+            self._running = False
+            self._supervisor_future = None
 
     def _build_socket_kwargs(self) -> dict[str, Any]:
         """Constructor kwargs for the SDK ``FyersDataSocket``.

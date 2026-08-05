@@ -10,17 +10,23 @@ flag on the adapter.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any, AsyncIterator
 from zoneinfo import ZoneInfo
 
+import httpx
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 import shettyxtreme.terminal.api.market_router as market_router_mod
 from shettyxtreme.core.interfaces.market_data_stream import Bar
-from shettyxtreme.integration.fyers.client import FyersDataEntitlementError
+from shettyxtreme.integration.fyers.client import (
+    FyersDataEntitlementError,
+    FyersRateLimitError,
+    FyersTokenExpired,
+)
 from shettyxtreme.terminal.api.app import app
 
 _TS = datetime(2026, 8, 4, 5, 30, tzinfo=UTC)
@@ -75,6 +81,42 @@ class FakeDataAdapter:
 class RaisingEntitlementAdapter(FakeDataAdapter):
     async def get_intraday_bars(self, symbol, tf, days, exchange):
         raise FyersDataEntitlementError("403")
+
+
+class RaisingAdapter(FakeDataAdapter):
+    """Adapter that raises a fixed exception from every data verb —
+    exercises the router's transport-error classification (F-TERM-005)."""
+
+    def __init__(self, exc: Exception) -> None:
+        super().__init__()
+        self.exc = exc
+
+    async def get_intraday_bars(self, *args: Any, **kwargs: Any) -> list[Bar]:
+        raise self.exc
+
+    async def get_ohlc(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise self.exc
+
+    async def get_ltp(self, *args: Any, **kwargs: Any) -> float:
+        raise self.exc
+
+
+class RaisingAdapter(FakeDataAdapter):
+    """Adapter that raises a fixed exception from every data verb —
+    exercises the router's transport-error classification (F-TERM-005)."""
+
+    def __init__(self, exc: Exception) -> None:
+        super().__init__()
+        self.exc = exc
+
+    async def get_intraday_bars(self, *args: Any, **kwargs: Any) -> list[Bar]:
+        raise self.exc
+
+    async def get_ohlc(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise self.exc
+
+    async def get_ltp(self, *args: Any, **kwargs: Any) -> float:
+        raise self.exc
 
 
 class FakeSymbolResolver:
@@ -252,3 +294,70 @@ async def test_ltp_entitlement_503(client: AsyncClient) -> None:
     assert resp.json()["detail"] == (
         "Data API entitlement missing — subscribe to Data APIs (Fyers 403/-373)"
     )
+
+
+# ── F-TERM-005: adapter transport failures → structured errors ─────────────
+
+@pytest.mark.asyncio
+async def test_bars_network_timeout_503_structured(client: AsyncClient) -> None:
+    """Network timeout is transient → 503 with an error code; the raw
+    httpx exception text must not leak into the response."""
+    app.state.data_adapter = RaisingAdapter(httpx.ConnectTimeout("connect timed out"))
+    resp = await client.get("/api/market/bars?symbol=NIFTY&exchange=NSE_FNO")
+    assert resp.status_code == 503
+    body = resp.json()["detail"]
+    assert body["error_code"] == "upstream_unavailable"
+    assert "Fyers" in body["message"]
+    assert "connect timed out" not in str(resp.json())
+
+
+@pytest.mark.asyncio
+async def test_bars_asyncio_timeout_503_structured(client: AsyncClient) -> None:
+    app.state.data_adapter = RaisingAdapter(asyncio.TimeoutError("slow"))
+    resp = await client.get("/api/market/bars?symbol=NIFTY&exchange=NSE_FNO")
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["error_code"] == "upstream_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_bars_rate_limit_503_structured(client: AsyncClient) -> None:
+    """Rate limit is transient → 503."""
+    app.state.data_adapter = RaisingAdapter(
+        FyersRateLimitError("Fyers rate limit exceeded", code=-429, status_code=429)
+    )
+    resp = await client.get("/api/market/bars?symbol=NIFTY&exchange=NSE_FNO")
+    assert resp.status_code == 503
+    body = resp.json()["detail"]
+    assert body["error_code"] == "rate_limited"
+    assert "retry" in body["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_bars_auth_failure_500_structured(client: AsyncClient) -> None:
+    """Auth failure is permanent → 500 with error code; raw exception hidden."""
+    app.state.data_adapter = RaisingAdapter(FyersTokenExpired("HTTP 401"))
+    resp = await client.get("/api/market/bars?symbol=NIFTY&exchange=NSE_FNO")
+    assert resp.status_code == 500
+    body = resp.json()["detail"]
+    assert body["error_code"] == "auth_failed"
+    assert "HTTP 401" not in str(resp.json())
+
+
+@pytest.mark.asyncio
+async def test_bars_generic_adapter_error_500_structured(client: AsyncClient) -> None:
+    """Unknown adapter failure → structured 500, never the raw exception."""
+    app.state.data_adapter = RaisingAdapter(RuntimeError("boom detail"))
+    resp = await client.get("/api/market/bars?symbol=NIFTY&exchange=NSE_FNO")
+    assert resp.status_code == 500
+    body = resp.json()["detail"]
+    assert body["error_code"] == "adapter_error"
+    assert "boom detail" not in str(resp.json())
+
+
+@pytest.mark.asyncio
+async def test_ltp_transport_timeout_503_structured(client: AsyncClient) -> None:
+    """The /ltp path classifies transport failures the same way."""
+    app.state.data_adapter = RaisingAdapter(httpx.ReadTimeout("read timed out"))
+    resp = await client.get("/api/market/ltp?symbol=NIFTY&exchange=NSE_FNO")
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["error_code"] == "upstream_unavailable"

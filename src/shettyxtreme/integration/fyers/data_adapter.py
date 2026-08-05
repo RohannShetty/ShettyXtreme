@@ -159,7 +159,10 @@ class FyersDataAdapter:
         ``vol_traded_today``, the timestamp is ``last_traded_time`` (epoch
         seconds), bid/ask are flat ``bid_price``/``ask_price`` floats (the SDK
         already applied the price precision), and the previous close is
-        ``prev_close_price``. There is no ``close_price`` in the feed.
+        ``prev_close_price``. There is no ``close_price`` in the feed. Open
+        interest rides the SDK's uppercase ``OI`` key, which only appears on
+        ``data_val`` ticks (F&O / equities) — ``index_val`` ticks omit it, so
+        it defaults to ``None`` when absent.
         """
         if not isinstance(raw, dict):
             return None
@@ -177,6 +180,7 @@ class FyersDataAdapter:
                 parsed = None
         internal = str(parsed.get("internal_symbol", ticker)) if parsed else ticker
         exchange = str(parsed.get("exchange", "")) if parsed else ""
+        raw_oi = raw.get("OI")
         return Tick(
             symbol=internal,
             exchange=exchange,
@@ -189,7 +193,9 @@ class FyersDataAdapter:
             high=_to_float(raw.get("high_price")),
             low=_to_float(raw.get("low_price")),
             close=_to_float(raw.get("prev_close_price")),
-            oi=None,
+            # F-INT-005: the SDK's OI key is uppercase and only present on
+            # data_val (F&O/equity) ticks; index ticks omit it -> None.
+            oi=_to_int(raw_oi) if raw_oi is not None else None,
         )
 
     async def _on_ticks(self, batch: list[Any]) -> None:

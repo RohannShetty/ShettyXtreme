@@ -1,12 +1,14 @@
 """Tests for the idempotent Fyers adapter bootstrap (T1)."""
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 
 import shettyxtreme.terminal.api.terminal_init as terminal_init
+from shettyxtreme.core.event_bus.event_bus import Event, Topic
 from shettyxtreme.terminal.api.terminal_init import (
     init_terminal_adapters,
     run_terminal_init,
@@ -218,6 +220,82 @@ async def test_init_event_bus_missing_returns_false() -> None:
         result = await init_terminal_adapters(app, _FakeStore(), {})
         assert result is False
         assert getattr(app.state, "terminal_initialized", False) is False
+
+
+@pytest.mark.asyncio
+async def test_order_socket_error_and_close_publish_system_status() -> None:
+    """F-INT-004: on_error/on_close on the order socket publish SYSTEM_STATUS
+    events (data_socket_error / data_socket_closed) instead of staying silent."""
+    app = FastAPI()
+    app.state.watchlist_projection = _FakeWatchlist(
+        {"NIFTY": {"exchange": "NSE_FNO", "security_id": "NIFTY"}}
+    )
+    published: list[Event] = []
+
+    class _RecordingBus:
+        async def publish(self, event: Event) -> None:
+            published.append(event)
+
+    app.state.event_bus = _RecordingBus()
+
+    fake_session = MagicMock()
+    fake_session.app_id = "APP123"
+    fake_session.access_token = "tok_abc"
+    fake_client = MagicMock()
+    fake_order_socket = MagicMock()
+    fake_data_socket = MagicMock()
+    fake_trading_cls = MagicMock()
+    fake_data_cls = MagicMock()
+
+    async def _sub(symbols, callback) -> bool:
+        return True
+
+    fake_data_cls.subscribe_ticks = AsyncMock(side_effect=_sub)
+    fake_data_cls.connect = AsyncMock(return_value=True)
+    fake_order_socket.subscribe = AsyncMock(return_value=True)
+    fake_bar_builder = MagicMock()
+    fake_bar_builder.start = AsyncMock()
+
+    with (
+        patch("shettyxtreme.terminal.api.terminal_init._build_session_and_transport",
+              return_value=(fake_session, fake_client)),
+        patch("shettyxtreme.terminal.api.terminal_init.init_instrument_master",
+              return_value=MagicMock()),
+        patch("shettyxtreme.terminal.api.terminal_init.FyersSymbolResolver"),
+        patch("shettyxtreme.terminal.api.terminal_init.FyersOrderSocket",
+              return_value=fake_order_socket),
+        patch("shettyxtreme.terminal.api.terminal_init.FyersDataSocketWrapper",
+              return_value=fake_data_socket),
+        patch("shettyxtreme.terminal.api.terminal_init.FyersTradingAdapter",
+              return_value=fake_trading_cls),
+        patch("shettyxtreme.terminal.api.terminal_init.FyersDataAdapter",
+              return_value=fake_data_cls),
+        patch("shettyxtreme.terminal.api.terminal_init.BarBuilder",
+              return_value=fake_bar_builder),
+        patch("shettyxtreme.terminal.api.terminal_init.TimeSeriesStore"),
+    ):
+        result = await init_terminal_adapters(app, _FakeStore(), {"NIFTY": "NIFTY"})
+        assert result is True
+
+    # Both callbacks must be wired (F-INT-004 regression).
+    assert fake_order_socket.on_error.called
+    assert fake_order_socket.on_close.called
+    error_cb = fake_order_socket.on_error.call_args[0][0]
+    close_cb = fake_order_socket.on_close.call_args[0][0]
+
+    # Driving the error callback publishes {"status": "data_socket_error"}.
+    result = error_cb(RuntimeError("boom"))
+    if asyncio.iscoroutine(result):
+        await result
+    assert published and published[-1].topic is Topic.SYSTEM_STATUS
+    assert published[-1].data == {"status": "data_socket_error", "error": "boom"}
+
+    # Driving the close callback publishes a similar status event.
+    result = close_cb()
+    if asyncio.iscoroutine(result):
+        await result
+    assert published and published[-1].topic is Topic.SYSTEM_STATUS
+    assert published[-1].data == {"status": "data_socket_closed"}
 
 
 @pytest.mark.asyncio

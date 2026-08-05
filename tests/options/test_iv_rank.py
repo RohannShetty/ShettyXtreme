@@ -47,17 +47,17 @@ class TestIVRankCalculator:
     def test_iv_rank_within_bounds(self, calc: IVRankCalculator) -> None:
         """IV rank is always between 0 and 100."""
         calc.record_iv_batch("NIFTY", [0.10, 0.15, 0.20, 0.25, 0.30])
-        result = calc.compute_iv_rank("NIFTY", current_iv=0.20)
+        result = calc.compute_iv_rank_percent("NIFTY", current_iv=0.20)
         assert result is not None
-        assert 0.0 <= result.iv_rank <= 100.0
+        assert 0.0 <= result.iv_rank_percent <= 100.0
         assert 0.0 <= result.iv_percentile <= 100.0
 
     def test_iv_rank_exact_value(self, calc: IVRankCalculator) -> None:
         """IV rank = (current - min) / (max - min) * 100."""
         calc.record_iv_batch("NIFTY", [10.0, 20.0, 30.0])
-        result = calc.compute_iv_rank("NIFTY", current_iv=20.0)
+        result = calc.compute_iv_rank_percent("NIFTY", current_iv=20.0)
         assert result is not None
-        assert result.iv_rank == 50.0  # (20-10)/(30-10)*100 = 50
+        assert result.iv_rank_percent == 50.0  # (20-10)/(30-10)*100 = 50
         assert result.min_iv == 10.0
         assert result.max_iv == 30.0
         assert result.mean_iv == 20.0
@@ -65,48 +65,70 @@ class TestIVRankCalculator:
     def test_iv_rank_at_min(self, calc: IVRankCalculator) -> None:
         """IV rank is 0 when current IV equals min."""
         calc.record_iv_batch("NIFTY", [10.0, 20.0, 30.0])
-        result = calc.compute_iv_rank("NIFTY", current_iv=10.0)
+        result = calc.compute_iv_rank_percent("NIFTY", current_iv=10.0)
         assert result is not None
-        assert result.iv_rank == 0.0
+        assert result.iv_rank_percent == 0.0
         assert result.iv_percentile == pytest.approx(33.33, rel=0.01)
 
     def test_iv_rank_at_max(self, calc: IVRankCalculator) -> None:
         """IV rank is 100 when current IV equals max."""
         calc.record_iv_batch("NIFTY", [10.0, 20.0, 30.0])
-        result = calc.compute_iv_rank("NIFTY", current_iv=30.0)
+        result = calc.compute_iv_rank_percent("NIFTY", current_iv=30.0)
         assert result is not None
-        assert result.iv_rank == 100.0
+        assert result.iv_rank_percent == 100.0
 
     def test_iv_rank_no_current_iv(self, calc: IVRankCalculator) -> None:
         """When no current_iv supplied, uses latest recorded IV."""
         calc.record_iv_batch("NIFTY", [0.10, 0.20, 0.30])
         # Last recorded is 0.30
-        result = calc.compute_iv_rank("NIFTY")
+        result = calc.compute_iv_rank_percent("NIFTY")
         assert result is not None
         assert result.current_iv == 0.30
 
     def test_iv_rank_insufficient_data(self, calc: IVRankCalculator) -> None:
         """Less than 2 data points returns None."""
         calc.record_iv("NIFTY", 0.15)
-        assert calc.compute_iv_rank("NIFTY") is None
+        assert calc.compute_iv_rank_percent("NIFTY") is None
 
     def test_iv_rank_no_data(self, calc: IVRankCalculator) -> None:
         """No data for symbol returns None."""
-        assert calc.compute_iv_rank("UNKNOWN") is None
+        assert calc.compute_iv_rank_percent("UNKNOWN") is None
 
     def test_iv_rank_constant_iv(self, calc: IVRankCalculator) -> None:
         """When all IV values are identical, rank defaults to 50."""
         calc.record_iv_batch("NIFTY", [0.15, 0.15, 0.15, 0.15])
-        result = calc.compute_iv_rank("NIFTY")
+        result = calc.compute_iv_rank_percent("NIFTY")
         assert result is not None
-        assert result.iv_rank == 50.0
+        assert result.iv_rank_percent == 50.0
+
+    # ── Scale unification (F-INTEL-008) ───────────────────────────────
+
+    def test_percent_rank_is_100x_canonical_zero_to_one(self, calc: IVRankCalculator) -> None:
+        """F-INTEL-008: the 0-100 percent rank must equal 100x the canonical
+        0-1 ``intelligence.options.compute_iv_rank`` so callers never mix units."""
+        from shettyxtreme.intelligence.options import compute_iv_rank
+
+        calc.record_iv_batch("NIFTY", [10.0, 20.0, 30.0])
+        for current in (10.0, 20.0, 30.0, 15.0):
+            result = calc.compute_iv_rank_percent("NIFTY", current_iv=current)
+            assert result is not None
+            canonical = compute_iv_rank(current, [10.0, 20.0, 30.0])
+            assert result.iv_rank_percent == pytest.approx(canonical * 100.0)
+            assert 0.0 <= canonical <= 1.0, "canonical IV rank must be 0-1"
+
+    def test_iv_rank_percent_field_is_0_to_100(self, calc: IVRankCalculator) -> None:
+        """F-INTEL-008: the percent-suffixed field is explicitly 0-100."""
+        calc.record_iv_batch("NIFTY", [10.0, 20.0, 30.0])
+        result = calc.compute_iv_rank_percent("NIFTY", current_iv=20.0)
+        assert result is not None
+        assert 0.0 <= result.iv_rank_percent <= 100.0
 
     # ── Classification ─────────────────────────────────────────────────
 
     def test_classify_low(self, calc: IVRankCalculator) -> None:
         """IV in bottom 30th percentile is classified LOW."""
         calc.record_iv_batch("NIFTY", list(range(1, 101)))  # 1..100
-        result = calc.compute_iv_rank("NIFTY", current_iv=10.0)
+        result = calc.compute_iv_rank_percent("NIFTY", current_iv=10.0)
         assert result is not None
         assert result.classification == "LOW"
         assert calc.classify_iv("NIFTY", current_iv=10.0) == "LOW"
@@ -114,7 +136,7 @@ class TestIVRankCalculator:
     def test_classify_normal(self, calc: IVRankCalculator) -> None:
         """IV between 30th and 70th percentile is NORMAL."""
         calc.record_iv_batch("NIFTY", list(range(1, 101)))  # 1..100
-        result = calc.compute_iv_rank("NIFTY", current_iv=50.0)
+        result = calc.compute_iv_rank_percent("NIFTY", current_iv=50.0)
         assert result is not None
         assert result.classification == "NORMAL"
         assert calc.classify_iv("NIFTY", current_iv=50.0) == "NORMAL"
@@ -122,7 +144,7 @@ class TestIVRankCalculator:
     def test_classify_high(self, calc: IVRankCalculator) -> None:
         """IV above 70th percentile is HIGH."""
         calc.record_iv_batch("NIFTY", list(range(1, 101)))  # 1..100
-        result = calc.compute_iv_rank("NIFTY", current_iv=90.0)
+        result = calc.compute_iv_rank_percent("NIFTY", current_iv=90.0)
         assert result is not None
         assert result.classification == "HIGH"
         assert calc.classify_iv("NIFTY", current_iv=90.0) == "HIGH"

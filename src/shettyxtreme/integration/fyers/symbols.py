@@ -17,6 +17,15 @@ Monthly vs weekly detection: a contract is **monthly** when the expiry is the
 last occurrence of its weekday within the month (2024-era monthly expiries
 were the last Thursday; post-SEBI-2025 index expiries moved to the last
 Tuesday — both are handled). Everything else is weekly.
+
+Round-trip contract (F-INT-012): the monthly format encodes only year+month,
+so :func:`from_fyers` cannot recover the real expiry day — it uses the 1st as
+a placeholder. To make ``from_fyers``/``to_fyers`` exact inverses, the parse
+result carries an ``is_monthly`` flag that :func:`to_fyers` accepts as an
+explicit format override. Without it, a monthly ticker such as
+``NSE:NIFTY24OCT25000CE`` would re-encode as the weekly form
+``NSE:NIFTY24O0125000CE`` (and a weekly contract expiring on the last
+weekday-of-month would flip to the monthly form).
 """
 from __future__ import annotations
 
@@ -106,6 +115,7 @@ class FyersSymbolResolver:
         strike: Any = None,
         option_type: str | None = None,
         series: str = "EQ",
+        is_monthly: bool | None = None,
     ) -> str:
         return to_fyers(
             internal_symbol,
@@ -116,6 +126,7 @@ class FyersSymbolResolver:
             option_type=option_type,
             series=series,
             master=self.master,
+            is_monthly=is_monthly,
         )
 
     def from_fyers(self, fyers_symbol: str) -> dict[str, Any]:
@@ -206,6 +217,7 @@ def to_fyers(
     option_type: str | None = None,
     series: str = "EQ",
     master: Any = None,
+    is_monthly: bool | None = None,
 ) -> str:
     """Convert an internal symbol to its Fyers ticker (URL-encoded).
 
@@ -222,6 +234,12 @@ def to_fyers(
         master: Optional :class:`FyersInstrumentMaster`. When provided, the
             constructed symbol is validated by exact lookup and
             :class:`SymbolNotFoundError` is raised for unknown symbols.
+        is_monthly: Optional format override for FUTURES/OPTION (F-INT-012
+            round-trip). ``True`` forces the monthly (``24OCT``) encoding,
+            ``False`` forces the weekly (``24O08``) encoding. When ``None``
+            (default) the format is derived from ``expiry`` via
+            :func:`is_monthly_expiry`. Pass the ``is_monthly`` value returned
+            by :func:`from_fyers` to make parse/construct exact inverses.
 
     Returns:
         The Fyers ticker with special characters URL-encoded, e.g.
@@ -241,7 +259,8 @@ def to_fyers(
         ticker = f"{prefix}:{symbol}-{str(series).upper()}"
     elif inst_type in ("FUTURES", "FUTURE", "FUT"):
         exp = _coerce_date(expiry, required=True)
-        if is_monthly_expiry(exp):
+        monthly = is_monthly if is_monthly is not None else is_monthly_expiry(exp)
+        if monthly:
             ticker = f"{prefix}:{symbol}{exp.year % 100:02d}{_MONTH_ABBR[exp.month]}FUT"
         else:
             ticker = (
@@ -256,7 +275,8 @@ def to_fyers(
         if opt not in ("CE", "PE"):
             raise ValueError(f"option_type must be CE or PE, got {option_type!r}")
         strike_str = _format_strike(strike)
-        if is_monthly_expiry(exp):
+        monthly = is_monthly if is_monthly is not None else is_monthly_expiry(exp)
+        if monthly:
             ticker = (
                 f"{prefix}:{symbol}{exp.year % 100:02d}"
                 f"{_MONTH_ABBR[exp.month]}{strike_str}{opt}"
@@ -289,8 +309,12 @@ def from_fyers(fyers_symbol: str) -> dict[str, Any]:
 
     Returns:
         ``{"internal_symbol", "exchange", "instrument_type", "expiry",
-        "strike", "option_type"}``. ``expiry`` is a ``datetime.date`` (monthly
-        contracts encode only the month, so the day is set to the 1st).
+        "strike", "option_type", "is_monthly"}``. ``expiry`` is a
+        ``datetime.date`` (monthly contracts encode only the month, so the
+        day is set to the 1st). ``is_monthly`` records the encoded format
+        (``True``/``False`` for derivatives, ``None`` for index/equity) so a
+        caller can re-encode the exact same ticker via :func:`to_fyers`
+        (F-INT-012 round-trip).
 
     Raises:
         ValueError: When the ticker does not follow a recognized Fyers format.
@@ -314,6 +338,7 @@ def from_fyers(fyers_symbol: str) -> dict[str, Any]:
             "expiry": None,
             "strike": None,
             "option_type": None,
+            "is_monthly": None,
         }
 
     # OPTION — monthly: NSE:NIFTY24OCT25000CE
@@ -328,6 +353,7 @@ def from_fyers(fyers_symbol: str) -> dict[str, Any]:
             "expiry": expiry,
             "strike": int(strike),
             "option_type": opt,
+            "is_monthly": True,
         }
 
     # OPTION — weekly: NSE:NIFTY24O0825000CE
@@ -342,6 +368,7 @@ def from_fyers(fyers_symbol: str) -> dict[str, Any]:
             "expiry": expiry,
             "strike": int(strike),
             "option_type": opt,
+            "is_monthly": False,
         }
 
     # FUTURES — monthly: NSE:NIFTY24OCTFUT
@@ -356,6 +383,7 @@ def from_fyers(fyers_symbol: str) -> dict[str, Any]:
             "expiry": expiry,
             "strike": None,
             "option_type": None,
+            "is_monthly": True,
         }
 
     # FUTURES — weekly: NSE:NIFTY24O08FUT
@@ -370,6 +398,7 @@ def from_fyers(fyers_symbol: str) -> dict[str, Any]:
             "expiry": expiry,
             "strike": None,
             "option_type": None,
+            "is_monthly": False,
         }
 
     # EQUITY — NSE:SBIN-EQ, NSE:M&M-EQ
@@ -382,6 +411,7 @@ def from_fyers(fyers_symbol: str) -> dict[str, Any]:
             "expiry": None,
             "strike": None,
             "option_type": None,
+            "is_monthly": None,
         }
 
     raise ValueError(f"Unrecognized Fyers symbol: {fyers_symbol!r}")

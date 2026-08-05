@@ -61,6 +61,11 @@ class PositionAction:
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "core" / "config" / "execution_config.yaml"
 
+#: F-KNOW-003: ``eod_exit_time`` is an IST (Asia/Kolkata) wall-clock. IST is
+#: UTC+5:30, so the cutoff must be shifted back before comparing against the
+#: UTC ``now`` the manager works in.
+_IST_OFFSET_MINUTES = 5 * 60 + 30
+
 
 class PositionManager:
     """Manage exits: take-profit ladder (TP1/TP2/TP3) + trailing stop + EOD."""
@@ -210,13 +215,23 @@ class PositionManager:
     # EOD
     # ------------------------------------------------------------------
     def _is_eod(self, now: datetime | None = None) -> bool:
+        """True when the EOD cutoff has passed.
+
+        F-KNOW-003: ``eod_exit_time`` is configured as an IST wall-clock
+        (e.g. "15:15" = market close IST). ``now`` is expected in UTC (the
+        manager's default is ``datetime.now(UTC)``). The IST cutoff is
+        converted to UTC before comparing — otherwise EOD would fire 5h30m
+        late (IST is UTC+5:30).
+        """
         ref = now or datetime.now(UTC)
-        hour, minute = (ref.hour, ref.minute)
         try:
             eh, em = int(self.eod_exit_time.split(":")[0]), int(self.eod_exit_time.split(":")[1])
         except (ValueError, IndexError):
             eh, em = 15, 15
-        return (hour, minute) > (eh, em)
+        # IST wall-clock → UTC minutes, wrapping past midnight.
+        cutoff_utc_min = (eh * 60 + em - _IST_OFFSET_MINUTES) % (24 * 60)
+        cu_h, cu_m = divmod(cutoff_utc_min, 60)
+        return (ref.hour, ref.minute) > (cu_h, cu_m)
 
     # ------------------------------------------------------------------
     # Cost helper (unused by core flow but available to callers)

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from shettyxtreme.core.data_models import Bar
 from shettyxtreme.core.event_bus import Event, EventBus, Topic
 
 
@@ -73,6 +74,9 @@ class OITracker:
         )
         self._snapshots: list[OISnapshot] = []
         self._alerts: list[OIAlert] = []
+        #: Symbol-level OI observations derived from MARKET_DATA_BAR bars
+        #: (bars carry aggregate per-symbol OI, not per-contract chains).
+        self._symbol_oi: dict[str, list[int]] = defaultdict(list)
 
         if event_bus is not None:
             event_bus.subscribe(Topic.MARKET_DATA_BAR, self._on_market_data)
@@ -273,25 +277,79 @@ class OITracker:
         if symbol:
             self._oi_data.pop(symbol, None)
             self._previous_oi.pop(symbol, None)
+            self._symbol_oi.pop(symbol, None)
         else:
             self._oi_data.clear()
             self._previous_oi.clear()
+            self._symbol_oi.clear()
 
     @property
     def tracked_symbols(self) -> list[str]:
         """Return list of symbols being tracked."""
         return list(self._oi_data.keys())
 
+    def record_symbol_oi(self, symbol: str, oi: Any) -> None:
+        """Record a symbol-level OI observation carried by a bar event.
+
+        F-KNOW-004: MARKET_DATA_BAR events carry a ``Bar`` (OHLCV aggregate
+        with an optional per-symbol ``oi`` field), NOT an option chain. Bars
+        have no expiry/strike/option_type, so they cannot feed the per-contract
+        ``update_from_chain`` path — their aggregate OI is recorded here so OI
+        direction changes remain observable even without a full chain.
+
+        Args:
+            symbol: Underlying symbol.
+            oi: Open interest value (int-able).
+        """
+        try:
+            self._symbol_oi[symbol].append(int(oi))
+        except (TypeError, ValueError):
+            return
+
+    def get_symbol_oi(self, symbol: str) -> list[int]:
+        """Return recorded symbol-level OI observations (oldest first).
+
+        Args:
+            symbol: Underlying symbol.
+
+        Returns:
+            List of OI values observed from bar events, empty if none.
+        """
+        return list(self._symbol_oi.get(symbol, []))
+
     async def _on_market_data(self, event: Event) -> None:
         """Handle MARKET_DATA_BAR events from EventBus.
 
+        F-KNOW-004: the bus's MARKET_DATA_BAR topic carries ``Bar`` objects
+        (``core.data_models.Bar``), not the ``{symbol, expiry, contracts}``
+        option-chain dict this handler originally assumed. Accept the real
+        payloads:
+
+        - ``Bar`` (or bar-shaped dict ``{symbol, oi, ...}``) → record the
+          symbol-level OI via :meth:`record_symbol_oi` (a bar carries no
+          per-contract chain).
+        - option-chain dict ``{symbol, expiry, contracts}`` → feed
+          :meth:`update_from_chain` (kept for publishers that emit chains).
+
         Args:
-            event: The event containing option chain data.
+            event: The event containing bar or option chain data.
         """
         data = event.data
-        if isinstance(data, dict):
+        if isinstance(data, Bar):
+            if data.oi is not None:
+                self.record_symbol_oi(data.symbol, data.oi)
+            return
+        if not isinstance(data, dict):
+            return
+        contracts = data.get("contracts")
+        if contracts:
             symbol = data.get("symbol", "")
             expiry = data.get("expiry", "")
-            contracts = data.get("contracts", [])
-            if symbol and expiry and contracts:
+            if symbol and expiry:
                 self.update_from_chain(symbol, expiry, contracts)
+            return
+        # Bar-shaped dict payload: {symbol, oi, ...}
+        symbol = data.get("symbol", "")
+        oi = data.get("oi")
+        if symbol and oi is not None:
+            self.record_symbol_oi(symbol, oi)

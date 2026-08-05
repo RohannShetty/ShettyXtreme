@@ -30,11 +30,16 @@ class IVSnapshot:
 
 @dataclass
 class IVRankResult:
-    """Result of an IV rank/percentile computation."""
+    """Result of an IV rank/percentile computation.
+
+    NOTE (F-INTEL-008): ``iv_rank_percent`` and ``iv_percentile`` are on the
+    0-100 (percent) scale. The canonical 0-1 IV-rank function is
+    ``intelligence.options.compute_iv_rank`` — do not mix the scales.
+    """
 
     symbol: str
     current_iv: float
-    iv_rank: float
+    iv_rank_percent: float
     iv_percentile: float
     min_iv: float
     max_iv: float
@@ -46,8 +51,12 @@ class IVRankResult:
 class IVRankCalculator:
     """Compute IV rank and percentile from historical IV data.
 
-    IV Rank: (current_iv - min_iv) / (max_iv - min_iv) * 100
+    IV Rank (percent): (current_iv - min_iv) / (max_iv - min_iv) * 100
     IV Percentile: percentage of historical IV data points below current IV.
+
+    F-INTEL-008: this calculator returns rank on the 0-100 percent scale and
+    is deliberately named ``compute_iv_rank_percent`` so it cannot be confused
+    with the canonical 0-1 ``intelligence.options.compute_iv_rank``.
 
     Stores historical IV data in-memory using deques (ring buffers).
     Each symbol has its own buffer to keep memory bounded.
@@ -92,10 +101,13 @@ class IVRankCalculator:
         for iv in iv_values:
             self.record_iv(symbol=symbol, iv=iv)
 
-    def compute_iv_rank(
+    def compute_iv_rank_percent(
         self, symbol: str, current_iv: float | None = None
     ) -> IVRankResult | None:
-        """Compute IV rank and percentile for a given symbol.
+        """Compute IV rank (0-100 percent scale) and percentile for a symbol.
+
+        F-INTEL-008: this is the 0-100 variant — the canonical 0-1 IV-rank
+        function is ``intelligence.options.compute_iv_rank``.
 
         Args:
             symbol: Instrument symbol to compute rank for.
@@ -138,7 +150,7 @@ class IVRankCalculator:
         return IVRankResult(
             symbol=symbol,
             current_iv=current_iv,
-            iv_rank=round(iv_rank, 2),
+            iv_rank_percent=round(iv_rank, 2),
             iv_percentile=round(iv_percentile, 2),
             min_iv=round(min_iv, 4),
             max_iv=round(max_iv, 4),
@@ -151,7 +163,7 @@ class IVRankCalculator:
         self, symbol: str, current_iv: float | None = None
     ) -> IVClassification:
         """Classify current IV as LOW, NORMAL, or HIGH."""
-        result = self.compute_iv_rank(symbol, current_iv)
+        result = self.compute_iv_rank_percent(symbol, current_iv)
         if result is None:
             return "NORMAL"
         return result.classification

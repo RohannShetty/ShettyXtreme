@@ -149,6 +149,7 @@ class TestFromFyers:
             "expiry": None,
             "strike": None,
             "option_type": None,
+            "is_monthly": None,
         }
 
     def test_parse_banknifty_index(self) -> None:
@@ -175,6 +176,9 @@ class TestFromFyers:
         assert parsed["option_type"] == "CE"
         assert parsed["strike"] == 25000
         assert parsed["expiry"].year == 2024 and parsed["expiry"].month == 10
+        # F-INT-012: the encoded format must be recoverable so the ticker can
+        # be re-encoded exactly (monthly encodes only year+month -> day=1).
+        assert parsed["is_monthly"] is True
 
     def test_parse_weekly_option(self) -> None:
         parsed = from_fyers("NSE:NIFTY24O0825000CE")
@@ -182,22 +186,32 @@ class TestFromFyers:
         assert parsed["expiry"] == date(2024, 10, 8)
         assert parsed["strike"] == 25000
         assert parsed["option_type"] == "CE"
+        assert parsed["is_monthly"] is False
 
     def test_parse_weekly_option_letter_codes(self) -> None:
         assert from_fyers("NSE:NIFTY24N0825000CE")["expiry"] == date(2024, 11, 8)
         assert from_fyers("NSE:NIFTY24D0825000PE")["expiry"] == date(2024, 12, 8)
+
+    def test_parse_weekly_option_on_monthly_boundary(self) -> None:
+        """31 Oct 2024 is the last Thursday of the month — a weekly contract
+        expiring that day must still round-trip as weekly (F-INT-012)."""
+        parsed = from_fyers("NSE:NIFTY24O3125000CE")
+        assert parsed["expiry"] == date(2024, 10, 31)
+        assert parsed["is_monthly"] is False
 
     def test_parse_monthly_future(self) -> None:
         parsed = from_fyers("NSE:NIFTY24OCTFUT")
         assert parsed["internal_symbol"] == "NIFTY"
         assert parsed["instrument_type"] == "FUTURES"
         assert parsed["expiry"].month == 10
+        assert parsed["is_monthly"] is True
 
     def test_parse_weekly_future(self) -> None:
         parsed = from_fyers("NSE:NIFTY24O08FUT")
         assert parsed["internal_symbol"] == "NIFTY"
         assert parsed["instrument_type"] == "FUTURES"
         assert parsed["expiry"] == date(2024, 10, 8)
+        assert parsed["is_monthly"] is False
 
     def test_unknown_symbol_raises(self) -> None:
         with pytest.raises(ValueError):
@@ -240,15 +254,20 @@ class TestRoundTrip:
     @pytest.mark.parametrize(
         "internal,exchange,inst_type,fyers",
         [
-            # Index/equity/weekly forms encode their full identity, so
-            # from_fyers -> to_fyers is an exact re-encode.
+            # F-INT-012: every form must re-encode exactly — including the
+            # monthly forms whose parse expiry (day=1 placeholder) would
+            # otherwise be re-encoded as weekly. The is_monthly flag from
+            # from_fyers() drives the re-encode.
             ("NIFTY", "NSE_FNO", "INDEX", "NSE:NIFTY50-INDEX"),
             ("BANKNIFTY", "NSE_FNO", "INDEX", "NSE:NIFTYBANK-INDEX"),
             ("FINNIFTY", "NSE_FNO", "INDEX", "NSE:FINNIFTY-INDEX"),
             ("SBIN", "NSE", "EQUITY", "NSE:SBIN-EQ"),
             ("M&M", "NSE", "EQUITY", "NSE:M%26M-EQ"),
+            ("NIFTY", "NSE_FNO", "FUTURES", "NSE:NIFTY24OCTFUT"),
             ("NIFTY", "NSE_FNO", "FUTURES", "NSE:NIFTY24O08FUT"),
+            ("NIFTY", "NSE_FNO", "OPTION", "NSE:NIFTY24OCT25000CE"),
             ("NIFTY", "NSE_FNO", "OPTION", "NSE:NIFTY24O0825000CE"),
+            ("NIFTY", "NSE_FNO", "OPTION", "NSE:NIFTY24O3125000CE"),
         ],
     )
     def test_reencode_identity(
@@ -260,6 +279,7 @@ class TestRoundTrip:
             decoded["internal_symbol"], decoded["exchange"],
             decoded["instrument_type"], expiry=decoded["expiry"],
             strike=decoded["strike"], option_type=decoded["option_type"],
+            is_monthly=decoded["is_monthly"],
         )
         reparsed = from_fyers(reencoded)
         assert reparsed["internal_symbol"] == internal
@@ -268,6 +288,37 @@ class TestRoundTrip:
         if inst_type != "EQUITY" or "M&M" not in internal:
             # URL-encoding only differs for special characters.
             assert reencoded == fyers
+
+    @pytest.mark.parametrize(
+        "fyers",
+        [
+            "NSE:NIFTY24OCT25000CE",  # monthly option
+            "NSE:NIFTY24O0825000CE",  # weekly option
+            "NSE:NIFTY24O3125000CE",  # weekly on the last weekday of the month
+            "NSE:NIFTY24OCTFUT",      # monthly future
+            "NSE:NIFTY24O08FUT",      # weekly future
+        ],
+    )
+    def test_round_trip_is_exact_identity(self, fyers: str) -> None:
+        """to_fyers(from_fyers(sym)) == sym — parse and construct are inverses."""
+        parsed = from_fyers(fyers)
+        assert to_fyers(
+            parsed["internal_symbol"], parsed["exchange"],
+            parsed["instrument_type"], expiry=parsed["expiry"],
+            strike=parsed["strike"], option_type=parsed["option_type"],
+            is_monthly=parsed["is_monthly"],
+        ) == fyers
+
+    def test_round_trip_without_flag_breaks_monthly(self) -> None:
+        """Guard: without the is_monthly flag the monthly form degenerates to
+        weekly (the original F-INT-012 asymmetry). Kept as documentation of
+        why the flag exists."""
+        parsed = from_fyers("NSE:NIFTY24OCT25000CE")
+        assert to_fyers(
+            parsed["internal_symbol"], parsed["exchange"],
+            parsed["instrument_type"], expiry=parsed["expiry"],
+            strike=parsed["strike"], option_type=parsed["option_type"],
+        ) == "NSE:NIFTY24O0125000CE"
 
     def test_round_trip_full_derivative(self) -> None:
         """Full weekly option round-trip recovers every field."""

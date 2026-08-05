@@ -125,6 +125,37 @@ class TestSubscribeTicks:
         assert tick.timestamp == datetime.fromtimestamp(1609744577, tz=UTC)
 
     @pytest.mark.asyncio
+    async def test_oi_extracted_when_present(
+        self, adapter: FyersDataAdapter, data_socket: _FakeDataSocket
+    ) -> None:
+        """F-INT-005: OI rides the SDK's uppercase ``OI`` key on data_val ticks."""
+        received: list[Tick] = []
+        await adapter.subscribe_ticks(["SBIN"], lambda t: received.append(t))
+        await data_socket.tick_handler([dict(_SBIN_TICK, OI=123456)])
+
+        assert len(received) == 1
+        assert received[0].oi == 123456
+
+    @pytest.mark.asyncio
+    async def test_oi_none_when_missing(
+        self, adapter: FyersDataAdapter, data_socket: _FakeDataSocket
+    ) -> None:
+        """F-INT-005: index_val ticks carry no OI key — parse stays honest (None)."""
+        received: list[Tick] = []
+        await adapter.subscribe_ticks(["NIFTY"], lambda t: received.append(t))
+        index_tick = dict(
+            _SBIN_TICK,
+            symbol="NSE:NIFTY50-INDEX",
+            ltp=18123.5,
+            prev_close_price=18100.0,
+        )
+        index_tick.pop("OI", None)
+        await data_socket.tick_handler([index_tick])
+
+        assert len(received) == 1
+        assert received[0].oi is None
+
+    @pytest.mark.asyncio
     async def test_index_symbol_resolves_to_index_ticker(
         self, adapter: FyersDataAdapter, data_socket: _FakeDataSocket
     ) -> None:

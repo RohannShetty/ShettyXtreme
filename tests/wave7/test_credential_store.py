@@ -148,3 +148,49 @@ def test_is_legacy_payload_detects_data_token() -> None:
     assert CredentialStore._is_legacy_payload(
         {"broker": "fyers", "app_id": "A", "secret_id": "S"}
     ) is False
+
+
+# ── Oracle #5: encryption key derivation audit ──────────────────────────────
+
+def test_fernet_key_derivation_is_machine_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Fernet key derives from hostname+username, so different machines
+    derive different keys — credentials are NOT portable."""
+    monkeypatch.setattr(_cred_mod.socket, "gethostname", lambda: "host-alpha")
+    monkeypatch.setattr(_cred_mod.getpass, "getuser", lambda: "user-one")
+    key_a = CredentialStore._fernet()
+
+    monkeypatch.setattr(_cred_mod.socket, "gethostname", lambda: "host-beta")
+    key_b = CredentialStore._fernet()
+
+    assert key_a != key_b
+
+
+def test_fernet_key_derivation_is_deterministic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same machine identity (hostname+user) always yields the same key, so
+    saves survive restarts on the same machine: a payload encrypted with one
+    derivation decrypts with the next."""
+    monkeypatch.setattr(_cred_mod.socket, "gethostname", lambda: "host-alpha")
+    monkeypatch.setattr(_cred_mod.getpass, "getuser", lambda: "user-one")
+
+    k1 = CredentialStore._fernet()
+    k2 = CredentialStore._fernet()
+    assert k2.decrypt(k1.encrypt(b"secret")) == b"secret"
+
+
+def test_credentials_not_portable_across_machines(
+    creds_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A store written on one machine cannot be decrypted on another: the
+    different hostname/user derives a different key, so load() returns None
+    rather than leaking the plaintext."""
+    monkeypatch.setattr(_cred_mod.socket, "gethostname", lambda: "machine-a")
+    monkeypatch.setattr(_cred_mod.getpass, "getuser", lambda: "user-a")
+    CredentialStore(app_id="APP123", secret_id="SECRET456").save()
+
+    monkeypatch.setattr(_cred_mod.socket, "gethostname", lambda: "machine-b")
+    monkeypatch.setattr(_cred_mod.getpass, "getuser", lambda: "user-b")
+    assert CredentialStore.load() is None

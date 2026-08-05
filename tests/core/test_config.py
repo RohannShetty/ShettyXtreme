@@ -62,3 +62,51 @@ class TestConfigManagerEnvOverrides:
         cm = ConfigManager()
         assert cm.config.fyers_app_id == "env_app"
         assert cm.config.fyers_secret_id == "env_secret"
+
+
+class TestConfigValidation:
+    """F-CORE-004: ConfigManager must validate, not just load."""
+
+    def _write(self, tmp_data_dir, data):
+        import yaml
+        path = os.path.join(tmp_data_dir, "config.yaml")
+        with open(path, "w") as f:
+            yaml.dump(data, f)
+        return path
+
+    def test_missing_required_key_raises(self, tmp_data_dir):
+        from shettyxtreme.core.config import ConfigManager
+        path = self._write(tmp_data_dir, {"broker": "fyers"})  # no "mode"
+        with pytest.raises(ValueError, match="mode"):
+            ConfigManager(path)
+
+    def test_wrong_type_raises(self, tmp_data_dir):
+        from shettyxtreme.core.config import ConfigManager
+        path = self._write(tmp_data_dir, {"mode": 123, "dry_run": "yes"})
+        with pytest.raises(ValueError, match="mode"):
+            ConfigManager(path)
+
+    def test_valid_config_passes(self, tmp_data_dir):
+        from shettyxtreme.core.config import ConfigManager
+        path = self._write(
+            tmp_data_dir,
+            {"mode": "paper", "broker": "fyers", "log_level": "DEBUG", "dry_run": True},
+        )
+        cm = ConfigManager(path)
+        assert cm.config.mode == "paper"
+        assert cm.config.dry_run is True
+
+    def test_validate_method_rejects_partial_mapping(self, tmp_data_dir):
+        from shettyxtreme.core.config import ConfigManager
+        path = self._write(tmp_data_dir, {"mode": "live"})
+        cm = ConfigManager(path)
+        with pytest.raises(ValueError, match="mode"):
+            cm.validate({"broker": "fyers"})
+
+    def test_validate_method_accepts_required_keys_only(self, tmp_data_dir):
+        from shettyxtreme.core.config import ConfigManager
+        path = self._write(tmp_data_dir, {"mode": "live"})
+        cm = ConfigManager(path)
+        cm.validate({"mode": "observer"})  # must not raise
+        with pytest.raises(ValueError, match="dry_run"):
+            cm.validate({"mode": "observer", "dry_run": "yes"})

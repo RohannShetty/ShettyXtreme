@@ -9,6 +9,14 @@ trading day, so call :meth:`FyersInstrumentMaster.refresh` before relying on
 lookups, and treat the master as the single source of truth for Fyers symbol
 format (never hand-construct symbols).
 
+Staleness (F-INT-008): :meth:`refresh` records a ``last_refreshed`` timestamp
+in the ``fyers_meta`` table, and :meth:`needs_refresh` reports whether the
+local mirror is empty or older than ``max_age_hours`` (default 24h — the
+master is refreshed every trading day). Bootstrap code should call
+:meth:`ensure_fresh` (which refreshes only when stale) instead of refreshing
+only on an empty database, so new expiries and changed lot sizes are picked up
+within a day instead of never.
+
 Schema — table ``fyers_instruments``:
 
     fyers_symbol     TEXT PRIMARY KEY — raw ticker, e.g. ``NSE:SBIN-EQ``
@@ -23,6 +31,8 @@ Schema — table ``fyers_instruments``:
     tick_size        REAL
     isin             TEXT
     raw_json         TEXT             — full original master row
+
+Table ``fyers_meta`` — key/value store (currently ``last_refreshed``).
 """
 from __future__ import annotations
 
@@ -80,6 +90,15 @@ CREATE TABLE IF NOT EXISTS fyers_instruments (
     raw_json TEXT NOT NULL
 )
 """
+
+_SCHEMA_META = """
+CREATE TABLE IF NOT EXISTS fyers_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+)
+"""
+
+_LAST_REFRESHED_KEY = "last_refreshed"
 
 # Instrument type derived from the ticker suffix. Order matters: check the
 # most specific suffixes first.
@@ -151,6 +170,7 @@ class FyersInstrumentMaster:
         self,
         db_path: str = DEFAULT_DB_PATH,
         masters: Sequence[str] | None = None,
+        max_age_hours: float = 24.0,
     ) -> None:
         """Initialize the SQLite store.
 
@@ -158,9 +178,14 @@ class FyersInstrumentMaster:
             db_path: Path to the SQLite database file.
             masters: Names of the master files to refresh
                 (defaults to ``DEFAULT_MASTERS``).
+            max_age_hours: Default staleness threshold used by
+                :meth:`needs_refresh` / :meth:`ensure_fresh` (F-INT-008).
+                The Fyers master is refreshed every trading day, so the
+                default 24h picks up new expiries and lot-size changes.
         """
         self._db_path: str = db_path
         self._masters: tuple[str, ...] = tuple(masters) if masters else DEFAULT_MASTERS
+        self._max_age_hours: float = max_age_hours
         self._conn: sqlite3.Connection | None = None
         self._ensure_db_dir()
         self._init_db()
@@ -175,6 +200,7 @@ class FyersInstrumentMaster:
     def _init_db(self) -> None:
         self._conn = sqlite3.connect(self._db_path)
         self._conn.execute(_SCHEMA)
+        self._conn.execute(_SCHEMA_META)
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_fi_internal ON "
             "fyers_instruments(internal_symbol, exchange)"
@@ -233,6 +259,11 @@ class FyersInstrumentMaster:
                 continue
             counts[master] = self._upsert_master(data)
             logger.info("Fyers master %s: %d instruments upserted", master, counts[master])
+        # F-INT-008: record when the refresh actually landed data. A total
+        # failure must NOT reset the clock — otherwise a dead mirror would
+        # hide its staleness for another full max_age_hours window.
+        if any(counts.values()):
+            self._set_meta(_LAST_REFRESHED_KEY, datetime.now(UTC).isoformat())
         return counts
 
     def _default_http_get(self, timeout: float) -> Callable[[str], bytes]:
@@ -294,6 +325,76 @@ class FyersInstrumentMaster:
                 json.dumps(row, ensure_ascii=False),
             ),
         )
+
+    # ------------------------------------------------------- meta + staleness
+
+    def _get_meta(self, key: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT value FROM fyers_meta WHERE key = ?", (key,)
+        ).fetchone()
+        return str(row[0]) if row is not None else None
+
+    def _set_meta(self, key: str, value: str) -> None:
+        self._conn.execute(
+            "INSERT INTO fyers_meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        self._conn.commit()
+
+    def last_refreshed(self) -> datetime | None:
+        """UTC timestamp of the last successful refresh, or ``None``."""
+        raw = self._get_meta(_LAST_REFRESHED_KEY)
+        if not raw:
+            return None
+        try:
+            ts = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        return ts
+
+    def needs_refresh(self, max_age_hours: float | None = None) -> bool:
+        """True when the mirror is empty or older than ``max_age_hours``.
+
+        Args:
+            max_age_hours: Staleness threshold; defaults to the value passed
+                at construction (24h).
+
+        A mirror with rows but no ``last_refreshed`` timestamp (e.g. a
+        pre-F-INT-008 database) is treated as stale so it self-heals on the
+        next bootstrap.
+        """
+        if self.count_instruments() == 0:
+            return True
+        last = self.last_refreshed()
+        if last is None:
+            return True
+        hours = self._max_age_hours if max_age_hours is None else max_age_hours
+        age = (datetime.now(UTC) - last).total_seconds() / 3600.0
+        return age > hours
+
+    def ensure_fresh(
+        self,
+        max_age_hours: float | None = None,
+        http_get: Callable[[str], bytes] | None = None,
+        timeout: float = 120.0,
+    ) -> dict[str, int] | None:
+        """Refresh when empty or stale; no-op when fresh (F-INT-008).
+
+        Args:
+            max_age_hours: Staleness threshold; defaults to the construction
+                value.
+            http_get / timeout: Passed through to :meth:`refresh`.
+
+        Returns:
+            The ``refresh()`` counts when a refresh ran, else ``None`` (the
+            mirror was already fresh and nothing was fetched).
+        """
+        if not self.needs_refresh(max_age_hours=max_age_hours):
+            return None
+        return self.refresh(http_get=http_get, timeout=timeout)
 
     # ---------------------------------------------------------------- queries
 

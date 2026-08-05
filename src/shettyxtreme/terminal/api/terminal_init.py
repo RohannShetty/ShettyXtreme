@@ -215,6 +215,31 @@ async def init_terminal_adapters(
             order_socket = getattr(app.state, "fyers_order_socket", None)
             if order_socket is not None:
                 order_socket.on_message(postback_router.consume_order_message)
+
+                # F-INT-004: surface socket transport errors / closes on the
+                # SYSTEM_STATUS topic so fatal conditions are visible to the
+                # app instead of being silent logger lines.
+                async def _publish_socket_status(status: str, detail: Any = None) -> None:
+                    data: dict[str, Any] = {"status": status}
+                    if detail is not None:
+                        data["error"] = str(detail)
+                    await event_bus.publish(Event(
+                        topic=Topic.SYSTEM_STATUS,
+                        data=data,
+                        source="fyers_order_socket",
+                    ))
+
+                async def _on_order_socket_error(exc: Any) -> None:
+                    logger.error("Fyers order socket error: %s", exc)
+                    await _publish_socket_status("data_socket_error", exc)
+
+                async def _on_order_socket_close() -> None:
+                    logger.warning("Fyers order socket closed")
+                    await _publish_socket_status("data_socket_closed")
+
+                order_socket.on_error(_on_order_socket_error)
+                order_socket.on_close(_on_order_socket_close)
+
                 try:
                     connected = await data_adapter.connect()
                     if connected:
