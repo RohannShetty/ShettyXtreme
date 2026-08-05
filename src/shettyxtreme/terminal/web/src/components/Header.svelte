@@ -31,8 +31,6 @@
     next_event: string;
   };
 
-  type WatchlistItem = { symbol: string; exchange: string };
-
   type Tick = {
     symbol: string;
     ltp: number;
@@ -55,14 +53,17 @@
   let refreshTimer: number | undefined;
 
   // --- LTP hero (DESIGN §5 header anatomy, §3.1 number-xl) ---
-  let selected = $derived($selectedSymbol);
+  // The selection store carries {symbol, exchange}, so the hero reads the
+  // exchange straight from the selection — no watchlist REST round-trip.
+  let selection = $derived($selectedSymbol);
+  let selected = $derived(selection.symbol);
   let tickBySymbol = $state<Record<string, Tick>>({});
-  let exchangeBySymbol = $state<Record<string, string>>({});
   let flashDir = $state<"" | "up" | "down">("");
   let flashTimer: number | undefined;
 
   let tick = $derived(selected ? tickBySymbol[selected] : undefined);
-  let exchange = $derived(selected ? (exchangeBySymbol[selected] ?? "NSE") : "");
+  // Backward-compatible: a legacy/empty exchange falls back to NSE.
+  let exchange = $derived(selected ? (selection.exchange || "NSE") : "");
   let changePct = $derived(tick?.change_pct ?? null);
   let ltp = $derived(tick?.ltp ?? null);
   // Indian price law: red = up, green = down. Flash toggles color weight
@@ -90,12 +91,10 @@
   onMount(() => {
     load();
     loadCreds();
-    loadExchanges();
     const offTick = onMessage("tick", applyTick);
     refreshTimer = window.setInterval(() => {
       load();
       loadCreds();
-      loadExchanges();
     }, 30_000);
     return () => {
       offTick();
@@ -122,22 +121,6 @@
       credStatus = await authStatus();
     } catch {
       credStatus = null;
-    }
-  }
-
-  // Build symbol → exchange map from the watchlist so the hero can show the
-  // exchange next to the selected symbol (the selection store carries the
-  // symbol only).
-  async function loadExchanges(): Promise<void> {
-    try {
-      const items = await get<WatchlistItem[]>("/api/watchlist");
-      const map: Record<string, string> = {};
-      for (const it of items) {
-        if (it && it.symbol) map[it.symbol] = it.exchange || "NSE";
-      }
-      exchangeBySymbol = map;
-    } catch {
-      /* header degrades silently */
     }
   }
 

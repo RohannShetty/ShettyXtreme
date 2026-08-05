@@ -94,10 +94,17 @@
 
   onMount(() => {
     const unsubTick = onMessage("tick", applyTick);
-    const unsubSel = selectedSymbol.subscribe((v) => {
-      if (v && v !== symbol) {
-        symbol = v;
-        snapshot = { symbol: v, expiry: snapshot.expiry };
+    // Selection now carries {symbol, exchange}: the grid's symbol AND the
+    // candle chart's exchange come from the selection. "NSE_FNO" stays as the
+    // default only for the manual symbol input, where no selection exists yet.
+    const unsubSel = selectedSymbol.subscribe((sel) => {
+      if (!sel) return;
+      if (sel.symbol && sel.symbol !== symbol) {
+        symbol = sel.symbol;
+        snapshot = { symbol: sel.symbol, expiry: snapshot.expiry };
+      }
+      if (sel.exchange && sel.exchange !== exchange) {
+        exchange = sel.exchange;
       }
     });
     refreshTimer = window.setInterval(() => {
@@ -353,7 +360,7 @@
 
   <div class="table-wrap" bind:this={wrapEl}>
     <ScrollArea class="h-full w-full" orientation="both">
-      <Table class="text-[12px]">
+      <Table class="chain-table text-[12px]">
         <TableHeader>
           <TableRow class="hover:bg-transparent">
             <TableHead class="text-center font-semibold text-ink">Strike</TableHead>
@@ -425,8 +432,13 @@
   .chain {
     display: flex;
     flex-direction: column;
-    min-width: 720px;
+    /* Container-query breakpoint for the chain (DESIGN §8 — breakpoints
+       follow container queries inside panels). The old hard min-width: 720px
+       here pushed the whole panel wide; the chain now shrinks with its panel
+       and the table scrolls internally at narrow widths instead. */
+    min-width: 0;
     height: 100%;
+    container-type: inline-size;
   }
   .panel-head {
     display: flex;
@@ -502,6 +514,22 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+  }
+  /* Chain table width contract (DESIGN §8 — tables never reflow mid-row:
+     truncate with nowrap, scroll horizontally, never squeeze). The class is
+     on the table root (a child component), so it must be :global.
+     Wide panels: the table stretches to fill the panel. */
+  :global(.chain-table) {
+    width: 100%;
+  }
+  /* Narrow panels (<720px): pin the chain's full 720px layout so the
+     ScrollArea scrolls it horizontally inside the panel instead of the
+     panel (or viewport) overflowing. The ScrollArea already renders a
+     horizontal scrollbar via orientation="both". */
+  @container (max-width: 719px) {
+    :global(.chain-table) {
+      width: 720px;
+    }
   }
   /* 24px chain rows (DESIGN §4). These classes are applied to <td> / <tr>
      rendered by the table primitives (child components), so they must be

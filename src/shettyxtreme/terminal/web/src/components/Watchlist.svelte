@@ -162,7 +162,7 @@
   function onRowKeydown(event: KeyboardEvent, idx: number): void {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      selectRow(items[idx].symbol);
+      selectRow(items[idx]);
       return;
     }
     if (items.length === 0) return;
@@ -174,13 +174,16 @@
       next = Math.max(idx - 1, 0);
     }
     event.preventDefault();
-    selectRow(items[next].symbol);
+    selectRow(items[next]);
     rowEls[next]?.focus();
   }
 
-  function selectRow(symbol: string): void {
-    selected = symbol;
-    selectedSymbol.set(symbol);
+  // Selecting a row pins {symbol, exchange} into the shared store so the
+  // header hero and the chain grid read the exchange from the selection
+  // instead of deriving it from REST calls or hardcoded defaults.
+  function selectRow(item: WatchItem): void {
+    selected = item.symbol;
+    selectedSymbol.set({ symbol: item.symbol, exchange: item.exchange || "NSE" });
   }
 </script>
 
@@ -229,7 +232,7 @@
               class={flashClass(item.symbol) ? `row ${flashClass(item.symbol)}` : "row"}
               class:selected={selected === item.symbol}
               bind:this={rowEls[i]}
-              onclick={() => selectRow(item.symbol)}
+              onclick={() => selectRow(item)}
               onkeydown={(e) => onRowKeydown(e, i)}
               role="button"
               tabindex="0"
