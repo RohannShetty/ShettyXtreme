@@ -189,6 +189,7 @@ export type KnowledgeStatusResponse = {
   proposed: number;
   activated: number;
   tags: number;
+  last_sync_at: string | null;
 };
 export type KnowledgeSyncResponse = {
   ingested: number;

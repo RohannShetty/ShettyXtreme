@@ -18,6 +18,7 @@
   import { Separator } from "$lib/components/ui/separator";
   import { Toaster } from "$lib/components/ui/sonner";
   import { Kbd } from "$lib/components/ui/kbd";
+  import { ScrollArea } from "$lib/components/ui/scroll-area";
   import { toast } from "svelte-sonner";
   import { X } from "@lucide/svelte";
   import { connect, onMessage, stop } from "./lib/ws";
@@ -113,16 +114,24 @@
             <TabsTrigger value="analytics">ANALYTICS</TabsTrigger>
           </TabsList>
           <div class="tab-panel" class:hidden={$activeTab !== "chain"}>
-            <ChainGrid />
+            <ScrollArea class="h-full w-full" orientation="horizontal">
+              <ChainGrid />
+            </ScrollArea>
           </div>
           <div class="tab-panel" class:hidden={$activeTab !== "scanner"}>
-            <ScannerPanel />
+            <ScrollArea class="h-full w-full" orientation="horizontal">
+              <ScannerPanel />
+            </ScrollArea>
           </div>
           <div class="tab-panel" class:hidden={$activeTab !== "hints"}>
-            <HintsPanel />
+            <ScrollArea class="h-full w-full" orientation="horizontal">
+              <HintsPanel />
+            </ScrollArea>
           </div>
           <div class="tab-panel" class:hidden={$activeTab !== "analytics"}>
-            <AnalyticsPanel />
+            <ScrollArea class="h-full w-full" orientation="horizontal">
+              <AnalyticsPanel />
+            </ScrollArea>
           </div>
         </Tabs>
       </div>

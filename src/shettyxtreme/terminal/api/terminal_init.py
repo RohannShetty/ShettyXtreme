@@ -26,6 +26,7 @@ from shettyxtreme.integration.fyers.trading_adapter import FyersTradingAdapter
 from shettyxtreme.integration.fyers.ws_client import FyersOrderSocket
 from shettyxtreme.terminal.api import postback_router
 from shettyxtreme.terminal.api.instrument_init import init_instrument_master
+from shettyxtreme.terminal.api.intelligence_router import prime_options_chain
 
 logger = logging.getLogger(__name__)
 
@@ -264,5 +265,18 @@ async def init_terminal_adapters(
     # once symbols exist.
     if ok and pipeline_started:
         app.state.terminal_initialized = True
+
+    # Prime the options-chain cache (Wave 1 #12). The research options_posture
+    # tool reads app.state.options_chain, which was only ever written by
+    # GET /api/intelligence/options — so it showed [UNSOURCED] until that
+    # endpoint had been hit once. Fetch NIFTY now that the data adapter
+    # exists; failures degrade gracefully (cache left untouched, honest
+    # [UNSOURCED] retained). Runs on every successful (re-)init, covering
+    # both the lifespan startup and the post-OAuth-login bootstrap paths.
+    if ok:
+        try:
+            await prime_options_chain(app)
+        except Exception:
+            logger.warning("options chain prime failed", exc_info=True)
 
     return ok

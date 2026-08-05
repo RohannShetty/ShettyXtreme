@@ -76,6 +76,15 @@ The terminal runs in one of three modes. You choose the mode when you start it.
 - **Positions and Risk (bottom strip).** Your open positions and live risk figures, such as total exposure. One glance tells you how much is at stake right now.
 - **Logs (right).** A running, plain record of what the terminal is doing. If something looks odd, the answer is usually in here — and it is useful to quote from when asking for help.
 
+## Keyboard shortcuts
+
+A few keys answer directly, without reaching for the mouse. You can see the same list inside the terminal any time — press **Ctrl+/** (or **Ctrl+?**) or click the keyboard button at the top right of the screen.
+
+- **Ctrl+R** — Show or hide the right-hand panel (logs, proposals, research, and knowledge).
+- **Ctrl+M** — Move through the three modes: OBSERVER → PAPER → LIVE → back to OBSERVER. Landing on LIVE still asks you to type the confirmation.
+- **Ctrl+F** — Jump straight to the knowledge search box.
+- **Ctrl+Shift+K** — The kill switch. Stops everything instantly, in any mode, on any screen. If you are ever unsure what is happening, press it.
+
 ## Errors explained in plain words
 
 - **Error 806.** This one worries people the most. It means your Dhan app is not allowed to fetch market data. It is not a bug in ShettyXtreme, and it is not about your password. Fix it by going to the Dhan developer website and enabling Market Data on your app (or add a data token, described earlier). Prices start flowing after that.

@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { get } from "../lib/api";
   import { Button } from "$lib/components/ui/button";
+  import { Badge, type BadgeVariant } from "$lib/components/ui/badge";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { RotateCw } from "@lucide/svelte";
 
@@ -140,13 +141,13 @@
     }
   });
 
-  /** Conviction-badge level from an alert severity string. */
-  function convictionLevel(severity: string): string {
+  /** Conviction-badge level from an alert severity string (DESIGN §4 4-level scale). */
+  function convictionLevel(severity: string): BadgeVariant {
     const s = String(severity).toUpperCase();
-    if (s === "EXTREME") return "extreme";
-    if (s === "HIGH") return "high";
-    if (s === "MEDIUM") return "medium";
-    return "low";
+    if (s === "EXTREME") return "conviction-extreme";
+    if (s === "HIGH") return "conviction-high";
+    if (s === "MEDIUM") return "conviction-medium";
+    return "conviction-low";
   }
 
   function dirClass(direction: string): string {
@@ -270,7 +271,7 @@
             onclick={() => select(alertIdx(i))}
             onkeydown={(e) => onItemKeydown(e, alertIdx(i))}
           >
-            <span class="badge-conv {convictionLevel(a.severity)}">{a.severity}</span>
+            <Badge variant={convictionLevel(a.severity)}>{a.severity}</Badge>
             <span class="msg">{a.message}</span>
           </li>
         {/each}
@@ -409,39 +410,8 @@
     border-radius: 2px;
     white-space: nowrap;
   }
-  /* Conviction badge — LOW muted / MEDIUM warning / HIGH accent / EXTREME ink on row-selected. */
-  .badge-conv {
-    display: inline-flex;
-    align-items: center;
-    padding: 1px 5px;
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    font-size: 11px;
-    font-weight: 500;
-    line-height: 14px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    border: 1px solid;
-    border-radius: 2px;
-    white-space: nowrap;
-  }
-  .badge-conv.low {
-    color: var(--muted);
-    border-color: var(--hairline);
-  }
-  .badge-conv.medium {
-    color: var(--warning);
-    border-color: var(--warning);
-  }
-  .badge-conv.high {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-  .badge-conv.extreme {
-    color: var(--ink);
-    border-color: var(--hairline-strong);
-    background: var(--row-selected);
-  }
+  /* Conviction badge — consolidated onto the badge primitive's conviction-*
+     variants (ui/badge/index.ts); no scoped classes. */
   .msg {
     color: var(--body);
     flex: 1;

@@ -5,6 +5,7 @@ Option-chain rows come from the Fyers ``/data/options-chain-v3`` endpoint
 """
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from typing import Any
 
@@ -23,6 +24,8 @@ from shettyxtreme.terminal.api.models import (
 )
 
 router = APIRouter(prefix="/api/intelligence", tags=["intelligence"])
+
+logger = logging.getLogger(__name__)
 
 # Spot-field aliases across the row and top-level options-chain bodies.
 _SPOT_ALIASES: tuple[str, ...] = ("underlying_ltp", "spot", "underlying_spot")
@@ -159,7 +162,7 @@ def _normalized_type(row: dict[str, Any]) -> str:
 
 
 async def _fetch_chain_with_spot(
-    request: Request, symbol: str, expiry: str | None,
+    adapter: Any, symbol: str, expiry: str | None,
 ) -> tuple[list[dict[str, Any]], float | None]:
     """Fetch the option chain from the Fyers data adapter.
 
@@ -168,9 +171,9 @@ async def _fetch_chain_with_spot(
     "spot": ...}``). Raises DataEntitlementError on 403/-373 so callers
     surface the missing data entitlement instead of silently returning an
     empty chain. Raises DataAdapterUnavailable when no adapter is wired —
-    an empty chain must never be presented as data.
+    an empty chain must never be presented as data. Takes the adapter
+    directly (not a Request) so the startup prime can reuse it.
     """
-    adapter = request.app.state.data_adapter
     if adapter is None:
         raise DataAdapterUnavailable(
             "market data adapter not available — check credentials / Fyers feed"
@@ -189,6 +192,45 @@ async def _fetch_chain_with_spot(
         return [], None
     spot = _safe_float_opt(_row_value(result, *_SPOT_ALIASES))
     return chain, spot
+
+
+async def prime_options_chain(app: Any) -> None:
+    """Fetch the NIFTY chain once and populate ``app.state.options_chain``.
+
+    Closes the write-only-cache gap: the research ``options_posture`` tool
+    reads ``app.state.options_chain`` (research_source.py), which was only
+    ever populated as a side-effect of ``GET /api/intelligence/options``.
+    Called from the terminal bootstrap (lifespan and post-login paths both
+    flow through ``init_terminal_adapters``) once the data adapter exists.
+
+    Degrades gracefully and leaves the cache untouched on any failure —
+    entitlement errors, missing adapters, and network faults all log and
+    return, so ``[UNSOURCED]`` remains the honest rendering while no real
+    chain data exists. Never raises.
+    """
+    adapter = getattr(app.state, "data_adapter", None)
+    if adapter is None:
+        logger.info("options chain prime skipped: no data adapter")
+        return
+    try:
+        chain, spot = await _fetch_chain_with_spot(adapter, "NIFTY", None)
+    except DataEntitlementError as exc:
+        logger.warning("options chain prime skipped: %s", exc)
+        return
+    except DataAdapterUnavailable as exc:
+        logger.warning("options chain prime skipped: %s", exc)
+        return
+    except Exception:
+        logger.exception("options chain prime failed (network/adapter fault)")
+        return
+    if not chain:
+        logger.info("options chain prime: empty chain for NIFTY — leaving cache untouched")
+        return
+    app.state.options_chain = {
+        **getattr(app.state, "options_chain", {}),
+        "NIFTY": {"spot": spot, "contracts": chain},
+    }
+    logger.info("options chain primed: NIFTY (%d contracts)", len(chain))
 
 
 def _enrich_chain(
@@ -308,7 +350,9 @@ async def get_options(
 ) -> OptionsChainResponse:
     """Return option chain for a given symbol and expiry."""
     try:
-        chain, spot = await _fetch_chain_with_spot(request, symbol, expiry)
+        chain, spot = await _fetch_chain_with_spot(
+            request.app.state.data_adapter, symbol, expiry
+        )
     except DataEntitlementError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except DataAdapterUnavailable as exc:
@@ -328,7 +372,9 @@ async def get_strategy_hint(request: Request) -> StrategyHintResponse:
     """Return a strategy hint with EV analysis."""
     signal = request.app.state.intelligence_projection.get_signal() or {}
     try:
-        chain, chain_spot = await _fetch_chain_with_spot(request, "NIFTY", None)
+        chain, chain_spot = await _fetch_chain_with_spot(
+            request.app.state.data_adapter, "NIFTY", None
+        )
     except DataEntitlementError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except DataAdapterUnavailable as exc:

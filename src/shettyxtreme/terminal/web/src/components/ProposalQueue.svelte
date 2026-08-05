@@ -9,7 +9,7 @@
     type Proposal,
     type RiskSummary,
   } from "../lib/api";
-  import { Badge } from "$lib/components/ui/badge";
+  import { Badge, type BadgeVariant } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import {
     Dialog,
@@ -81,24 +81,18 @@
     }
   }
 
-  function convictionLevel(conviction: number): string {
-    if (conviction >= 0.75) return "EXTREME";
-    if (conviction >= 0.5) return "HIGH";
-    if (conviction >= 0.25) return "MEDIUM";
-    return "LOW";
+  // DESIGN §4 "Badge — conviction" 4-level scale: EXTREME ≥0.75, HIGH ≥0.5,
+  // MEDIUM ≥0.25, else LOW. Rendered via the badge primitive's conviction-*
+  // variants (no ad-hoc Tailwind on the component).
+  function convictionVariant(conviction: number): BadgeVariant {
+    if (conviction >= 0.75) return "conviction-extreme";
+    if (conviction >= 0.5) return "conviction-high";
+    if (conviction >= 0.25) return "conviction-medium";
+    return "conviction-low";
   }
 
-  function convictionClass(level: string): string {
-    switch (level) {
-      case "EXTREME":
-        return "border-hairline-strong bg-row-selected text-ink";
-      case "HIGH":
-        return "border-accent-disabled text-accent";
-      case "MEDIUM":
-        return "border-warning text-warning";
-      default:
-        return "border-hairline-strong text-muted-foreground";
-    }
+  function convictionLabel(level: BadgeVariant): string {
+    return level.slice("conviction-".length).toUpperCase();
   }
 
   function timeStr(ts: string | null): string {
@@ -217,6 +211,7 @@
     <div class="rows">
       {#each proposals as p (p.id)}
         {@const stale = isStale(p.timestamp)}
+        {@const conv = convictionVariant(p.conviction)}
         <div
           class="row"
           tabindex="0"
@@ -239,9 +234,7 @@
               >
                 {p.side}
               </Badge>
-              <Badge class={convictionClass(convictionLevel(p.conviction))}>
-                {convictionLevel(p.conviction)}
-              </Badge>
+              <Badge variant={conv}>{convictionLabel(conv)}</Badge>
               {#if stale}
                 <Badge class="border-warning text-warning">STALE</Badge>
               {/if}

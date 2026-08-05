@@ -31,7 +31,13 @@ def kstore(tmp_path) -> KnowledgeStore:
 async def test_status_empty(client: AsyncClient, kstore) -> None:
     resp = await client.get("/api/knowledge/status")
     assert resp.status_code == 200
-    assert resp.json() == {"docs": 0, "proposed": 0, "activated": 0, "tags": 0}
+    assert resp.json() == {
+        "docs": 0,
+        "proposed": 0,
+        "activated": 0,
+        "tags": 0,
+        "last_sync_at": None,
+    }
 
 
 @pytest.mark.asyncio
@@ -60,6 +66,10 @@ async def test_sync_and_search(client: AsyncClient, kstore, tmp_path) -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["ingested"] == 1 and body["skipped_undecided"] == 0
+
+    resp_status = await client.get("/api/knowledge/status")
+    assert resp_status.status_code == 200
+    assert resp_status.json()["last_sync_at"] is not None
 
     resp2 = await client.get("/api/knowledge/search", params={"q": "trending"})
     assert resp2.status_code == 200

@@ -21,7 +21,13 @@
   let hits: KnowledgeSearchHit[] = $state([]);
   let selected = $state<KnowledgeDoc | null>(null);
   let docs: KnowledgeDoc[] = $state([]);
-  let status = $state({ docs: 0, proposed: 0, activated: 0, tags: 0 });
+  let status = $state<KnowledgeStatusResponse>({
+    docs: 0,
+    proposed: 0,
+    activated: 0,
+    tags: 0,
+    last_sync_at: null,
+  });
   let error = $state("");
   let searched = $state(false);
   let searching = $state(false);
@@ -58,6 +64,17 @@
 
   function fmtHitTs(ts: string): string {
     return ts.slice(0, 16).replace("T", " ");
+  }
+
+  // "Last sync" indicator — local HH:MM, or "Never" when nothing synced yet.
+  function fmtLastSync(ts: string | null): string {
+    if (!ts) return "Never";
+    const t = Date.parse(ts);
+    if (Number.isNaN(t)) return "Never";
+    const d = new Date(t);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
   }
 
   function markActivated(docId: string, doc: KnowledgeDoc): void {
@@ -260,7 +277,7 @@
   <header class="panel-head">
     <h2>Knowledge</h2>
     <div class="head-right">
-      <span class="counts mono">{status.docs} docs · {status.proposed} prop · {status.activated} act</span>
+      <span class="counts mono">{status.docs} docs · {status.proposed} prop · {status.activated} act · Last sync: {fmtLastSync(status.last_sync_at)}</span>
       <Button variant="ghost" size="icon" class="size-7 text-muted-foreground hover:text-ink" onclick={loadStatus} aria-label="Refresh knowledge status">
         <RotateCw class="size-3.5" />
       </Button>

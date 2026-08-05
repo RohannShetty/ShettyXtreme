@@ -19,6 +19,13 @@ export const badgeVariants = cva(
         warning: "border-warning text-warning",
         danger: "border-danger text-danger",
         info: "border-info text-info",
+        // DESIGN §4 "Badge — conviction": 4-level scale. HIGH uses the amber
+        // accent (shadcn alias "primary" = our `--accent`, P5a) — `text-accent`
+        // would resolve to surface-elevated and render near-invisible.
+        "conviction-low": "border-hairline text-muted-foreground",
+        "conviction-medium": "border-warning text-warning",
+        "conviction-high": "border-primary text-primary",
+        "conviction-extreme": "border-hairline-strong bg-row-selected text-ink",
       },
     },
     defaultVariants: {

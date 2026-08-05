@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -122,9 +123,13 @@ async def list_docs(
 
 @router.get("/status", response_model=KnowledgeStatusResponse)
 async def status() -> KnowledgeStatusResponse:
-    """Store counts (docs, proposed, activated, tags)."""
+    """Store counts (docs, proposed, activated, tags) + last sync time."""
     try:
-        return KnowledgeStatusResponse(**_store().counts())
+        counts = _store().counts()
+        return KnowledgeStatusResponse(
+            **counts,
+            last_sync_at=_store().get_last_sync(),
+        )
     except Exception as exc:
         logger.warning("Knowledge status failed: %s", exc)
         return KnowledgeStatusResponse()
@@ -147,6 +152,7 @@ async def sync() -> KnowledgeSyncResponse:
         rstore.close()
     try:
         result = ingest_decided_briefs(_store(), briefs)
+        _store().set_last_sync(datetime.now(UTC).isoformat())
     except Exception as exc:
         logger.warning("Knowledge sync failed: %s", exc)
         return KnowledgeSyncResponse(error=f"ingest failed: {exc}")

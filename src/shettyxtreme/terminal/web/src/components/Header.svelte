@@ -13,6 +13,7 @@
   import { FileText, Moon, Sun } from "@lucide/svelte";
   import KillSwitch from "./KillSwitch.svelte";
   import ModeSwitcher from "./ModeSwitcher.svelte";
+  import ShortcutsDialog from "./ShortcutsDialog.svelte";
 
   type ComponentHealth = {
     name: string;
@@ -308,6 +309,8 @@
     </TooltipTrigger>
     <TooltipContent>Toggle theme</TooltipContent>
   </Tooltip>
+
+  <ShortcutsDialog />
 
   <Tooltip>
     <TooltipTrigger>

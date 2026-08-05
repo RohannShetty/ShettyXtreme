@@ -1,6 +1,8 @@
 """Response models for the knowledge API (Phase 4A)."""
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -56,3 +58,4 @@ class KnowledgeStatusResponse(BaseModel):
     proposed: int = 0
     activated: int = 0
     tags: int = 0
+    last_sync_at: datetime | None = None
