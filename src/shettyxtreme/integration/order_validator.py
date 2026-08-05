@@ -15,12 +15,7 @@ Value sets cover both brokers during the Dhan -> Fyers migration:
 """
 from __future__ import annotations
 
-from shettyxtreme.core.interfaces.order_executor import (
-    Order,
-    OrderSide,
-    OrderType,
-    ProductType,
-)
+from shettyxtreme.core.data_models import OrderRequest, OrderSide, OrderType, ProductType
 
 # Fyers exchanges are a subset of the Dhan set; keep the union until the
 # Dhan path is deleted (Phase 1 exit).
@@ -58,7 +53,7 @@ class OrderValidator:
         return aliases.get(upper, upper)
 
     @staticmethod
-    def validate(order: Order) -> bool:
+    def validate(order: OrderRequest) -> bool:
         """Validate an Order instance. Returns True if valid.
 
         Args:

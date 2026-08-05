@@ -21,12 +21,14 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from shettyxtreme.core.interfaces.account_info import Holding, OrderBook, Position
-from shettyxtreme.core.interfaces.order_executor import (
-    Order,
+from shettyxtreme.core.data_models import (
+    Holding,
+    OrderBook,
+    OrderRequest,
     OrderResult,
     OrderStatus,
     OrderType,
+    Position,
 )
 from shettyxtreme.integration.fyers.client import (
     FyersDataEntitlementError,
@@ -150,8 +152,8 @@ class FyersTradingAdapter:
             s, exchange, _infer_instrument_type(s)
         )
 
-    def _order_payload(self, order: Order, *, include_side: bool = True) -> dict[str, Any]:
-        """Build the Fyers ``/orders/sync`` payload for an internal Order."""
+    def _order_payload(self, order: OrderRequest, *, include_side: bool = True) -> dict[str, Any]:
+        """Build the Fyers ``/orders/sync`` payload for an internal OrderRequest."""
         order_type = ORDER_TYPE_MAP.get(order.order_type, ORDER_TYPE_MAP[OrderType.MARKET])
         limit_price = 0.0
         stop_price = 0.0
@@ -275,7 +277,7 @@ class FyersTradingAdapter:
 
     # ------------------------------------------------------------------ OrderExecutor
 
-    async def place_order(self, order: Order) -> OrderResult:
+    async def place_order(self, order: OrderRequest) -> OrderResult:
         """Place an order via ``POST /orders/sync``."""
         try:
             resp = await self._client.post(_ORDERS_SYNC, json=self._order_payload(order))
@@ -284,7 +286,7 @@ class FyersTradingAdapter:
             logger.warning("Fyers place_order failed: %s", exc)
             return self._rejected(str(exc))
 
-    async def modify_order(self, order_id: str, order: Order) -> OrderResult:
+    async def modify_order(self, order_id: str, order: OrderRequest) -> OrderResult:
         """Modify an open order via ``PATCH /orders/sync``."""
         try:
             payload = self._order_payload(order, include_side=False)

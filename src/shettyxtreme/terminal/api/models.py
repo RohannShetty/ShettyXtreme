@@ -140,6 +140,9 @@ class ModeResponse(BaseModel):
 class KillSwitchResponse(BaseModel):
     active: bool
     activated_at: datetime | None = None
+    # Placements already dispatched to the broker when the switch was armed
+    # (Phase 6 Lane B arm-window reporting: "placed just before kill").
+    placements_in_flight: int = 0
 
 
 class ProposalResponse(BaseModel):

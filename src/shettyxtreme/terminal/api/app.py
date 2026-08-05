@@ -35,6 +35,7 @@ from shettyxtreme.learning.shadow_loop import ShadowLoop, session_outcome_label
 from shettyxtreme.terminal.api.auth_router import init_auth
 from shettyxtreme.terminal.api.auth_router import router as auth_router
 from shettyxtreme.terminal.api.execution_router import (
+    get_kill_switch_gate,
     get_mode_value,
     is_kill_switch_armed,
     router as execution_router,
@@ -321,6 +322,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         paper_engine=paper_engine,
         mode_provider=get_mode_value,
         kill_switch_provider=is_kill_switch_armed,
+        kill_gate=get_kill_switch_gate(),
         live_provider=_live_adapter_provider,
     )
     app.state.mode_executor = mode_executor

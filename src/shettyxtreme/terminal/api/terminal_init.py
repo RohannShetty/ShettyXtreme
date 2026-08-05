@@ -52,9 +52,10 @@ async def run_terminal_init() -> bool:
 def _to_bus_tick(tick: Any) -> Any:
     """Convert a Fyers-adapter Tick to the EventBus Tick dataclass.
 
-    The adapter emits ``core.interfaces.market_data_stream.Tick``; the
-    watchlist projection and bar builder key on
-    ``core.data_models.Tick`` via isinstance. Both share the same fields.
+    F-CORE-001: ``core.interfaces.Tick`` and ``core.data_models.Tick`` are now
+    the same class, so adapter ticks pass straight through — ``oi`` (and any
+    future field) flows onto the bus untouched. The fallback constructor is
+    kept only for foreign tick shapes and also forwards ``oi``.
     """
     from shettyxtreme.core.data_models import Tick as BusTick
 
@@ -72,6 +73,7 @@ def _to_bus_tick(tick: Any) -> Any:
         high=tick.high,
         low=tick.low,
         close=tick.close,
+        oi=getattr(tick, "oi", None),
     )
 
 

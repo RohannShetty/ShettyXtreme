@@ -311,6 +311,149 @@ class TestQuotes:
         assert await adapter.get_ltp("SBIN") == 480.5
 
 
+class TestQuotesBatching:
+    @pytest.mark.asyncio
+    async def test_many_symbols_one_batch_one_call(
+        self, adapter: FyersDataAdapter, client: AsyncMock
+    ) -> None:
+        client.get.return_value = {
+            "s": "ok",
+            "d": {
+                "NSE:SBIN-EQ": {"fp": {"ltp": 480.5, "close_price": 479.0}},
+                "NSE:NIFTY50-INDEX": {"fp": {"ltp": 22555.5, "close_price": 22450.0}},
+                "NSE:M&M-EQ": {"fp": {"ltp": 800.0, "close_price": 795.0}},
+            },
+        }
+        quotes = await adapter.get_quotes(["SBIN", "NIFTY", "M&M"])
+
+        client.get.assert_awaited_once()
+        url = client.get.await_args.args[0]
+        assert url == (
+            "/data/quotes?symbols=NSE:SBIN-EQ,NSE:NIFTY50-INDEX,NSE:M&M-EQ"
+        )
+        assert quotes["SBIN"]["ltp"] == 480.5
+        assert quotes["NIFTY"]["ltp"] == 22555.5
+        assert quotes["M&M"]["close"] == 795.0
+
+    @pytest.mark.asyncio
+    async def test_over_50_symbols_splits_into_two_calls(
+        self, adapter: FyersDataAdapter, client: AsyncMock
+    ) -> None:
+        # ":"-containing names pass straight through resolution as tickers.
+        tickers = [f"NSE:SYM{i:02d}-EQ" for i in range(60)]
+        client.get.side_effect = [
+            {
+                "s": "ok",
+                "d": {
+                    t: {"fp": {"ltp": 100.0 + i, "close_price": 99.0}}
+                    for i, t in enumerate(tickers[:50])
+                },
+            },
+            {
+                "s": "ok",
+                "d": {
+                    t: {"fp": {"ltp": 100.0 + i, "close_price": 99.0}}
+                    for i, t in enumerate(tickers[50:], start=50)
+                },
+            },
+        ]
+
+        quotes = await adapter.get_quotes(tickers)
+
+        assert client.get.await_count == 2
+        urls = [call.args[0] for call in client.get.await_args_list]
+        assert urls[0].count(",") == 49  # first batch is the full 50
+        assert urls[1].count(",") == 9  # second batch carries the remaining 10
+        assert quotes[tickers[0]]["ltp"] == 100.0
+        assert quotes[tickers[59]]["ltp"] == 159.0
+
+    @pytest.mark.asyncio
+    async def test_top_level_ltp_folds_when_fp_missing(
+        self, adapter: FyersDataAdapter, client: AsyncMock
+    ) -> None:
+        """fp has no ltp -> the quote's top-level ltp is folded in (no 2nd call)."""
+        client.get.return_value = {
+            "s": "ok",
+            "d": {"NSE:SBIN-EQ": {"ltp": 481.25, "fp": {"open_price": 479.0}}},
+        }
+        quotes = await adapter.get_quotes(["SBIN"])
+
+        client.get.assert_awaited_once()
+        assert quotes["SBIN"]["ltp"] == 481.25
+        assert quotes["SBIN"]["open"] == 479.0
+
+    @pytest.mark.asyncio
+    async def test_empty_input_no_rest_call(
+        self, adapter: FyersDataAdapter, client: AsyncMock
+    ) -> None:
+        assert await adapter.get_quotes([]) == {}
+        client.get.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unresolvable_symbol_skipped(
+        self, adapter: FyersDataAdapter, client: AsyncMock
+    ) -> None:
+        # NOTREAL is not in the master; resolution fails and the symbol is
+        # skipped individually instead of raising for the whole batch.
+        assert await adapter.get_quotes(["NOTREAL"]) == {}
+        client.get.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unresolvable_omitted_while_resolvable_fetched(
+        self, adapter: FyersDataAdapter, client: AsyncMock
+    ) -> None:
+        client.get.return_value = {
+            "s": "ok",
+            "d": {"NSE:SBIN-EQ": {"fp": {"ltp": 480.5, "close_price": 479.0}}},
+        }
+        quotes = await adapter.get_quotes(["NOTREAL", "SBIN"])
+
+        client.get.assert_awaited_once()
+        url = client.get.await_args.args[0]
+        assert url == "/data/quotes?symbols=NSE:SBIN-EQ"
+        assert quotes == {
+            "SBIN": {
+                "open": None, "high": None, "low": None,
+                "close": 479.0, "ltp": 480.5,
+            }
+        }
+
+    @pytest.mark.asyncio
+    async def test_failed_batch_isolated_from_successful_batch(
+        self, adapter: FyersDataAdapter, client: AsyncMock
+    ) -> None:
+        from shettyxtreme.integration.fyers.client import FyersAPIError
+
+        tickers = [f"NSE:SYM{i:02d}-EQ" for i in range(60)]
+        client.get.side_effect = [
+            FyersAPIError("boom", status_code=500),
+            {
+                "s": "ok",
+                "d": {
+                    t: {"fp": {"ltp": 100.0 + i}}
+                    for i, t in enumerate(tickers[50:], start=50)
+                },
+            },
+        ]
+
+        quotes = await adapter.get_quotes(tickers)
+
+        assert client.get.await_count == 2
+        expected = {
+            t: {"open": None, "high": None, "low": None,
+                "close": None, "ltp": 100.0 + i}
+            for i, t in enumerate(tickers[50:], start=50)
+        }
+        assert quotes == expected
+
+    @pytest.mark.asyncio
+    async def test_non_dict_response_yields_no_quotes(
+        self, adapter: FyersDataAdapter, client: AsyncMock
+    ) -> None:
+        client.get.return_value = ["not", "a", "dict"]
+        assert await adapter.get_quotes(["SBIN"]) == {}
+
+
 class TestOptionChain:
     @pytest.mark.asyncio
     async def test_builds_url_and_returns_payload(

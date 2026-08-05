@@ -17,12 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from shettyxtreme.core.interfaces.order_executor import (
-    OrderSide,
-    OrderStatus,
-    OrderType,
-    ProductType,
-)
+from shettyxtreme.core.data_models import OrderSide, OrderStatus, OrderType, ProductType
 
 # ---------------------------------------------------------------------------
 # Forward: internal -> Fyers wire values

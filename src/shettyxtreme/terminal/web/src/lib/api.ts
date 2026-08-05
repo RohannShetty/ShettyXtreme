@@ -224,6 +224,7 @@ export type ScorecardResponse = {
   metrics: ScorecardMetric[];
   by_regime: RegimeRow[];
   calibration: CalibrationPoint[];
+  current_regime: string | null;
 };
 export type SessionRecord = {
   session_id: string;

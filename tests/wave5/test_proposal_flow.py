@@ -17,7 +17,7 @@ from httpx import ASGITransport, AsyncClient
 from pathlib import Path
 
 from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
-from shettyxtreme.core.interfaces.order_executor import OrderResult, OrderStatus
+from shettyxtreme.core.data_models import OrderResult, OrderStatus
 from shettyxtreme.execution.execution_engine import ExecutionEngine
 from shettyxtreme.execution.mode_router import ModeRoutingExecutor
 from shettyxtreme.execution.paper_trading import PaperTradingEngine
@@ -448,9 +448,9 @@ def test_mode_router_blocks_when_kill_switch_armed() -> None:
         mode_provider=lambda: "PAPER",
         kill_switch_provider=lambda: True,
     )
-    from shettyxtreme.core.interfaces.order_executor import Order, OrderSide, OrderType
+    from shettyxtreme.core.data_models import OrderRequest, OrderSide, OrderType
 
-    result = asyncio.run(router.place_order(Order(
+    result = asyncio.run(router.place_order(OrderRequest(
         symbol="NIFTY", exchange="NFO", side=OrderSide.BUY,
         order_type=OrderType.MARKET, quantity=75,
     )))

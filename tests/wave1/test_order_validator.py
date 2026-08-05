@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import pytest
 
-from shettyxtreme.core.interfaces.order_executor import (
-    Order,
+from shettyxtreme.core.data_models import (
+    OrderRequest,
     OrderSide,
     OrderType,
     ProductType,
@@ -73,7 +73,7 @@ class TestValidOrders:
         quantity, price, trigger_price, product, validity,
     ) -> None:
         """Valid order should pass validation returning True."""
-        order = Order(
+        order = OrderRequest(
             symbol=symbol, exchange=exchange, side=side,
             order_type=order_type, quantity=quantity,
             price=price, trigger_price=trigger_price,
@@ -88,7 +88,7 @@ class TestInvalidOrders:
 
     def test_invalid_exchange(self) -> None:
         """Invalid exchange should raise ValueError."""
-        order = Order(
+        order = OrderRequest(
             symbol="X", exchange="NYSE", side=OrderSide.BUY,
             order_type=OrderType.MARKET, quantity=10,
         )
@@ -98,7 +98,7 @@ class TestInvalidOrders:
 
     def test_invalid_action(self) -> None:
         """Invalid action/side should raise ValueError."""
-        order = Order(
+        order = OrderRequest(
             symbol="X", exchange="NSE", side="INVALID",
             order_type=OrderType.MARKET, quantity=10,
         )
@@ -109,7 +109,7 @@ class TestInvalidOrders:
 
     def test_invalid_price_type(self) -> None:
         """Invalid price type should raise ValueError."""
-        order = Order(
+        order = OrderRequest(
             symbol="X", exchange="NSE", side=OrderSide.BUY,
             order_type="BOGUS", quantity=10,
         )
@@ -119,7 +119,7 @@ class TestInvalidOrders:
 
     def test_invalid_product_type(self) -> None:
         """Invalid product type should raise ValueError."""
-        order = Order(
+        order = OrderRequest(
             symbol="X", exchange="NSE", side=OrderSide.BUY,
             order_type=OrderType.MARKET, quantity=10,
             product="BOGUS",
@@ -130,7 +130,7 @@ class TestInvalidOrders:
 
     def test_invalid_validity(self) -> None:
         """Invalid validity should raise ValueError."""
-        order = Order(
+        order = OrderRequest(
             symbol="X", exchange="NSE", side=OrderSide.BUY,
             order_type=OrderType.MARKET, quantity=10,
             validity="GTC",
@@ -141,7 +141,7 @@ class TestInvalidOrders:
 
     def test_zero_quantity_raises(self) -> None:
         """Zero or negative quantity should raise ValueError."""
-        order = Order(
+        order = OrderRequest(
             symbol="X", exchange="NSE", side=OrderSide.BUY,
             order_type=OrderType.MARKET, quantity=0,
         )
@@ -151,7 +151,7 @@ class TestInvalidOrders:
 
     def test_limit_order_without_price_raises(self) -> None:
         """LIMIT order without price should raise ValueError."""
-        order = Order(
+        order = OrderRequest(
             symbol="X", exchange="NSE", side=OrderSide.BUY,
             order_type=OrderType.LIMIT, quantity=10,
             price=None,
@@ -162,7 +162,7 @@ class TestInvalidOrders:
 
     def test_sl_without_trigger_raises(self) -> None:
         """SL order without trigger_price should raise ValueError."""
-        order = Order(
+        order = OrderRequest(
             symbol="X", exchange="NSE", side=OrderSide.SELL,
             order_type=OrderType.SL, quantity=10,
             price=1000.0, trigger_price=None,
@@ -173,7 +173,7 @@ class TestInvalidOrders:
 
     def test_sl_m_without_trigger_raises(self) -> None:
         """SL-M order without trigger_price should raise ValueError."""
-        order = Order(
+        order = OrderRequest(
             symbol="X", exchange="NSE", side=OrderSide.SELL,
             order_type=OrderType.SL_M, quantity=10,
             trigger_price=None,
@@ -188,7 +188,7 @@ class TestPriceTypeNormalization:
 
     def test_sl_m_normalizes(self) -> None:
         """SL_M should normalize to SL-M and pass validation."""
-        order = Order(
+        order = OrderRequest(
             symbol="X", exchange="NSE", side=OrderSide.SELL,
             order_type=OrderType.SL_M, quantity=10,
             trigger_price=500.0,
@@ -198,7 +198,7 @@ class TestPriceTypeNormalization:
 
     def test_sl_m_string_alias(self) -> None:
         """String aliases for SL-M should be accepted."""
-        order = Order(
+        order = OrderRequest(
             symbol="X", exchange="NSE", side=OrderSide.SELL,
             order_type="SLM", quantity=10,
             trigger_price=500.0,

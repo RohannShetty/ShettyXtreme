@@ -23,8 +23,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from shettyxtreme.core.data_models import OrderType, ProductType
 from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
-from shettyxtreme.core.interfaces.order_executor import OrderType, ProductType
 from shettyxtreme.execution.execution_engine import ApprovalStatus, ExecutionEngine
 from shettyxtreme.intelligence.signals.signal_engine import Signal, SignalDirection
 

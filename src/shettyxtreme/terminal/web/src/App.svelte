@@ -15,8 +15,12 @@
   import SetupWizard from "./components/SetupWizard.svelte";
   import Watchlist from "./components/Watchlist.svelte";
   import { Tabs, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
+  import { Separator } from "$lib/components/ui/separator";
+  import { Toaster } from "$lib/components/ui/sonner";
+  import { Kbd } from "$lib/components/ui/kbd";
+  import { toast } from "svelte-sonner";
   import { X } from "@lucide/svelte";
-  import { connect, stop } from "./lib/ws";
+  import { connect, onMessage, stop } from "./lib/ws";
 
   let route = $state(currentRoute());
   let query: URLSearchParams | null = $state(null);
@@ -59,9 +63,25 @@
     window.addEventListener("keydown", onKeydown);
     readQuery();
     connect();
+    // WS alerts → toasts. The server broadcasts {alert_type, severity, message}
+    // on the "alert" topic (AlertProjection, projections.py). Severity maps to
+    // the DESIGN status tokens: danger for HIGH, warning for MEDIUM, info else.
+    const offAlert = onMessage("alert", (data) => {
+      const a = data as { alert_type?: string; severity?: string; message?: string };
+      const message = typeof a.message === "string" && a.message ? a.message : "Alert";
+      const severity = String(a.severity ?? "").toUpperCase();
+      if (severity === "HIGH" || severity === "CRITICAL") {
+        toast.error(message, { description: a.alert_type ?? undefined });
+      } else if (severity === "MEDIUM") {
+        toast.warning(message, { description: a.alert_type ?? undefined });
+      } else {
+        toast.info(message, { description: a.alert_type ?? undefined });
+      }
+    });
     return () => {
       window.removeEventListener("hashchange", onHashChange);
       window.removeEventListener("keydown", onKeydown);
+      offAlert();
       stop();
     };
   });
@@ -70,6 +90,8 @@
     stop();
   });
 </script>
+
+<Toaster />
 
 {#if route === "/"}
   <div class="app-grid">
@@ -93,34 +115,34 @@
           <div class="tab-panel" class:hidden={$activeTab !== "chain"}>
             <ChainGrid />
           </div>
-          {#if $activeTab === "scanner"}
-            <div class="tab-panel">
-              <ScannerPanel />
-            </div>
-          {/if}
-          {#if $activeTab === "hints"}
-            <div class="tab-panel">
-              <HintsPanel />
-            </div>
-          {/if}
-          {#if $activeTab === "analytics"}
-            <div class="tab-panel">
-              <AnalyticsPanel />
-            </div>
-          {/if}
+          <div class="tab-panel" class:hidden={$activeTab !== "scanner"}>
+            <ScannerPanel />
+          </div>
+          <div class="tab-panel" class:hidden={$activeTab !== "hints"}>
+            <HintsPanel />
+          </div>
+          <div class="tab-panel" class:hidden={$activeTab !== "analytics"}>
+            <AnalyticsPanel />
+          </div>
         </Tabs>
       </div>
       <div class="right-col" class:open={drawerOpen}>
         <header class="drawer-head">
           <h2>Right Dock</h2>
-          <button
-            class="drawer-close"
-            onclick={() => (drawerOpen = false)}
-            aria-label="Close right dock"
-          >
-            <X class="size-4" />
-          </button>
+          <div class="drawer-head-actions">
+            <Kbd>Ctrl+R</Kbd>
+            <button
+              class="drawer-close"
+              onclick={() => (drawerOpen = false)}
+              aria-label="Close right dock"
+            >
+              <X class="size-4" />
+            </button>
+          </div>
         </header>
+        <div class="drawer-sep" aria-hidden="true">
+          <Separator />
+        </div>
         <ProposalQueue />
         <ResearchPanel />
         <KnowledgePanel />
@@ -149,6 +171,19 @@
     gap: 8px;
     padding: 8px;
     height: 100vh;
+    /* Measurement coupling (LIVE banner): the header strip is 44px tall and
+       the grid has 8px padding, so its bottom edge sits at 52px in viewport
+       coordinates. ModeSwitcher's .live-banner reads this var instead of
+       measuring the header with JS. Keep in sync with .head's height. */
+    --header-bottom: 52px;
+  }
+  /* 4th grid row — the LIVE session banner slot (36px, full width, directly
+     below the header). Reserved only while a banner is actually mounted, so
+     the dense 3-row layout is untouched outside LIVE sessions (DESIGN §4
+     alert bar). The bar itself stays position:fixed and visually fills this
+     slot; the reserved space keeps the workspace clear of it. */
+  .app-grid:has(:global(.live-banner)) {
+    grid-template-rows: auto 36px minmax(0, 1fr) auto;
   }
   /* 3-col workspace: rail 260px | center flex | right-col 320px (DESIGN §5/§15).
      No overflow-x here — every panel scrolls inside itself (DESIGN §8). */
@@ -183,6 +218,16 @@
     overflow-x: auto;
     overflow-y: hidden;
   }
+  /* Keep-alive hidden state (DESIGN §4 tabs). Tailwind's .hidden utility is
+     emitted inside @layer utilities, which the cascade ranks BELOW this
+     component's unlayered scoped rules — a bare `hidden` class would lose to
+     .tab-panel's display:flex above. Pinning the state here (higher
+     specificity, same unlayered context) is what actually hides a panel while
+     keeping it mounted, preserving state + WS subscriptions across tab
+     switches. */
+  .tab-panel.hidden {
+    display: none;
+  }
   .tab-panel > :global(*) {
     flex: 1;
     min-height: 0;
@@ -212,6 +257,14 @@
     letter-spacing: 0.08em;
     color: var(--muted);
     text-transform: uppercase;
+  }
+  .drawer-head-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .drawer-sep {
+    display: none;
   }
   .drawer-close {
     display: inline-flex;
@@ -290,6 +343,9 @@
     }
     .drawer-head {
       display: flex;
+    }
+    .drawer-sep {
+      display: block;
     }
   }
 </style>

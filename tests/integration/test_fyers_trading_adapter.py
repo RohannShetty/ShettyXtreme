@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from shettyxtreme.core.interfaces.order_executor import (
-    Order,
+from shettyxtreme.core.data_models import (
+    OrderRequest,
     OrderSide,
     OrderStatus,
     OrderType,
@@ -32,7 +32,7 @@ SECRET = "SECRET1"
 TOKEN = "TOK9"
 
 
-def _order(**overrides: Any) -> Order:
+def _order(**overrides: Any) -> OrderRequest:
     base: dict[str, Any] = dict(
         symbol="SBIN",
         exchange="NSE",
@@ -45,7 +45,7 @@ def _order(**overrides: Any) -> Order:
         validity="DAY",
     )
     base.update(overrides)
-    return Order(**base)
+    return OrderRequest(**base)
 
 
 @pytest.fixture

@@ -22,7 +22,6 @@
   let error = $state("");
   let busy = $state(false);
   let confirmInput = $state<HTMLInputElement | null>(null);
-  let bannerTop = $state(52);
 
   let isLive = $derived(mode === "LIVE");
   let canConfirm = $derived(typed.trim().toUpperCase() === LIVE_CONFIRM_TEXT);
@@ -31,11 +30,8 @@
   onMount(() => {
     loadMode();
     window.addEventListener("keydown", onKey);
-    window.addEventListener("resize", measureHeader);
-    measureHeader();
     return () => {
       window.removeEventListener("keydown", onKey);
-      window.removeEventListener("resize", measureHeader);
     };
   });
 
@@ -46,13 +42,6 @@
       tick().then(() => setTimeout(() => confirmInput?.focus(), 50));
     }
   });
-
-  // The LIVE session banner is fixed flush below the header strip. Measure the
-  // header's real bottom edge so the bar sits under it at any viewport width.
-  function measureHeader(): void {
-    const el = document.querySelector(".head") as HTMLElement | null;
-    bannerTop = el ? Math.round(el.getBoundingClientRect().bottom) : 52;
-  }
 
   // Ctrl+M cycles OBSERVER → PAPER → LIVE → OBSERVER. Landing on LIVE routes
   // through the typed-confirm dialog. Never hijack while typing or when a
@@ -150,7 +139,7 @@
 </div>
 
 {#if isLive}
-  <div class="live-banner" role="alert" style={`--banner-top: ${bannerTop}px`}>
+  <div class="live-banner" role="alert">
     <span class="banner-dot" aria-hidden="true"></span>
     <span class="banner-text">
       LIVE SESSION — real orders execute on approval. Nothing is placed
@@ -276,12 +265,14 @@
   }
   /* LIVE session banner — full-width alert bar flush below the header.
      DESIGN §4 alert bar: 36px, danger at 10% on surface-card, border-bottom
-     hairline-strong, leading dot + body text, no dismiss for danger. Fixed so
-     it spans the viewport regardless of header compaction; it overlays the
-     workspace's top edge while LIVE, so pointer events pass through. */
+     hairline-strong, leading dot + body text, no dismiss for danger. Top is
+     coupled to App.svelte's --header-bottom measurement var (8px grid padding
+     + 44px header strip) instead of JS measuring the header; App also reserves
+     a 4th grid row below the bar while LIVE so the workspace is never covered.
+     Non-interactive: pointer events pass through. */
   .live-banner {
     position: fixed;
-    top: var(--banner-top, 52px);
+    top: var(--header-bottom, 52px);
     left: 0;
     right: 0;
     z-index: 25;

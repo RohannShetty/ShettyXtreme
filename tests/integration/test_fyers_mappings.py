@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from shettyxtreme.core.interfaces.order_executor import (
+from shettyxtreme.core.data_models import (
     OrderSide,
     OrderStatus,
     OrderType,

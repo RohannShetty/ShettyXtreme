@@ -1,25 +1,10 @@
-from dataclasses import dataclass
-from datetime import datetime
 from typing import Protocol, runtime_checkable
 
+# F-CORE-001: Position/Holding/OrderBook are canonical in core.data_models;
+# this module re-exports the same classes so the AccountInfo protocol and
+# its consumers share one identity.
+from shettyxtreme.core.data_models import Holding, OrderBook, Position
 
-@dataclass
-class Position:
-    symbol: str; exchange: str; quantity: int
-    buy_avg: float; sell_avg: float; net_quantity: int
-    day_buy_quantity: int; day_sell_quantity: int
-    m2m: float; pnl: float; product: str
-
-@dataclass
-class Holding:
-    symbol: str; exchange: str; quantity: int
-    avg_price: float; last_price: float; pnl: float; collateral: float
-
-@dataclass
-class OrderBook:
-    order_id: str; symbol: str; exchange: str; side: str
-    order_type: str; quantity: int; filled_quantity: int
-    price: float; status: str; timestamp: datetime
 
 @runtime_checkable
 class AccountInfo(Protocol):

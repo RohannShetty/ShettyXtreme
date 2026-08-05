@@ -1,58 +1,23 @@
-"""Protocol for order execution - implemented by FyersTradingAdapter."""
-from dataclasses import dataclass
-from enum import Enum
+"""Protocol for order execution - implemented by FyersTradingAdapter.
+
+F-CORE-001: the data classes (``OrderRequest``/``OrderResult``/enums) are
+canonical in ``core.data_models``; this module re-exports them so the
+Protocol signature and consumers share one identity.
+"""
 from typing import Protocol, runtime_checkable
 
-
-class OrderSide(Enum):
-    BUY = "BUY"
-    SELL = "SELL"
-
-class OrderType(Enum):
-    MARKET = "MARKET"
-    LIMIT = "LIMIT"
-    SL = "SL"
-    SL_M = "SL_M"
-
-class ProductType(Enum):
-    CNC = "CNC"
-    NRML = "NRML"
-    MIS = "MIS"
-
-class OrderStatus(Enum):
-    PENDING = "PENDING"
-    OPEN = "OPEN"
-    PARTIALLY_FILLED = "PARTIALLY_FILLED"
-    FILLED = "FILLED"
-    CANCELLED = "CANCELLED"
-    REJECTED = "REJECTED"
-
-@dataclass
-class Order:
-    symbol: str
-    exchange: str
-    side: OrderSide
-    order_type: OrderType
-    quantity: int
-    price: float | None = None
-    trigger_price: float | None = None
-    product: ProductType = ProductType.MIS
-    validity: str = "DAY"
-    tag: str | None = None
-    client_id: str | None = None
-
-@dataclass
-class OrderResult:
-    order_id: str
-    status: OrderStatus
-    message: str = ""
-    filled_quantity: int = 0
-    average_price: float = 0.0
-    rejected_reason: str | None = None
+from shettyxtreme.core.data_models import (
+    OrderRequest,
+    OrderResult,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    ProductType,
+)
 
 @runtime_checkable
 class OrderExecutor(Protocol):
-    async def place_order(self, order: Order) -> OrderResult: ...
-    async def modify_order(self, order_id: str, order: Order) -> OrderResult: ...
+    async def place_order(self, order: OrderRequest) -> OrderResult: ...
+    async def modify_order(self, order_id: str, order: OrderRequest) -> OrderResult: ...
     async def cancel_order(self, order_id: str) -> bool: ...
     async def get_order_status(self, order_id: str) -> OrderResult: ...

@@ -4,6 +4,9 @@
   import { selectedSymbol } from "../lib/selection";
   import { onMessage } from "../lib/ws";
   import { Input } from "$lib/components/ui/input";
+  import { ScrollArea } from "$lib/components/ui/scroll-area";
+  import { Select, SelectContent, SelectItem, SelectTrigger } from "$lib/components/ui/select";
+  import { Skeleton } from "$lib/components/ui/skeleton";
   import { cn } from "$lib/utils.js";
   import CandleChart from "./CandleChart.svelte";
   import {
@@ -324,11 +327,23 @@
         onkeydown={(e) => e.key === "Enter" && commit()}
       />
       {#if expiries.length > 0}
-        <select class="expiry-select mono" bind:value={expiry} onchange={commit}>
-          {#each expiries as e (e)}
-            <option value={e}>{e}</option>
-          {/each}
-        </select>
+        <Select
+          type="single"
+          value={expiry}
+          onValueChange={(v) => {
+            expiry = v;
+            commit();
+          }}
+        >
+          <SelectTrigger class="mono h-7 w-[130px] text-[12px]" aria-label="Expiry">
+            <span>{expiry}</span>
+          </SelectTrigger>
+          <SelectContent>
+            {#each expiries as e (e)}
+              <SelectItem value={e} label={e} class="font-mono text-[12px]">{e}</SelectItem>
+            {/each}
+          </SelectContent>
+        </Select>
       {:else}
         <Input
           class="mono h-7 w-[130px]"
@@ -352,56 +367,72 @@
   <CandleChart {symbol} {exchange} />
 
   <div class="table-wrap" bind:this={wrapEl}>
-    <Table class="text-[12px]">
-      <TableHeader>
-        <TableRow class="hover:bg-transparent">
-          <TableHead class="text-center font-semibold text-ink">Strike</TableHead>
-          <TableHead class="text-right" colspan={3}>Call (CE)</TableHead>
-          <TableHead class="text-right" colspan={3}>Put (PE)</TableHead>
-        </TableRow>
-        <TableRow class="hover:bg-transparent">
-          <TableHead class="text-center text-faint"></TableHead>
-          <TableHead class="text-right">LTP</TableHead>
-          <TableHead class="text-right">IV</TableHead>
-          <TableHead class="text-right">OI</TableHead>
-          <TableHead class="text-right">LTP</TableHead>
-          <TableHead class="text-right">IV</TableHead>
-          <TableHead class="text-right">OI</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {#each rows as row (row.strike)}
-          <TableRow
-            class={cn(
-              "chain-row h-6",
-              selectedStrike === row.strike ? "border-l-2 border-l-accent bg-row-selected" : "",
-            )}
-          >
-            <TableCell
-              class="strike-cell"
-              data-strike={String(row.strike)}
-              tabindex={0}
-              role="gridcell"
-              aria-selected={selectedStrike === row.strike}
-              onfocus={() => (selectedStrike = row.strike)}
-              onclick={() => (selectedStrike = row.strike)}
-              onkeydown={(e) => onStrikeKeydown(e, row.strike)}
-            >
-              {fmtNum(row.strike, 0)}
-            </TableCell>
-            <TableCell class={cn("mono-num px-1.5", ltpCellClass(row, "ce"))}>{fmtNum(row.ce?.ltp)}</TableCell>
-            <TableCell class="mono-num px-1.5">{fmtNum(row.ce?.iv, 1)}</TableCell>
-            <TableCell class="mono-num px-1.5">{fmtOi(row.ce?.oi)}</TableCell>
-            <TableCell class={cn("mono-num px-1.5", ltpCellClass(row, "pe"))}>{fmtNum(row.pe?.ltp)}</TableCell>
-            <TableCell class="mono-num px-1.5">{fmtNum(row.pe?.iv, 1)}</TableCell>
-            <TableCell class="mono-num px-1.5">{fmtOi(row.pe?.oi)}</TableCell>
+    <ScrollArea class="h-full w-full" orientation="both">
+      <Table class="text-[12px]">
+        <TableHeader>
+          <TableRow class="hover:bg-transparent">
+            <TableHead class="text-center font-semibold text-ink">Strike</TableHead>
+            <TableHead class="text-right" colspan={3}>Call (CE)</TableHead>
+            <TableHead class="text-right" colspan={3}>Put (PE)</TableHead>
           </TableRow>
-        {/each}
-      </TableBody>
-    </Table>
-    {#if rows.length === 0 && !loading}
-      <p class="empty">No chain data. {error ? "" : "Check the symbol or start the data pipeline."}</p>
-    {/if}
+          <TableRow class="hover:bg-transparent">
+            <TableHead class="text-center text-faint"></TableHead>
+            <TableHead class="text-right">LTP</TableHead>
+            <TableHead class="text-right">IV</TableHead>
+            <TableHead class="text-right">OI</TableHead>
+            <TableHead class="text-right">LTP</TableHead>
+            <TableHead class="text-right">IV</TableHead>
+            <TableHead class="text-right">OI</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {#if loading && rows.length === 0}
+            {#each Array.from({ length: 8 }) as _, i (i)}
+              <TableRow class="chain-row h-6 hover:bg-transparent">
+                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-12 mx-auto" /></TableCell>
+                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-14 ml-auto" /></TableCell>
+                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-10 ml-auto" /></TableCell>
+                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-12 ml-auto" /></TableCell>
+                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-14 ml-auto" /></TableCell>
+                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-10 ml-auto" /></TableCell>
+                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-12 ml-auto" /></TableCell>
+              </TableRow>
+            {/each}
+          {:else}
+            {#each rows as row (row.strike)}
+              <TableRow
+                class={cn(
+                  "chain-row h-6",
+                  selectedStrike === row.strike ? "border-l-2 border-l-accent bg-row-selected" : "",
+                )}
+              >
+                <TableCell
+                  class="strike-cell"
+                  data-strike={String(row.strike)}
+                  tabindex={0}
+                  role="gridcell"
+                  aria-selected={selectedStrike === row.strike}
+                  onfocus={() => (selectedStrike = row.strike)}
+                  onclick={() => (selectedStrike = row.strike)}
+                  onkeydown={(e) => onStrikeKeydown(e, row.strike)}
+                >
+                  {fmtNum(row.strike, 0)}
+                </TableCell>
+                <TableCell class={cn("mono-num px-1.5", ltpCellClass(row, "ce"))}>{fmtNum(row.ce?.ltp)}</TableCell>
+                <TableCell class="mono-num px-1.5">{fmtNum(row.ce?.iv, 1)}</TableCell>
+                <TableCell class="mono-num px-1.5">{fmtOi(row.ce?.oi)}</TableCell>
+                <TableCell class={cn("mono-num px-1.5", ltpCellClass(row, "pe"))}>{fmtNum(row.pe?.ltp)}</TableCell>
+                <TableCell class="mono-num px-1.5">{fmtNum(row.pe?.iv, 1)}</TableCell>
+                <TableCell class="mono-num px-1.5">{fmtOi(row.pe?.oi)}</TableCell>
+              </TableRow>
+            {/each}
+          {/if}
+        </TableBody>
+      </Table>
+      {#if rows.length === 0 && !loading}
+        <p class="empty">No chain data. {error ? "" : "Check the symbol or start the data pipeline."}</p>
+      {/if}
+    </ScrollArea>
   </div>
 </section>
 
@@ -434,15 +465,6 @@
     display: flex;
     gap: 6px;
     align-items: center;
-  }
-  .expiry-select {
-    background: var(--canvas-raised);
-    border: 1px solid var(--hairline);
-    border-radius: 4px;
-    color: var(--body);
-    padding: 5px 6px;
-    font-size: 12px;
-    max-width: 150px;
   }
   /* LIVE / SYNC chip replaces the removed manual Load button — the grid now
      streams ticks and auto-refreshes, so the affordance is a status, not an
@@ -493,7 +515,8 @@
   }
   .table-wrap {
     flex: 1;
-    overflow: auto;
+    min-height: 0;
+    overflow: hidden;
   }
   /* 24px chain rows (DESIGN §4). These classes are applied to <td> / <tr>
      rendered by the table primitives (child components), so they must be

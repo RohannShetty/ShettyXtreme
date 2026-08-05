@@ -1,7 +1,7 @@
 """Execution router — positions, risk, mode, kill switch, proposals."""
 from __future__ import annotations
 
-import os
+import logging
 import secrets
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from shettyxtreme.execution.kill_switch import KillSwitchGate
 from shettyxtreme.terminal.api.models import (
     KillSwitchResponse,
     ModeResponse,
@@ -17,6 +18,8 @@ from shettyxtreme.terminal.api.models import (
     ProposalResponse,
     RiskResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/execution", tags=["execution"])
 
@@ -49,6 +52,30 @@ _kill_switch_path: str = str(Path.home() / ".shetty_kill_switch")
 # bare form post / boolean query flag can never place a real order (F-EXEC-001).
 _csrf_token: str | None = None
 
+# Shared in-process kill gate (Phase 6 Lane B): an asyncio.Event that is set
+# on arm and re-checked by the mode router immediately before the broker wire,
+# closing the check-to-wire TOCTOU window of the file-only switch. The file
+# remains the durable, cross-process layer (restart survival); the event is
+# the fast in-process layer. Rebuilt lazily when the path changes (tests).
+_kill_gate: KillSwitchGate | None = None
+
+
+def _get_kill_gate() -> KillSwitchGate:
+    """The shared gate for the current _kill_switch_path, rebuilt on change."""
+    global _kill_gate
+    if _kill_gate is None or _kill_gate.path != _kill_switch_path:
+        _kill_gate = KillSwitchGate(_kill_switch_path)
+    return _kill_gate
+
+
+def get_kill_switch_gate() -> KillSwitchGate:
+    """Shared in-process kill gate (asyncio.Event + atomic file persistence).
+
+    Wired into ModeRoutingExecutor at app startup so placements double-check
+    the gate immediately before reaching the broker.
+    """
+    return _get_kill_gate()
+
 
 def get_mode_value() -> str:
     """Current execution mode (OBSERVER / PAPER / LIVE)."""
@@ -56,8 +83,13 @@ def get_mode_value() -> str:
 
 
 def is_kill_switch_armed() -> bool:
-    """True when the file-based kill switch is armed (blocks placement)."""
-    return bool(_kill_switch_path) and os.path.exists(_kill_switch_path)
+    """True when the kill switch is armed (blocks placement).
+
+    Delegates to the shared gate: armed when EITHER the in-process event is
+    set or the persisted file exists (honors a switch armed by another
+    process, and an API arm that hasn't finished writing the file).
+    """
+    return _get_kill_gate().is_armed()
 
 
 def _mint_csrf_token() -> str:
@@ -237,9 +269,7 @@ async def set_mode(
 @router.get("/kill-switch", response_model=KillSwitchResponse)
 async def get_kill_switch() -> KillSwitchResponse:
     """Check kill switch status."""
-    active = False
-    if _kill_switch_path and os.path.exists(_kill_switch_path):
-        active = True
+    active = is_kill_switch_armed()
     return KillSwitchResponse(active=active, activated_at=datetime.now(UTC) if active else None)
 
 
@@ -259,21 +289,42 @@ async def activate_kill_switch(
     Arming stays a single click (activate=true). Disarming (activate=false)
     requires the typed confirmation string "DISARM" in the request body —
     same rule as LIVE mode (F-EXEC-001).
+
+    Both layers of the shared gate are updated: the file atomically
+    (tempfile + os.replace) for cross-process persistence/restart survival,
+    and the in-process asyncio.Event so the mode router sees the arm the
+    instant it happens. The arm response reports how many placements had
+    already crossed the wire in the arm window ("placed just before kill").
     """
     global _kill_switch_path
     if not _kill_switch_path:
         _kill_switch_path = str(Path.home() / ".shetty_kill_switch")
 
     if activate:
-        Path(_kill_switch_path).touch()
-        return KillSwitchResponse(active=True, activated_at=datetime.now(UTC))
+        gate = _get_kill_gate()
+        gate.arm()
+        report = gate.arm_report
+        in_flight = report["placements_in_flight"]
+        if in_flight:
+            logger.warning(
+                "kill switch armed with %d placement(s) already in flight — "
+                "crossed the wire during the arm window (placed just before kill)",
+                in_flight,
+            )
+        else:
+            logger.info("kill switch armed")
+        return KillSwitchResponse(
+            active=True,
+            activated_at=datetime.now(UTC),
+            placements_in_flight=in_flight,
+        )
     typed = (payload.confirm if payload else None) or ""
     if typed != "DISARM":
         raise HTTPException(
             status_code=400,
             detail="disarming the kill switch requires typed confirmation: send {\"confirm\": \"DISARM\"} in the request body",
         )
-    Path(_kill_switch_path).unlink(missing_ok=True)
+    _get_kill_gate().disarm()
     return KillSwitchResponse(active=False)
 
 

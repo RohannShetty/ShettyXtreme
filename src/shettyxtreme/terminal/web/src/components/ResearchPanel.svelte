@@ -6,6 +6,7 @@
   import { Button } from "$lib/components/ui/button";
   import { Badge } from "$lib/components/ui/badge";
   import { Textarea } from "$lib/components/ui/textarea";
+  import { Select, SelectContent, SelectItem, SelectTrigger } from "$lib/components/ui/select";
   import { RotateCw } from "@lucide/svelte";
   import type {
     ResearchBrief,
@@ -285,17 +286,27 @@
   <div class="cols">
     <div class="col list-col">
       <div class="filters">
-        <select bind:value={statusFilter} aria-label="Status filter">
-          {#each statuses as s}
-            <option value={s}>{s}</option>
-          {/each}
-        </select>
-        <select bind:value={lensFilter} aria-label="Lens filter">
-          <option value="All">All lenses</option>
-          {#each lenses as l (l.name)}
-            <option value={l.name}>{l.name}</option>
-          {/each}
-        </select>
+        <Select type="single" value={statusFilter} onValueChange={(v) => (statusFilter = v)}>
+          <SelectTrigger class="h-7 w-[110px] text-[11px]" aria-label="Status filter">
+            <span>{statusFilter}</span>
+          </SelectTrigger>
+          <SelectContent>
+            {#each statuses as s (s)}
+              <SelectItem value={s} label={s}>{s}</SelectItem>
+            {/each}
+          </SelectContent>
+        </Select>
+        <Select type="single" value={lensFilter} onValueChange={(v) => (lensFilter = v)}>
+          <SelectTrigger class="h-7 w-[130px] text-[11px]" aria-label="Lens filter">
+            <span>{lensFilter === "All" ? "All lenses" : lensFilter}</span>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="All" label="All">All lenses</SelectItem>
+            {#each lenses as l (l.name)}
+              <SelectItem value={l.name} label={l.name}>{l.name}</SelectItem>
+            {/each}
+          </SelectContent>
+        </Select>
       </div>
       <ul class="brief-list" role="listbox" tabindex="0" aria-label="Research briefs" bind:this={listEl} onkeydown={onListKeydown}>
         {#each filtered as b (b.brief_id)}
@@ -484,29 +495,6 @@
     display: flex;
     gap: 6px;
     margin-bottom: 8px;
-  }
-  /* Dropdown — DESIGN.md §4: styled like input (canvas-raised + hairline,
-     accent focus). The popup list itself renders OS-native; a custom dropdown
-     is flagged for the component-migration task. */
-  .filters select {
-    background: var(--canvas-raised);
-    border: 1px solid var(--hairline);
-    border-radius: 4px;
-    color: var(--body);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-variant-numeric: tabular-nums;
-    padding: 2px 6px;
-    height: 22px;
-    transition: border-color 120ms ease-out;
-  }
-  .filters select:hover {
-    border-color: var(--muted);
-  }
-  .filters select:focus-visible {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 2px var(--canvas), 0 0 0 4px var(--focus-ring);
   }
   ul.brief-list {
     list-style: none;

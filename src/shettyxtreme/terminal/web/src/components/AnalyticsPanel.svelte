@@ -16,7 +16,7 @@
   let error = $state("");
   let fetchedAt = $state<number | null>(null);
   let now = $state(Date.now());
-  /** Current regime from /api/intelligence/regime — drives the accent bar. */
+  /** Current regime carried on the scorecard payload — drives the accent bar. */
   let currentRegime = $state<string | null>(null);
 
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -34,15 +34,12 @@
     loading = true;
     error = "";
     try {
-      const [resp, regimeResp] = await Promise.all([
-        get<ScorecardResponse>("/api/analytics/scorecard"),
-        get<{ regime: string }>("/api/intelligence/regime").catch(() => null),
-      ]);
+      const resp = await get<ScorecardResponse>("/api/analytics/scorecard");
       metrics = resp.metrics;
       byRegime = resp.by_regime;
       calibration = resp.calibration;
       reliable = resp.reliable_calibration;
-      currentRegime = regimeResp?.regime ?? null;
+      currentRegime = resp.current_regime ?? null;
       fetchedAt = Date.now();
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);

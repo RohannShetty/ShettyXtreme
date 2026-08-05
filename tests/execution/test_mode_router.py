@@ -6,17 +6,19 @@ adapter), modify_order LIVE gates, modify_order rejected outside LIVE.
 """
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
 
-from shettyxtreme.core.interfaces.order_executor import (
-    Order,
+from shettyxtreme.core.data_models import (
+    OrderRequest,
     OrderResult,
     OrderSide,
     OrderStatus,
     OrderType,
 )
+from shettyxtreme.execution.kill_switch import KillSwitchGate
 from shettyxtreme.execution.mode_router import ModeRoutingExecutor
 from shettyxtreme.execution.paper_trading import PaperTradingEngine
 
@@ -34,7 +36,7 @@ class _SessionExpiredAdapter:
     async def cancel_order(self, order_id: str) -> bool:
         return True
 
-    async def modify_order(self, order_id: str, order: Order) -> OrderResult:
+    async def modify_order(self, order_id: str, order: OrderRequest) -> OrderResult:
         return OrderResult(order_id=order_id, status=OrderStatus.OPEN, message="ok")
 
 
@@ -52,8 +54,8 @@ def _make_router(
     )
 
 
-def _order() -> Order:
-    return Order(
+def _order() -> OrderRequest:
+    return OrderRequest(
         symbol="NIFTY",
         exchange="NFO",
         side=OrderSide.BUY,
@@ -265,3 +267,150 @@ async def test_live_place_blocked_when_session_expiry_unknown() -> None:
 
     assert result.status == OrderStatus.REJECTED
     assert "re-auth" in result.message
+
+
+# ── Kill-switch TOCTOU race regression (Phase 6 Lane B) ──────────────────
+
+def _async_ok(order_id: str = "L-1") -> OrderResult:
+    return OrderResult(order_id=order_id, status=OrderStatus.OPEN, message="ok")
+
+
+@pytest.mark.asyncio
+async def test_live_place_double_check_blocks_arm_between_checks() -> None:
+    """The final gate re-consults the kill state immediately before the wire.
+
+    Simulates an arm that lands between the entry check and the broker await
+    (the TOCTOU window the Phase 6 fix shrinks): the provider flips armed on
+    its second call, so the first gate passes and the pre-wire double-check
+    must reject — the order never reaches the broker.
+    """
+    calls = {"n": 0}
+
+    def flip_provider() -> bool:
+        calls["n"] += 1
+        return calls["n"] > 1
+
+    live = AsyncMock()
+    live.place_order = AsyncMock(return_value=_async_ok())
+    router = _make_router(
+        mode="LIVE", live=live, kill=False, paper=PaperTradingEngine()
+    )
+    router._kill_provider = flip_provider
+
+    result = await router.place_order(_order())
+
+    assert result.status == OrderStatus.REJECTED
+    assert "kill switch" in result.message
+    live.place_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_live_place_gate_armed_blocks_wire_even_when_provider_passes() -> None:
+    """The shared asyncio gate is authoritative on its own: armed gate blocks
+    the broker call even if the legacy provider reports disarmed."""
+    gate = KillSwitchGate("")
+    gate.arm()
+    live = AsyncMock()
+    live.place_order = AsyncMock(return_value=_async_ok())
+    router = _make_router(mode="LIVE", live=live, kill=False)
+    router._kill_gate = gate
+
+    result = await router.place_order(_order())
+
+    assert result.status == OrderStatus.REJECTED
+    assert "kill switch" in result.message
+    live.place_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_in_flight_placement_surfaces_in_arm_report() -> None:
+    """Mock concurrent arm + place_order: a placement already dispatched to
+    the wire when the operator arms is honestly reported as having crossed
+    the wire during the arm window (inherent TOCTOU, surfaced not hidden)."""
+    gate = KillSwitchGate("")
+    started = asyncio.Event()
+    proceed = asyncio.Event()
+
+    async def slow_place(order: OrderRequest) -> OrderResult:
+        started.set()
+        await proceed.wait()
+        return _async_ok()
+
+    live = AsyncMock()
+    live.place_order = slow_place
+    router = _make_router(mode="LIVE", live=live, kill=False)
+    router._kill_gate = gate
+
+    task = asyncio.create_task(router.place_order(_order()))
+    await started.wait()  # placement has crossed into the wire
+    assert gate.placements_in_flight == 1
+
+    gate.arm()  # operator arms while the placement is in flight
+    assert gate.arm_report["placements_in_flight"] == 1
+
+    proceed.set()
+    result = await task
+
+    assert result.status == OrderStatus.OPEN
+    assert gate.placements_in_flight == 0
+
+
+@pytest.mark.asyncio
+async def test_placements_starting_after_arm_never_reach_wire() -> None:
+    """A placement arriving after the gate is armed is rejected before the
+    broker await — no wire entry is recorded."""
+    gate = KillSwitchGate("")
+    gate.arm()
+    live = AsyncMock()
+    live.place_order = AsyncMock(return_value=_async_ok())
+    router = _make_router(mode="LIVE", live=live, kill=False)
+    router._kill_gate = gate
+
+    result = await router.place_order(_order())
+
+    assert result.status == OrderStatus.REJECTED
+    live.place_order.assert_not_awaited()
+    assert gate.placements_in_flight == 0
+
+
+@pytest.mark.asyncio
+async def test_paper_place_double_check_blocks_arm_between_checks() -> None:
+    """The paper path gets the same pre-wire double-check (kill blocks all
+    modes)."""
+    calls = {"n": 0}
+
+    def flip_provider() -> bool:
+        calls["n"] += 1
+        return calls["n"] > 1
+
+    paper = PaperTradingEngine()
+    paper.place_order = AsyncMock(return_value=_async_ok())
+    router = _make_router(mode="PAPER", kill=False, paper=paper)
+    router._kill_provider = flip_provider
+
+    result = await router.place_order(_order())
+
+    assert result.status == OrderStatus.REJECTED
+    assert "kill switch" in result.message
+    paper.place_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_modify_live_double_check_blocks_arm_between_checks() -> None:
+    """Live modify gets the same pre-wire double-check."""
+    calls = {"n": 0}
+
+    def flip_provider() -> bool:
+        calls["n"] += 1
+        return calls["n"] > 1
+
+    live = AsyncMock()
+    live.modify_order = AsyncMock(return_value=_async_ok("LIVE-1"))
+    router = _make_router(mode="LIVE", live=live, kill=False)
+    router._kill_provider = flip_provider
+
+    result = await router.modify_order("LIVE-1", _order())
+
+    assert result.status == OrderStatus.REJECTED
+    assert "kill switch" in result.message
+    live.modify_order.assert_not_awaited()

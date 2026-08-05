@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { get } from "../lib/api";
   import { Button } from "$lib/components/ui/button";
+  import { Skeleton } from "$lib/components/ui/skeleton";
   import { RotateCw } from "@lucide/svelte";
 
   type Gap = { symbol: string; gap_type: string; gap_percent: number; direction: string };
@@ -15,6 +16,7 @@
   let clusters: Cluster[] = $state([]);
   let alerts: Alert[] = $state([]);
   let error = $state("");
+  let loading = $state(true);
   let fetchedAt = $state<number | null>(null);
   let now = $state(Date.now());
 
@@ -36,6 +38,7 @@
 
   async function load(): Promise<void> {
     error = "";
+    loading = true;
     try {
       const [g, c, a] = await Promise.all([
         get<Gap[]>("/api/scanner/gaps"),
@@ -48,6 +51,8 @@
       fetchedAt = Date.now();
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
+    } finally {
+      loading = false;
     }
   }
 
@@ -177,7 +182,16 @@
       <span class="eyebrow">Gaps</span>
       <span class="stat">{gaps.length}</span>
       <ul role="list">
-        {#each gaps as g, i (g.symbol + g.gap_type + g.gap_percent)}
+        {#if loading}
+          {#each Array.from({ length: 4 }) as _, i (i)}
+            <li class="item">
+              <Skeleton class="h-3.5 w-16" />
+              <Skeleton class="h-3.5 w-14" />
+              <Skeleton class="h-3.5 w-12 ml-auto" />
+            </li>
+          {/each}
+        {:else}
+          {#each gaps as g, i (g.symbol + g.gap_type + g.gap_percent)}
           <li
             class="item"
             role="option"
@@ -192,7 +206,8 @@
             <span class="num {dirClass(g.direction)}">{g.gap_percent > 0 ? "+" : ""}{g.gap_percent.toFixed(2)}%</span>
           </li>
         {/each}
-        {#if gaps.length === 0}
+        {/if}
+        {#if gaps.length === 0 && !loading}
           <li class="empty">No gaps detected.</li>
         {/if}
       </ul>
@@ -202,7 +217,16 @@
       <span class="eyebrow">Clusters</span>
       <span class="stat">{clusters.length}</span>
       <ul role="list">
-        {#each clusters as c, i (c.symbol + c.cluster_type)}
+        {#if loading}
+          {#each Array.from({ length: 4 }) as _, i (i)}
+            <li class="item">
+              <Skeleton class="h-3.5 w-16" />
+              <Skeleton class="h-3.5 w-14" />
+              <Skeleton class="h-3.5 w-12 ml-auto" />
+            </li>
+          {/each}
+        {:else}
+          {#each clusters as c, i (c.symbol + c.cluster_type)}
           <li
             class="item"
             role="option"
@@ -217,7 +241,8 @@
             <span class="num">{c.strength.toFixed(1)} / 10</span>
           </li>
         {/each}
-        {#if clusters.length === 0}
+        {/if}
+        {#if clusters.length === 0 && !loading}
           <li class="empty">No clusters found.</li>
         {/if}
       </ul>
@@ -227,7 +252,15 @@
       <span class="eyebrow">Alerts</span>
       <span class="stat">{alerts.length}</span>
       <ul role="list">
-        {#each alerts as a, i (a.message + a.timestamp)}
+        {#if loading}
+          {#each Array.from({ length: 4 }) as _, i (i)}
+            <li class="item">
+              <Skeleton class="h-3.5 w-16" />
+              <Skeleton class="h-3.5 flex-1" />
+            </li>
+          {/each}
+        {:else}
+          {#each alerts as a, i (a.message + a.timestamp)}
           <li
             class="item"
             role="option"
@@ -241,7 +274,8 @@
             <span class="msg">{a.message}</span>
           </li>
         {/each}
-        {#if alerts.length === 0}
+        {/if}
+        {#if alerts.length === 0 && !loading}
           <li class="empty">No alerts.</li>
         {/if}
       </ul>

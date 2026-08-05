@@ -411,6 +411,58 @@ async def test_kill_switch_disarm_with_typed_confirmation(client: AsyncClient, t
     assert not kill_file.exists()
 
 
+@pytest.mark.asyncio
+async def test_kill_switch_arm_writes_atomically(client: AsyncClient, tmp_path: Path) -> None:
+    """Arm goes through the shared gate: atomic tempfile+os.replace write, no
+    temp-file residue (Phase 6 Lane B)."""
+    kill_file = tmp_path / "kill"
+    execution_router._kill_switch_path = str(kill_file)
+
+    resp = await client.post("/api/execution/kill-switch?activate=true")
+
+    assert resp.status_code == 200
+    assert resp.json()["active"] is True
+    assert kill_file.exists()
+    leftovers = [p for p in tmp_path.iterdir() if p.name.startswith(".shetty_kill_switch.")]
+    assert leftovers == []
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_arm_reports_in_flight_placements(
+    client: AsyncClient, tmp_path: Path,
+) -> None:
+    """Arm response surfaces placements that crossed the wire in the arm
+    window ("placed just before kill") — honesty-first reporting."""
+    kill_file = tmp_path / "kill"
+    execution_router._kill_switch_path = str(kill_file)
+    gate = execution_router._get_kill_gate()
+    gate.note_wire_entry()  # one placement already dispatched to the wire
+
+    resp = await client.post("/api/execution/kill-switch?activate=true")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["active"] is True
+    assert data["placements_in_flight"] == 1
+    gate.note_wire_exit()
+    gate.disarm()  # restore test hygiene
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_get_reflects_shared_gate(client: AsyncClient, tmp_path: Path) -> None:
+    """GET /kill-switch reads through the shared gate (event OR file), so an
+    armed gate is reported active."""
+    kill_file = tmp_path / "kill"
+    execution_router._kill_switch_path = str(kill_file)
+    execution_router._get_kill_gate().arm()
+
+    resp = await client.get("/api/execution/kill-switch")
+
+    assert resp.status_code == 200
+    assert resp.json()["active"] is True
+    execution_router._get_kill_gate().disarm()
+
+
 # ── Scanner ────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_gaps(client: AsyncClient) -> None:

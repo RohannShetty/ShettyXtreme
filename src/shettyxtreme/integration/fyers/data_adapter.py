@@ -22,12 +22,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import unquote
 
-from shettyxtreme.core.interfaces.market_data_stream import (
-    Bar,
-    BarCallback,
-    Tick,
-    TickCallback,
-)
+from shettyxtreme.core.data_models import Bar, Tick
+from shettyxtreme.core.interfaces.market_data_stream import BarCallback, TickCallback
 from shettyxtreme.integration.fyers._util import (
     DAILY_CHUNK_DAYS as _DAILY_CHUNK_DAYS,
     INTRADAY_CHUNK_DAYS as _INTRADAY_CHUNK_DAYS,
@@ -57,6 +53,9 @@ from shettyxtreme.integration.fyers.symbols import FyersSymbolResolver
 from shettyxtreme.integration.fyers.ws_client import FyersOrderSocket
 
 logger = logging.getLogger(__name__)
+
+#: Fyers caps ``/data/quotes`` at 50 comma-separated symbols per request.
+_QUOTES_BATCH_SIZE = 50
 
 
 class FyersDataAdapter:
@@ -341,45 +340,78 @@ class FyersDataAdapter:
             bars.extend(self._parse_history(resp, symbol, exchange, "D"))
         return bars
 
-    async def get_ohlc(self, symbol: str) -> dict[str, Any]:
-        """Extract OHLC + ltp from ``/data/quotes``."""
-        ticker = self._resolve_symbol(symbol, "NSE_FNO")
-        try:
-            resp = await self._client.get(f"/data/quotes?symbols={ticker}")
-        except FyersError as exc:
-            logger.warning("Fyers quotes failed for %s: %s", ticker, exc)
+    async def get_quotes(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
+        """Batch-fetch OHLC + ltp for many internal symbols via ``/data/quotes``.
+
+        Symbols are resolved to Fyers tickers and grouped into batches of at
+        most :data:`_QUOTES_BATCH_SIZE` (Fyers' per-request cap) — one REST
+        call per batch instead of one per symbol. The returned dict is keyed
+        by the *internal* symbol (the query the caller passed in) so results
+        can be looked up directly; each value carries
+        ``{open, high, low, close, ltp}`` with ``ltp`` falling back from the
+        quote's top-level ``ltp`` when ``fp.ltp`` is absent (the old
+        ``get_ltp`` behaviour, folded in — callers never need a second call).
+
+        Unresolvable symbols, non-dict responses, and failed batches are
+        skipped without raising (the degrade-not-throw contract of
+        ``get_ohlc``). Requests still flow through the client's 8/s token
+        bucket — batching never bypasses it.
+        """
+        if not symbols:
             return {}
-        d = resp.get("d", {}) if isinstance(resp, dict) else {}
-        quote = d.get(ticker) or d.get(unquote(ticker)) or {}
-        fp = quote.get("fp", {}) if isinstance(quote, dict) else {}
-        return {
-            "open": _to_float(fp.get("open_price")),
-            "high": _to_float(fp.get("high_price")),
-            "low": _to_float(fp.get("low_price")),
-            "close": _to_float(fp.get("close_price")),
-            "ltp": _to_float(fp.get("ltp")),
-        }
+        # Resolve every symbol up front, mapping internal name -> Fyers ticker.
+        resolved: dict[str, str] = {}
+        for name in symbols:
+            name = str(name).strip()
+            if not name or name in resolved:
+                continue
+            try:
+                resolved[name] = self._resolve_symbol(name, "NSE_FNO")
+            except ValueError as exc:
+                logger.warning("Fyers quote resolution failed for %s: %s", name, exc)
+                continue
+        if not resolved:
+            return {}
+        by_ticker: dict[str, str] = {ticker: name for name, ticker in resolved.items()}
+        result: dict[str, dict[str, Any]] = {}
+        tickers = list(by_ticker)
+        for i in range(0, len(tickers), _QUOTES_BATCH_SIZE):
+            batch = tickers[i : i + _QUOTES_BATCH_SIZE]
+            try:
+                resp = await self._client.get("/data/quotes?symbols=" + ",".join(batch))
+            except FyersError as exc:
+                logger.warning("Fyers batch quotes failed (%d symbols): %s", len(batch), exc)
+                continue
+            d = resp.get("d", {}) if isinstance(resp, dict) else {}
+            if not isinstance(d, dict):
+                continue
+            for ticker, quote in d.items():
+                name = by_ticker.get(ticker) or by_ticker.get(unquote(ticker))
+                if name is None or not isinstance(quote, dict):
+                    continue
+                fp = quote.get("fp")
+                fp = fp if isinstance(fp, dict) else {}
+                ltp = _to_float(fp.get("ltp"))
+                if ltp is None:
+                    ltp = _to_float(quote.get("ltp"))
+                result[name] = {
+                    "open": _to_float(fp.get("open_price")),
+                    "high": _to_float(fp.get("high_price")),
+                    "low": _to_float(fp.get("low_price")),
+                    "close": _to_float(fp.get("close_price")),
+                    "ltp": ltp,
+                }
+        return result
+
+    async def get_ohlc(self, symbol: str) -> dict[str, Any]:
+        """Extract OHLC + ltp from ``/data/quotes`` (single-symbol wrapper)."""
+        return (await self.get_quotes([symbol])).get(str(symbol).strip(), {})
 
     async def get_ltp(self, symbol: str) -> float:
         """Last traded price from ``/data/quotes`` (0.0 when absent)."""
-        ticker = self._resolve_symbol(symbol, "NSE_FNO")
-        try:
-            resp = await self._client.get(f"/data/quotes?symbols={ticker}")
-        except FyersError as exc:
-            logger.warning("Fyers quotes failed for %s: %s", ticker, exc)
-            return 0.0
-        d = resp.get("d", {}) if isinstance(resp, dict) else {}
-        quote = d.get(ticker) or d.get(unquote(ticker)) or {}
-        if isinstance(quote, dict):
-            fp = quote.get("fp", {})
-            if isinstance(fp, dict):
-                ltp = _to_float(fp.get("ltp"))
-                if ltp is not None:
-                    return ltp
-            ltp = _to_float(quote.get("ltp"))
-            if ltp is not None:
-                return ltp
-        return 0.0
+        ohlc = (await self.get_quotes([symbol])).get(str(symbol).strip(), {})
+        ltp = ohlc.get("ltp")
+        return ltp if ltp is not None else 0.0
 
     async def get_option_chain(
         self, underlying: str, expiry: str, strike_count: int = 50

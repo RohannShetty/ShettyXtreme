@@ -14,6 +14,9 @@ class Tick:
     symbol: str; exchange: str; ltp: float; volume: int
     timestamp: datetime; bid: float | None = None; ask: float | None = None
     open: float | None = None; high: float | None = None; low: float | None = None; close: float | None = None
+    # F-CORE-001: oi unified from the old interfaces.Tick — the bus tick now
+    # carries open interest end-to-end instead of dropping it at the bridge.
+    oi: int | None = None
 
 @dataclass
 class Quote:

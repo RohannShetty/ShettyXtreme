@@ -5,6 +5,8 @@
   import { onMessage } from "../lib/ws";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
+  import { ScrollArea } from "$lib/components/ui/scroll-area";
+  import { Select, SelectContent, SelectItem, SelectTrigger } from "$lib/components/ui/select";
   import { Plus, X } from "@lucide/svelte";
   import EmptyState from "./state/EmptyState.svelte";
   import LoadingState from "./state/LoadingState.svelte";
@@ -195,11 +197,16 @@
       bind:value={newSymbol}
       onkeydown={(e) => e.key === "Enter" && add()}
     />
-    <select class="exch-select mono" bind:value={newExchange}>
-      <option value="NSE">NSE</option>
-      <option value="NSE_FNO">NFO</option>
-      <option value="BSE">BSE</option>
-    </select>
+    <Select type="single" value={newExchange} onValueChange={(v) => (newExchange = v)}>
+      <SelectTrigger class="mono h-7 w-[64px] text-[11px]" aria-label="Exchange">
+        <span>{newExchange}</span>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="NSE" label="NSE" class="font-mono text-[11px]">NSE</SelectItem>
+        <SelectItem value="NSE_FNO" label="NFO" class="font-mono text-[11px]">NFO</SelectItem>
+        <SelectItem value="BSE" label="BSE" class="font-mono text-[11px]">BSE</SelectItem>
+      </SelectContent>
+    </Select>
     <Button size="icon" class="size-7" onclick={add} aria-label="Add symbol">
       <Plus class="size-3.5" />
     </Button>
@@ -215,46 +222,48 @@
     {#if loading && items.length === 0}
       <LoadingState label="Loading watchlist…" rows={4} />
     {:else}
-      <div class="list">
-        {#each items as item, i (item.symbol)}
-          <div
-            class={flashClass(item.symbol) ? `row ${flashClass(item.symbol)}` : "row"}
-            class:selected={selected === item.symbol}
-            bind:this={rowEls[i]}
-            onclick={() => selectRow(item.symbol)}
-            onkeydown={(e) => onRowKeydown(e, i)}
-            role="button"
-            tabindex="0"
-            title={isStale(item) ? "No tick in the last 60s" : ""}
-          >
-            <div class="sym-cell">
-              <span class="ticker">{item.symbol}</span>
-              <span class="meta">
-                <span class="exch">{item.exchange}</span>
-                {#if isStale(item)}
-                  <span class="stale-chip">STALE</span>
-                {/if}
-              </span>
-            </div>
-            <span class="num ltp {pnlClass(item.change_pct)}">{fmtLtp(item.ltp)}</span>
-            <span class="num chg {pnlClass(item.change_pct)}">{item.change_pct > 0 ? "+" : ""}{item.change_pct.toFixed(2)}%</span>
-            <button
-              class="rm"
-              onclick={(e) => {
-                e.stopPropagation();
-                remove(item.symbol);
-              }}
-              title="Remove"
-              aria-label={`Remove ${item.symbol}`}
+      <ScrollArea class="list-scroll flex-1">
+        <div class="list">
+          {#each items as item, i (item.symbol)}
+            <div
+              class={flashClass(item.symbol) ? `row ${flashClass(item.symbol)}` : "row"}
+              class:selected={selected === item.symbol}
+              bind:this={rowEls[i]}
+              onclick={() => selectRow(item.symbol)}
+              onkeydown={(e) => onRowKeydown(e, i)}
+              role="button"
+              tabindex="0"
+              title={isStale(item) ? "No tick in the last 60s" : ""}
             >
-              <X class="size-3.5" />
-            </button>
-          </div>
-        {/each}
-        {#if items.length === 0}
-          <EmptyState message="No instruments. Add one above." />
-        {/if}
-      </div>
+              <div class="sym-cell">
+                <span class="ticker">{item.symbol}</span>
+                <span class="meta">
+                  <span class="exch">{item.exchange}</span>
+                  {#if isStale(item)}
+                    <span class="stale-chip">STALE</span>
+                  {/if}
+                </span>
+              </div>
+              <span class="num ltp {pnlClass(item.change_pct)}">{fmtLtp(item.ltp)}</span>
+              <span class="num chg {pnlClass(item.change_pct)}">{item.change_pct > 0 ? "+" : ""}{item.change_pct.toFixed(2)}%</span>
+              <button
+                class="rm"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  remove(item.symbol);
+                }}
+                title="Remove"
+                aria-label={`Remove ${item.symbol}`}
+              >
+                <X class="size-3.5" />
+              </button>
+            </div>
+          {/each}
+          {#if items.length === 0}
+            <EmptyState message="No instruments. Add one above." />
+          {/if}
+        </div>
+      </ScrollArea>
     {/if}
   {/if}
 </section>
@@ -290,17 +299,10 @@
     gap: 4px;
     padding: 8px 10px;
   }
-  .exch-select {
-    background: var(--canvas-raised);
-    border: 1px solid var(--hairline);
-    border-radius: 4px;
-    color: var(--body);
-    padding: 5px 4px;
-    font-size: 11px;
+  .list-scroll {
+    min-height: 0;
   }
   .list {
-    flex: 1;
-    overflow-y: auto;
     padding-bottom: 6px;
   }
   /* 28px rows (DESIGN §4 table contract). Content is two-line (symbol/exch +

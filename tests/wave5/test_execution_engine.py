@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from shettyxtreme.core.interfaces.order_executor import (
-    Order,
+from shettyxtreme.core.data_models import (
+    OrderRequest,
     OrderSide,
     OrderType,
     ProductType,
@@ -80,11 +80,11 @@ async def test_approve_places_order() -> None:
     )
     approval_id = engine.submit_signal(_make_signal(), _make_hint())
     order = await engine.approve(approval_id)
-    assert isinstance(order, Order)
+    assert isinstance(order, OrderRequest)
     assert order.side == OrderSide.BUY
     assert executor.place_order.await_count == 1
     placed = executor.place_order.call_args.args[0]
-    assert isinstance(placed, Order)
+    assert isinstance(placed, OrderRequest)
     assert placed.symbol == "NIFTY"
     assert engine.get_approval(approval_id).status == ApprovalStatus.APPROVED.value
 

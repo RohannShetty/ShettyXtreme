@@ -149,3 +149,70 @@ async def test_scorecard_net_ev_unavailable_empty(client, tmp_path, monkeypatch)
     metrics = {m["key"]: m for m in resp.json()["metrics"]}
     assert metrics["fills"]["available"] is False
     assert metrics["net_ev_per_session"]["available"] is False
+
+
+class _FakeProjection:
+    """Minimal double for app.state.intelligence_projection (get_regime only)."""
+
+    def __init__(self, regime: str) -> None:
+        self._regime = regime
+
+    def get_regime(self) -> dict:
+        return {"regime": self._regime}
+
+
+@pytest.mark.asyncio
+async def test_scorecard_current_regime_null_without_projection(
+    client, tmp_path, monkeypatch
+) -> None:
+    """No intelligence projection wired → current_regime is None (never 500)."""
+    from shettyxtreme.terminal.api.app import app
+
+    monkeypatch.setattr(ar, "RESEARCH_DB_PATH", str(tmp_path / "research.db"))
+    monkeypatch.setattr(ar, "SESSIONS_DB_PATH", str(tmp_path / "sessions.db"))
+    monkeypatch.setattr(ar, "LEARNING_DB_PATH", str(tmp_path / "learning.db"))
+    monkeypatch.setattr(ar, "LEDGER_DB_PATH", str(tmp_path / "ledger.db"))
+    # Guarantee absence regardless of leftovers from lifespan-wiring tests.
+    monkeypatch.delattr(app.state, "intelligence_projection", raising=False)
+    resp = await client.get("/api/analytics/scorecard")
+    assert resp.status_code == 200
+    assert resp.json()["current_regime"] is None
+
+
+@pytest.mark.asyncio
+async def test_scorecard_carries_current_regime(client, tmp_path, monkeypatch) -> None:
+    """Scorecard reflects the projection's current regime (phase6 #11)."""
+    from shettyxtreme.terminal.api.app import app
+
+    monkeypatch.setattr(ar, "RESEARCH_DB_PATH", str(tmp_path / "research.db"))
+    monkeypatch.setattr(ar, "SESSIONS_DB_PATH", str(tmp_path / "sessions.db"))
+    monkeypatch.setattr(ar, "LEARNING_DB_PATH", str(tmp_path / "learning.db"))
+    monkeypatch.setattr(ar, "LEDGER_DB_PATH", str(tmp_path / "ledger.db"))
+    monkeypatch.setattr(
+        app.state, "intelligence_projection", _FakeProjection("trending_up"), raising=False
+    )
+    resp = await client.get("/api/analytics/scorecard")
+    assert resp.status_code == 200
+    assert resp.json()["current_regime"] == "trending_up"
+
+
+@pytest.mark.asyncio
+async def test_scorecard_regime_lookup_failure_degrades_to_null(
+    client, tmp_path, monkeypatch
+) -> None:
+    """A broken projection (get_regime raises) → None, response still 200."""
+    from shettyxtreme.terminal.api.app import app
+
+    monkeypatch.setattr(ar, "RESEARCH_DB_PATH", str(tmp_path / "research.db"))
+    monkeypatch.setattr(ar, "SESSIONS_DB_PATH", str(tmp_path / "sessions.db"))
+    monkeypatch.setattr(ar, "LEARNING_DB_PATH", str(tmp_path / "learning.db"))
+    monkeypatch.setattr(ar, "LEDGER_DB_PATH", str(tmp_path / "ledger.db"))
+
+    class _BrokenProjection:
+        def get_regime(self) -> dict:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(app.state, "intelligence_projection", _BrokenProjection(), raising=False)
+    resp = await client.get("/api/analytics/scorecard")
+    assert resp.status_code == 200
+    assert resp.json()["current_regime"] is None

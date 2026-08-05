@@ -24,13 +24,8 @@ from enum import Enum
 from typing import Any
 from uuid import uuid4
 
-from shettyxtreme.core.interfaces.order_executor import (
-    Order,
-    OrderExecutor,
-    OrderSide,
-    OrderType,
-    ProductType,
-)
+from shettyxtreme.core.data_models import OrderRequest, OrderSide, OrderType, ProductType
+from shettyxtreme.core.interfaces.order_executor import OrderExecutor
 from shettyxtreme.integration.order_validator import OrderValidator
 from shettyxtreme.intelligence.risk.risk_engine import (
     Portfolio,
@@ -63,7 +58,7 @@ class PendingApproval:
     timestamp: datetime
     status: str
     expires_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    order: Order | None = None
+    order: OrderRequest | None = None
     signal_id: str = ""
     failure_reason: str | None = None
 
@@ -321,7 +316,7 @@ class ExecutionEngine:
         self._db_upsert(approval)
         return approval_id
 
-    async def approve(self, approval_id: str) -> Order:
+    async def approve(self, approval_id: str) -> OrderRequest:
         """Operator approves an approval: risk check -> validate -> place order."""
         approval = self._approvals.get(approval_id)
         if approval is None:
@@ -403,7 +398,7 @@ class ExecutionEngine:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-    def _build_order(self, signal: Signal, strategy_hint: dict[str, Any]) -> Order:
+    def _build_order(self, signal: Signal, strategy_hint: dict[str, Any]) -> OrderRequest:
         if signal.direction == SignalDirection.UP:
             side = OrderSide.BUY
         elif signal.direction == SignalDirection.DOWN:
@@ -418,7 +413,7 @@ class ExecutionEngine:
 
         product = strategy_hint.get("product", ProductType.MIS)
 
-        return Order(
+        return OrderRequest(
             symbol=strategy_hint["symbol"],
             exchange=strategy_hint["exchange"],
             side=side,
