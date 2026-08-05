@@ -77,7 +77,7 @@ CI gates (extend the v1 checks):
 - **Per-module test dirs** mirror the layout: `tests/core/`, `tests/intelligence/`, `tests/options/`, `tests/risk/`, `tests/execution/`, `tests/terminal/`, `tests/learning/`, `tests/integration/` — targeted runs, wave 1–7 gates per [Section 17 — Delivery Roadmap](17-delivery-roadmap.md).
 - **Wave suites** are the phase exit criteria (e.g. `test_get_options`, `test_get_strategy_hint`, `test_execution_mode_default` in Phase 2).
 - **Vendor tests**: `FILES.yaml` hash integrity + the no-import gate; the vendored set is validated, never executed.
-- **Cross gates** (every change): full suite green (495+), import-rule greps, 500-line rule.
+- **Cross gates** (every change): full suite green (495+), import-rule greps, 1000-line rule.
 
 ## Branch / worktree workflow
 

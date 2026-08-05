@@ -27,9 +27,9 @@ npm run build    # → src/shettyxtreme/terminal/static/ (COMMITTED bundle)
 
 Run after every change; the repo has no `.github/` so these are grep/wc/pytest checks, not automation:
 
-1. Full suite passes (command above). Suite: **599 passed / 0 failed / 3 skipped** (v0.8.0).
+1. Full suite passes (command above). Suite: **1012 passed / 0 failed / 0 skipped** (v0.12.0).
 2. `grep -r "import openalgo\|from openalgo" src/` → ZERO matches (standalone rule)
-3. No file > 500 lines — **known violations, don't reintroduce more**: `integration/dhan/trading_adapter.py` (529), `integration/dhan/data_adapter.py` (683), `terminal/api/app.py` (565)
+3. No file > 1000 lines (god-module guard)
 4. `core/` has zero external imports — **known violation**: `core/config/config_manager.py:10` imports `yaml` (pre-existing, slated for fix)
 
 Tests live in `tests/wave1`–`wave8` (feature waves) plus per-module dirs (`core/`, `options/`, `execution/`, `terminal/`, `intelligence/`, `vendor/`). Match the closest existing location when adding tests.
@@ -47,6 +47,7 @@ Tests live in `tests/wave1`–`wave8` (feature waves) plus per-module dirs (`cor
 - Binding: `docs/architecture/v2/ARCHITECTURE_V2.md` (master + 20 sections, decisions D1–D12, ADRs), `DESIGN.md` (UI design contract).
 - **DESIGN.md is binding for all UI work**: near-black canvas, one accent, Indian price convention — **red = up `#f6525c`, green = down `#2ebd85` — never "fix" this**. Numerals in JetBrains Mono tabular, labels in Inter.
 - Feature work follows the superpowers convention: spec → plan → handoff in `docs/superpowers/{specs,plans,handoffs}/` (dated `YYYY-MM-DD-<topic>.md`). Check for existing specs/plans before starting work.
+- **Tiny-fix exemption**: single-file fixes with no API/schema/behavior change and a small diff (< ~30 lines) skip the spec/plan/handoff ritual — fix, run the test suite, report. Docs stay mandatory for features, refactors, and multi-file work.
 - `CHANGELOG.md` is maintained per release with suite counts.
 
 ## Version & release

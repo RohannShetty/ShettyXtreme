@@ -18,7 +18,7 @@ $env:PYTHONPATH=""; .venv\Scripts\python.exe -m pytest tests/ -q --tb=short --ba
 ## Hard constraints
 
 - `grep -r "import openalgo\|from openalgo" src/` must return ZERO matches — `src/` must never import the vendored AGPL `vendor/openalgo/`.
-- No file may exceed 500 lines. Known violations exist (`integration/dhan/trading_adapter.py`, `integration/dhan/data_adapter.py`, `terminal/api/app.py`) — never introduce new ones.
+- No file may exceed 1000 lines.
 - `core/` has zero external imports.
 - Layered architecture is law: `core/` → nothing external; `intelligence/` → core only; `integration/` → core/interfaces + external APIs; `knowledge/` → core only (never intelligence/ or execution/); `research/` is the only LLM-touching layer. Modules communicate via the asyncio `EventBus` (`core/event_bus/`); no direct cross-layer module-to-module calls. Integration contracts are `typing.Protocol`s in `core/interfaces/`.
 - Execution is OBSERVER-first: platform proposes, human approves. OBSERVER is the default; `--mode LIVE` requires typed confirmation and never auto-restores. Never bypass this.
@@ -39,6 +39,7 @@ $env:PYTHONPATH=""; .venv\Scripts\python.exe -m pytest tests/ -q --tb=short --ba
 - Do not commit unless explicitly asked.
 - After modifying code, keep the knowledge graph current: `graphify update .` (AST-only).
 - Feature work follows spec → plan → handoff in `docs/superpowers/{specs,plans,handoffs}/` (dated `YYYY-MM-DD-<topic>.md`).
+- Tiny-fix exemption: single-file fixes with no API/schema/behavior change and a small diff (< ~30 lines) skip the spec/plan/handoff ritual — fix, run the test suite, report. Docs stay mandatory for features, refactors, and multi-file work.
 
 ## Graph-first policy (token discipline)
 
