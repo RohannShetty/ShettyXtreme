@@ -15,6 +15,7 @@
   import SetupWizard from "./components/SetupWizard.svelte";
   import Watchlist from "./components/Watchlist.svelte";
   import { Tabs, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
+  import { X } from "@lucide/svelte";
   import { connect, stop } from "./lib/ws";
 
   let route = $state(currentRoute());
@@ -35,12 +36,32 @@
     readQuery();
   }
 
+  // Ctrl+R toggles the right-side dock. Above 1440px it is docked in the grid;
+  // below that it slides in as a level-3 overlay drawer (DESIGN §5/§8). This is
+  // a workstation shortcut — the browser reload is intentionally suppressed
+  // while the cockpit is mounted. Esc closes the overlay drawer.
+  function onKeydown(event: KeyboardEvent): void {
+    if (
+      event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      event.key.toLowerCase() === "r"
+    ) {
+      event.preventDefault();
+      drawerOpen = !drawerOpen;
+    } else if (event.key === "Escape" && drawerOpen) {
+      drawerOpen = false;
+    }
+  }
+
   onMount(() => {
     window.addEventListener("hashchange", onHashChange);
+    window.addEventListener("keydown", onKeydown);
     readQuery();
     connect();
     return () => {
       window.removeEventListener("hashchange", onHashChange);
+      window.removeEventListener("keydown", onKeydown);
       stop();
     };
   });
@@ -89,7 +110,17 @@
           {/if}
         </Tabs>
       </div>
-      <div class="right-col">
+      <div class="right-col" class:open={drawerOpen}>
+        <header class="drawer-head">
+          <h2>Right Dock</h2>
+          <button
+            class="drawer-close"
+            onclick={() => (drawerOpen = false)}
+            aria-label="Close right dock"
+          >
+            <X class="size-4" />
+          </button>
+        </header>
         <ProposalQueue />
         <ResearchPanel />
         <KnowledgePanel />
@@ -119,12 +150,14 @@
     padding: 8px;
     height: 100vh;
   }
+  /* 3-col workspace: rail 260px | center flex | right-col 320px (DESIGN §5/§15).
+     No overflow-x here — every panel scrolls inside itself (DESIGN §8). */
   .workspace {
     display: grid;
-    grid-template-columns: minmax(260px, 3fr) minmax(0, 6fr) minmax(320px, 3fr);
+    grid-template-columns: 260px minmax(0, 1fr) 320px;
     gap: 8px;
     min-height: 0;
-    overflow-x: auto;
+    overflow: hidden;
   }
   .rail {
     min-width: 260px;
@@ -145,6 +178,10 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
+    /* Panels scroll inside their column. The chain grid (min 720px) scrolls
+       horizontally here instead of pushing the viewport wide. */
+    overflow-x: auto;
+    overflow-y: hidden;
   }
   .tab-panel > :global(*) {
     flex: 1;
@@ -156,6 +193,38 @@
     gap: 8px;
     min-width: 320px;
     min-height: 0;
+    overflow: hidden;
+  }
+  /* Drawer chrome — only rendered in overlay mode below 1440px. */
+  .drawer-head {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: var(--surface-elevated);
+    border: 1px solid var(--hairline-strong);
+    border-radius: 6px 6px 0 0;
+  }
+  .drawer-head h2 {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+  .drawer-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--faint);
+    cursor: pointer;
+    padding: 2px;
+  }
+  .drawer-close:hover {
+    color: var(--ink);
   }
   .simple-view {
     height: 100vh;
@@ -192,10 +261,47 @@
 
   @media (max-width: 1439px) {
     .workspace {
-      grid-template-columns: minmax(260px, 3fr) minmax(0, 9fr);
+      grid-template-columns: 260px minmax(0, 1fr);
     }
+    /* Right dock becomes a level-3 overlay drawer: surface-overlay +
+       hairline-strong, no drop shadow (DESIGN §6). Toggle: Ctrl+R, Esc,
+       the header logs button, or the drawer's own close. */
     .right-col {
-      display: none;
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 30;
+      width: min(380px, 88vw);
+      min-width: min(380px, 88vw);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 8px;
+      overflow-y: auto;
+      background: var(--surface-overlay);
+      border-left: 1px solid var(--hairline-strong);
+      border-radius: 0;
+      transform: translateX(100%);
+      transition: transform 120ms ease-out;
+    }
+    .right-col.open {
+      transform: translateX(0);
+    }
+    .drawer-head {
+      display: flex;
+    }
+    /* LogDrawer self-overlays below 1440px; dock it inside the right dock
+       instead so the two never fight for the viewport edge. */
+    .right-col :global(.drawer) {
+      position: static !important;
+      transform: none !important;
+      width: auto !important;
+      min-width: 0 !important;
+      background: var(--surface-overlay) !important;
+      border-left: none !important;
+      border-radius: 0 !important;
+      transition: none !important;
     }
   }
 </style>

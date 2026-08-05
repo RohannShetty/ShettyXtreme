@@ -20,6 +20,7 @@
   };
 
   const STALE_MS = 60_000;
+  const FLASH_MS = 150;
 
   let items: WatchItem[] = $state([]);
   let selected = $state("");
@@ -28,10 +29,16 @@
   let error = $state("");
   let loading = $state(true);
   let now = $state(Date.now());
-  const flashMap = new Map<string, "up" | "down">();
+  // Reactive flash record (keyed by symbol). Must be $state so the 150ms
+  // removal re-renders and the CSS animation can restart on the next tick.
+  let flashes = $state<Record<string, "up" | "down">>({});
+  const flashTimers = new Map<string, number>();
   // symbol -> epoch ms of the last tick we actually saw for that symbol
   const lastSeenMs = new Map<string, number>();
+  // symbol -> last LTP seen in the tick stream (flash direction = tick move)
+  const prevLtp = new Map<string, number>();
   let staleTimer: number | undefined;
+  let rowEls: (HTMLDivElement | undefined)[] = [];
 
   onMount(() => {
     load();
@@ -40,6 +47,8 @@
     return () => {
       unsub();
       if (staleTimer !== undefined) window.clearInterval(staleTimer);
+      for (const id of flashTimers.values()) window.clearTimeout(id);
+      flashTimers.clear();
     };
   });
 
@@ -67,14 +76,35 @@
     if (!tick || typeof tick.symbol !== "string") return;
     const existing = items.find((i) => i.symbol === tick.symbol);
     if (existing) {
-      if (typeof tick.ltp === "number") existing.ltp = tick.ltp;
+      if (typeof tick.ltp === "number") {
+        // Flash direction is the tick-vs-previous-tick move (DESIGN §3.2);
+        // the persistent LTP color stays on change_pct (session direction),
+        // matching the header hero. Red = rise, green = fall — Indian law.
+        const prev = prevLtp.get(tick.symbol) ?? existing.ltp;
+        if (tick.ltp !== prev) {
+          scheduleFlash(tick.symbol, tick.ltp > prev ? "up" : "down");
+        }
+        prevLtp.set(tick.symbol, tick.ltp);
+        existing.ltp = tick.ltp;
+      }
       if (typeof tick.change_pct === "number") existing.change_pct = tick.change_pct;
       if (typeof tick.volume === "number") existing.volume = tick.volume;
       lastSeenMs.set(tick.symbol, Date.now());
-      flashMap.set(tick.symbol, (tick.change_pct ?? existing.change_pct) >= 0 ? "up" : "down");
-      window.setTimeout(() => flashMap.delete(tick.symbol ?? ""), 160);
       items = items.slice();
     }
+  }
+
+  function scheduleFlash(symbol: string, dir: "up" | "down"): void {
+    flashes[symbol] = dir;
+    const prev = flashTimers.get(symbol);
+    if (prev !== undefined) window.clearTimeout(prev);
+    const id = window.setTimeout(() => {
+      const next = { ...flashes };
+      delete next[symbol];
+      flashes = next;
+      flashTimers.delete(symbol);
+    }, FLASH_MS);
+    flashTimers.set(symbol, id);
   }
 
   function isStale(item: WatchItem): boolean {
@@ -84,7 +114,7 @@
   }
 
   function flashClass(symbol: string): string {
-    const dir = flashMap.get(symbol);
+    const dir = flashes[symbol];
     return dir ? (dir === "up" ? "flash-up" : "flash-down") : "";
   }
 
@@ -111,6 +141,10 @@
       if (selected === symbol) selected = "";
       items = items.filter((i) => i.symbol !== symbol);
       lastSeenMs.delete(symbol);
+      prevLtp.delete(symbol);
+      const next = { ...flashes };
+      delete next[symbol];
+      flashes = next;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     }
@@ -120,11 +154,26 @@
     return value > 0 ? value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
   }
 
-  function onRowKeydown(event: KeyboardEvent, symbol: string): void {
+  // Per-row keyboard: Enter/Space selects; ArrowUp/ArrowDown moves the
+  // selection and the focus ring together. Handled on the interactive row so
+  // no non-interactive container carries a keydown listener.
+  function onRowKeydown(event: KeyboardEvent, idx: number): void {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      selectRow(symbol);
+      selectRow(items[idx].symbol);
+      return;
     }
+    if (items.length === 0) return;
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    let next: number;
+    if (event.key === "ArrowDown") {
+      next = Math.min(idx + 1, items.length - 1);
+    } else {
+      next = Math.max(idx - 1, 0);
+    }
+    event.preventDefault();
+    selectRow(items[next].symbol);
+    rowEls[next]?.focus();
   }
 
   function selectRow(symbol: string): void {
@@ -167,20 +216,25 @@
       <LoadingState label="Loading watchlist…" rows={4} />
     {:else}
       <div class="list">
-        {#each items as item (item.symbol)}
+        {#each items as item, i (item.symbol)}
           <div
             class={flashClass(item.symbol) ? `row ${flashClass(item.symbol)}` : "row"}
             class:selected={selected === item.symbol}
-            class:stale={isStale(item)}
+            bind:this={rowEls[i]}
             onclick={() => selectRow(item.symbol)}
-            onkeydown={(e) => onRowKeydown(e, item.symbol)}
+            onkeydown={(e) => onRowKeydown(e, i)}
             role="button"
             tabindex="0"
             title={isStale(item) ? "No tick in the last 60s" : ""}
           >
             <div class="sym-cell">
               <span class="ticker">{item.symbol}</span>
-              <span class="exch">{item.exchange}</span>
+              <span class="meta">
+                <span class="exch">{item.exchange}</span>
+                {#if isStale(item)}
+                  <span class="stale-chip">STALE</span>
+                {/if}
+              </span>
             </div>
             <span class="num ltp {pnlClass(item.change_pct)}">{fmtLtp(item.ltp)}</span>
             <span class="num chg {pnlClass(item.change_pct)}">{item.change_pct > 0 ? "+" : ""}{item.change_pct.toFixed(2)}%</span>
@@ -249,12 +303,15 @@
     overflow-y: auto;
     padding-bottom: 6px;
   }
+  /* 28px rows (DESIGN §4 table contract). Content is two-line (symbol/exch +
+     STALE chip); tight line-heights keep it inside the fixed row height. */
   .row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto 20px;
     gap: 8px;
     align-items: center;
-    padding: 5px 10px;
+    height: 28px;
+    padding: 0 10px;
     cursor: pointer;
     border-left: 2px solid transparent;
   }
@@ -265,33 +322,62 @@
     background: var(--row-selected);
     border-left-color: var(--accent);
   }
-  .row.stale {
-    opacity: 0.5;
-    transition: opacity 300ms ease;
+  .row:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--focus-ring);
   }
   .sym-cell {
     display: flex;
     flex-direction: column;
+    justify-content: center;
     min-width: 0;
   }
   .ticker {
     font-size: 12px;
+    line-height: 14px;
     color: var(--ink);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .meta {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    line-height: 14px;
+    min-width: 0;
+  }
   .exch {
     font-size: 9px;
     color: var(--faint);
+    white-space: nowrap;
+  }
+  /* STALE chip — DESIGN §4: {colors.warning} micro (11px) uppercase chip in
+     the cell corner. Replaces the old opacity-fade staleness (a stale terminal
+     must not look fresh — DESIGN §7). */
+  .stale-chip {
+    flex: none;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 14px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--warning);
+    background: color-mix(in srgb, var(--warning) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+    border-radius: 2px;
+    padding: 0 3px;
+    white-space: nowrap;
   }
   .ltp {
-    font-size: 12px;
+    font-size: 13px;
+    white-space: nowrap;
   }
   .chg {
     font-size: 11px;
     min-width: 58px;
     text-align: right;
+    white-space: nowrap;
   }
   .rm {
     background: none;

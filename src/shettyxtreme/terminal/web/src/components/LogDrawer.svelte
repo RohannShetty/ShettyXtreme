@@ -17,6 +17,7 @@
   let logs: LogEntry[] = $state([]);
   let error = $state("");
   let timer: number | undefined;
+  let drawerEl: HTMLElement | undefined;
 
   const MAX_LOGS = 200;
 
@@ -25,16 +26,35 @@
     timer = window.setInterval(refresh, 3000);
     const offAlert = onMessage("alert", (data) => appendBroadcast("alert", data));
     const offRisk = onMessage("risk", (data) => appendBroadcast("risk", data));
+    // Esc closes the drawer whenever the drawer (or a control inside it) has
+    // focus. The drawer takes focus on open so the shortcut is always live.
+    window.addEventListener("keydown", onKeydown);
     return () => {
       if (timer !== undefined) window.clearInterval(timer);
       offAlert();
       offRisk();
+      window.removeEventListener("keydown", onKeydown);
     };
   });
 
   onDestroy(() => {
     if (timer !== undefined) window.clearInterval(timer);
   });
+
+  // Keyboard: Esc closes the drawer whenever it (or a control inside it) has
+  // focus. The drawer takes focus on open so the shortcut is always live.
+  $effect(() => {
+    if (open) drawerEl?.focus();
+  });
+
+  function onKeydown(event: KeyboardEvent): void {
+    if (event.key !== "Escape") return;
+    const t = event.target as HTMLElement | null;
+    if (drawerEl && t && drawerEl.contains(t)) {
+      event.preventDefault();
+      open = false;
+    }
+  }
 
   async function refresh(): Promise<void> {
     try {
@@ -70,7 +90,13 @@
   }
 </script>
 
-<aside class="drawer" class:open>
+<aside
+  class="drawer"
+  class:open
+  tabindex="-1"
+  bind:this={drawerEl}
+  aria-label="Logs drawer"
+>
   <header class="drawer-head">
     <h2>Logs</h2>
     <Button variant="ghost" size="icon" class="size-7 text-faint hover:text-ink" onclick={() => (open = false)} aria-label="Close logs drawer">
@@ -79,8 +105,9 @@
   </header>
   <div class="log-list">
     {#each logs as log (log.timestamp + log.message)}
-      <div class="line mono {levelClass(log.level)}">
+      <div class="line">
         <span class="time">{fmtTime(log.timestamp)}</span>
+        <span class="level {levelClass(log.level)}">{log.level}</span>
         <span class="msg">{log.message}</span>
       </div>
     {/each}
@@ -94,39 +121,22 @@
 </aside>
 
 <style>
+  /* Docked panel — level-1 hairline card inside the right dock. The internal
+     overlay mode (<1440px) was removed in Phase 3 S6: the right-col overlay
+     drawer in App.svelte is the single overlay affordance now. */
   .drawer {
     display: flex;
     flex-direction: column;
-    min-width: 320px;
+    min-width: 0;
     min-height: 0;
     flex: 1 1 0;
     background: var(--canvas-raised);
-    border-left: 1px solid var(--hairline);
-    border-radius: 0 0 6px 0;
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    overflow: hidden;
   }
   .drawer:not(.open) {
     display: none;
-  }
-
-  @media (max-width: 1439px) {
-    .drawer {
-      position: fixed;
-      top: 0;
-      right: 0;
-      bottom: 0;
-      z-index: 30;
-      width: min(380px, 88vw);
-      border-left: 1px solid var(--hairline-strong);
-      /* Level-3 overlay: surface-overlay + scrim, no drop shadow (DESIGN.md §6) */
-      background: var(--surface-overlay);
-      transform: translateX(100%);
-      transition: transform 120ms ease-out;
-      display: flex;
-      border-radius: 0;
-    }
-    .drawer.open {
-      transform: translateX(0);
-    }
   }
   .drawer-head {
     display: flex;
@@ -146,34 +156,55 @@
   .log-list {
     flex: 1;
     overflow-y: auto;
-    padding: 6px 0;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
+  /* Log rows — surface-card cards, micro timestamps, body message text. */
   .line {
     display: flex;
-    gap: 10px;
-    padding: 3px 10px;
-    font-size: 11px;
-    border-bottom: 1px solid var(--hairline);
+    gap: 8px;
+    padding: 5px 8px;
+    background: var(--surface-card);
+    border: 1px solid var(--hairline);
+    border-radius: 4px;
     align-items: baseline;
   }
   .time {
     color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
     white-space: nowrap;
+    flex: none;
   }
-  .msg {
-    flex: 1;
-    min-width: 0;
-    word-break: break-word;
-    line-height: 1.45;
+  /* Level carries the status color (info / warning / danger) as a labeled
+     chip — color is never the only indicator (DESIGN.md §2.4, a11y). */
+  .level {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    flex: none;
   }
   .lv-info {
-    color: var(--muted);
+    color: var(--info);
   }
   .lv-warn {
     color: var(--warning);
   }
   .lv-error {
     color: var(--danger);
+  }
+  .msg {
+    flex: 1;
+    min-width: 0;
+    word-break: break-word;
+    line-height: 1.45;
+    font-size: 12px;
+    color: var(--body);
   }
   .empty {
     color: var(--faint);

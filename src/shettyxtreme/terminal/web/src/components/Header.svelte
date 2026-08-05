@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import { authStatus, get, type AuthStatus } from "../lib/api";
   import { applyTheme, getTheme, type Theme } from "../lib/theme";
+  import { selectedSymbol } from "../lib/selection";
+  import { onMessage } from "../lib/ws";
   import { Button } from "$lib/components/ui/button";
   import {
     Tooltip,
@@ -29,6 +31,15 @@
     next_event: string;
   };
 
+  type WatchlistItem = { symbol: string; exchange: string };
+
+  type Tick = {
+    symbol: string;
+    ltp: number;
+    change_pct: number;
+    volume: number;
+  };
+
   let {
     drawerOpen = $bindable(false),
     onDrawer = () => {},
@@ -43,6 +54,34 @@
   let theme: Theme = $state(getTheme());
   let refreshTimer: number | undefined;
 
+  // --- LTP hero (DESIGN §5 header anatomy, §3.1 number-xl) ---
+  let selected = $derived($selectedSymbol);
+  let tickBySymbol = $state<Record<string, Tick>>({});
+  let exchangeBySymbol = $state<Record<string, string>>({});
+  let flashDir = $state<"" | "up" | "down">("");
+  let flashTimer: number | undefined;
+
+  let tick = $derived(selected ? tickBySymbol[selected] : undefined);
+  let exchange = $derived(selected ? (exchangeBySymbol[selected] ?? "NSE") : "");
+  let changePct = $derived(tick?.change_pct ?? null);
+  let ltp = $derived(tick?.ltp ?? null);
+  // Indian price law: red = up, green = down. Flash toggles color weight
+  // (price-up-strong), never font size/weight — no jitter (DESIGN §3.2).
+  let ltpColor = $derived(
+    flashDir === "up"
+      ? "price-up-strong"
+      : flashDir === "down"
+        ? "price-down-strong"
+        : changePct !== null && changePct > 0
+          ? "price-up"
+          : changePct !== null && changePct < 0
+            ? "price-down"
+            : "price-flat",
+  );
+  let ltpFlash = $derived(
+    flashDir === "up" ? "flash-up" : flashDir === "down" ? "flash-down" : "",
+  );
+
   function toggleTheme(): void {
     theme = theme === "dark" ? "light" : "dark";
     applyTheme(theme);
@@ -51,11 +90,16 @@
   onMount(() => {
     load();
     loadCreds();
+    loadExchanges();
+    const offTick = onMessage("tick", applyTick);
     refreshTimer = window.setInterval(() => {
       load();
       loadCreds();
+      loadExchanges();
     }, 30_000);
     return () => {
+      offTick();
+      if (flashTimer !== undefined) window.clearTimeout(flashTimer);
       if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
     };
   });
@@ -79,6 +123,52 @@
     } catch {
       credStatus = null;
     }
+  }
+
+  // Build symbol → exchange map from the watchlist so the hero can show the
+  // exchange next to the selected symbol (the selection store carries the
+  // symbol only).
+  async function loadExchanges(): Promise<void> {
+    try {
+      const items = await get<WatchlistItem[]>("/api/watchlist");
+      const map: Record<string, string> = {};
+      for (const it of items) {
+        if (it && it.symbol) map[it.symbol] = it.exchange || "NSE";
+      }
+      exchangeBySymbol = map;
+    } catch {
+      /* header degrades silently */
+    }
+  }
+
+  // Capture live ticks so the hero tracks the selected symbol in real time.
+  // Direction is the tick-vs-previous-tick move; the persistent color comes
+  // from change_pct (the session direction), matching the watchlist.
+  function applyTick(data: unknown): void {
+    const t = data as Partial<Tick>;
+    if (!t || typeof t.symbol !== "string" || t.symbol === "") return;
+    const prev = tickBySymbol[t.symbol];
+    const ltpVal = typeof t.ltp === "number" ? t.ltp : prev?.ltp ?? 0;
+    tickBySymbol[t.symbol] = {
+      symbol: t.symbol,
+      ltp: ltpVal,
+      change_pct:
+        typeof t.change_pct === "number" ? t.change_pct : prev?.change_pct ?? 0,
+      volume: typeof t.volume === "number" ? t.volume : prev?.volume ?? 0,
+    };
+    if (prev !== undefined && ltpVal !== prev.ltp) {
+      flashDir = ltpVal > prev.ltp ? "up" : "down";
+      if (flashTimer !== undefined) window.clearTimeout(flashTimer);
+      flashTimer = window.setTimeout(() => (flashDir = ""), 150);
+    }
+  }
+
+  function fmtLtp(value: number | null): string {
+    if (value === null || !isFinite(value)) return "—";
+    return value.toLocaleString("en-IN", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
   }
 
   // Broker-neutral connection pip (S0 honesty hardening).
@@ -156,6 +246,24 @@
   <div class="brand">
     <span class="logo">SX</span>
     <span class="title">SHETTYXTREME TERMINAL</span>
+  </div>
+
+  <div
+    class="ltp-hero"
+    class:empty={!selected}
+    title={selected ? `${selected} · ${exchange} · LTP ${fmtLtp(ltp)}` : "Select a symbol in the watchlist to pin its live price here"}
+    aria-label={selected ? `${selected} ${exchange}, last traded price ${fmtLtp(ltp)}` : "No symbol selected"}
+  >
+    <div class="ltp-id">
+      <span class="ltp-symbol ticker">{selected || "—"}</span>
+      <span class="ltp-exch mono">{selected ? exchange : "NO SELECTION"}</span>
+    </div>
+    <span class="num ltp-value {ltpColor} {ltpFlash}">{fmtLtp(ltp)}</span>
+    {#if selected && changePct !== null}
+      <span class="num ltp-chg {ltpColor}">
+        {changePct > 0 ? "+" : ""}{changePct.toFixed(2)}%
+      </span>
+    {/if}
   </div>
 
   <ModeSwitcher />
@@ -245,13 +353,16 @@
     padding: 4px 12px;
     background: var(--canvas-raised);
     border-bottom: 1px solid var(--hairline);
-    min-height: 44px;
+    height: 44px;
+    flex: none;
+    overflow: hidden;
   }
   .brand {
     display: flex;
     align-items: center;
     gap: 8px;
     margin-right: 4px;
+    min-width: 0;
   }
   .logo {
     background: var(--accent);
@@ -260,6 +371,7 @@
     font-size: 11px;
     border-radius: 4px;
     padding: 2px 5px;
+    flex: none;
   }
   .title {
     color: var(--ink);
@@ -267,6 +379,66 @@
     font-weight: 700;
     letter-spacing: 0.08em;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+  /* LTP hero — selected symbol + exchange + number-xl live price (DESIGN §5). */
+  .ltp-hero {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: none;
+    padding: 0 12px;
+    margin-left: 2px;
+    border-left: 1px solid var(--hairline);
+    border-right: 1px solid var(--hairline);
+    min-height: 0;
+  }
+  .ltp-id {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .ltp-symbol {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+  .ltp-exch {
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    color: var(--faint);
+    white-space: nowrap;
+  }
+  .ltp-value {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 32px;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+  }
+  .ltp-chg {
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .price-flat {
+    color: var(--ink);
+  }
+  .ltp-hero .price-up-strong {
+    color: var(--price-up-strong);
+  }
+  .ltp-hero .price-down-strong {
+    color: var(--price-down-strong);
+  }
+  .ltp-hero.empty .ltp-symbol,
+  .ltp-hero.empty .ltp-value {
+    color: var(--faint);
   }
   .health {
     display: flex;
@@ -353,7 +525,7 @@
     max-width: 300px;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex: none;
+    flex: 0 1 auto;
   }
   .cred-chip {
     display: inline-flex;
@@ -416,5 +588,28 @@
   .session-time {
     font-size: 11px;
     color: var(--faint);
+  }
+
+  /* Progressive header compaction — safety items (mode, kill switch, pip,
+     market-hours, cred chip, toggles) never collapse (DESIGN §8); the
+     decorative/secondary chrome yields first. */
+  @media (max-width: 1360px) {
+    .ltp-chg {
+      display: none;
+    }
+  }
+  @media (max-width: 1240px) {
+    .title {
+      display: none;
+    }
+  }
+  @media (max-width: 1080px) {
+    .head {
+      gap: 8px;
+      padding: 4px 8px;
+    }
+    .session-time {
+      display: none;
+    }
   }
 </style>

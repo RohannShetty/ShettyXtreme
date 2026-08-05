@@ -172,6 +172,11 @@
     min-height: 240px;
     padding: 10px;
     height: 100%;
+    /* Level-1 hairline card on the canvas (DESIGN §2.2/§6): the strip is a
+       panel, not a bare surface. */
+    background: var(--surface-card);
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
   }
   .pos-table,
   .risk-block {
