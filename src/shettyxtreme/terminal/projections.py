@@ -37,6 +37,11 @@ class WatchlistProjection:
                 "ltp": d.ltp,
                 "volume": d.volume,
                 "change_pct": change_pct,
+                # P6-W2: chain fields ride the wire so ChainGrid updates live
+                # without REST polling. iv stays REST-only (HSM feed limit).
+                "oi": d.oi,
+                "strike": d.strike,
+                "option_type": d.option_type,
                 "timestamp": d.timestamp,
             }
         symbol = d.get("symbol")
@@ -49,6 +54,9 @@ class WatchlistProjection:
             "ltp": d.get("ltp", existing.get("ltp", 0.0)),
             "change_pct": d.get("change_pct", d.get("change", existing.get("change_pct", 0.0))),
             "volume": d.get("volume", existing.get("volume", 0)),
+            "oi": d.get("oi", existing.get("oi")),
+            "strike": d.get("strike", existing.get("strike")),
+            "option_type": d.get("option_type", existing.get("option_type")),
             "security_id": d.get("security_id", existing.get("security_id")),
             "timestamp": d.get("timestamp", event.timestamp),
         }
@@ -57,6 +65,9 @@ class WatchlistProjection:
             "ltp": self._data[symbol]["ltp"],
             "change_pct": self._data[symbol]["change_pct"],
             "volume": self._data[symbol]["volume"],
+            "oi": self._data[symbol]["oi"],
+            "strike": self._data[symbol]["strike"],
+            "option_type": self._data[symbol]["option_type"],
         })
 
     def add(self, symbol: str, exchange: str = "NSE", security_id: str | None = None) -> dict[str, Any]:
@@ -67,6 +78,9 @@ class WatchlistProjection:
                 "ltp": 0.0,
                 "change_pct": 0.0,
                 "volume": 0,
+                "oi": None,
+                "strike": None,
+                "option_type": None,
                 "security_id": security_id,
                 "timestamp": None,
             }

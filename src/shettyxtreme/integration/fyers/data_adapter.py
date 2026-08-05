@@ -161,7 +161,9 @@ class FyersDataAdapter:
         ``prev_close_price``. There is no ``close_price`` in the feed. Open
         interest rides the SDK's uppercase ``OI`` key, which only appears on
         ``data_val`` ticks (F&O / equities) — ``index_val`` ticks omit it, so
-        it defaults to ``None`` when absent.
+        it defaults to ``None`` when absent. ``strike``/``option_type`` come
+        from the resolved ticker (``from_fyers``) and are ``None`` for
+        non-option symbols (P6-W2 chain payload).
         """
         if not isinstance(raw, dict):
             return None
@@ -180,6 +182,11 @@ class FyersDataAdapter:
         internal = str(parsed.get("internal_symbol", ticker)) if parsed else ticker
         exchange = str(parsed.get("exchange", "")) if parsed else ""
         raw_oi = raw.get("OI")
+        # P6-W2: strike/option_type are already computed by from_fyers() —
+        # keep them on the Tick so the chain grid can update live. Option
+        # ticks carry real values; index/equity ticks carry None.
+        strike = parsed.get("strike") if parsed else None
+        option_type = parsed.get("option_type") if parsed else None
         return Tick(
             symbol=internal,
             exchange=exchange,
@@ -195,6 +202,8 @@ class FyersDataAdapter:
             # F-INT-005: the SDK's OI key is uppercase and only present on
             # data_val (F&O/equity) ticks; index ticks omit it -> None.
             oi=_to_int(raw_oi) if raw_oi is not None else None,
+            strike=float(strike) if strike is not None else None,
+            option_type=str(option_type) if option_type is not None else None,
         )
 
     async def _on_ticks(self, batch: list[Any]) -> None:

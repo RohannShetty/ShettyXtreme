@@ -33,6 +33,9 @@ async def test_watchlist_broadcast_on_tick_dict(mock_broadcast):
         "ltp": 24000.0,
         "change_pct": 1.2,
         "volume": 1000,
+        "oi": None,
+        "strike": None,
+        "option_type": None,
     })
 
 
@@ -61,6 +64,54 @@ async def test_watchlist_broadcast_on_tick_dataclass(mock_broadcast):
 
 @pytest.mark.asyncio
 @patch("shettyxtreme.terminal.projections.ws_bridge.broadcast", new_callable=AsyncMock)
+async def test_watchlist_broadcast_carries_chain_fields(mock_broadcast):
+    """P6-W2: oi/strike/option_type ride the tick wire so ChainGrid updates live."""
+    proj = WatchlistProjection()
+    tick = Tick(symbol="NIFTY", exchange="NSE_FNO", ltp=245.5, volume=500,
+                timestamp=datetime.now(UTC), close=240.0, oi=123456,
+                strike=25000.0, option_type="CE")
+    event = Event(
+        topic=Topic.MARKET_DATA_TICK,
+        data=tick,
+        source="test",
+    )
+
+    await proj.on_market_data(event)
+
+    mock_broadcast.assert_awaited_once()
+    args = mock_broadcast.call_args
+    assert args[0][0] == "tick"
+    payload = args[0][1]
+    assert payload["oi"] == 123456
+    assert payload["strike"] == 25000.0
+    assert payload["option_type"] == "CE"
+    assert payload["ltp"] == 245.5
+
+
+@pytest.mark.asyncio
+@patch("shettyxtreme.terminal.projections.ws_bridge.broadcast", new_callable=AsyncMock)
+async def test_watchlist_broadcast_null_chain_fields_for_index(mock_broadcast):
+    """P6-W2: index ticks broadcast honest nulls for chain fields."""
+    proj = WatchlistProjection()
+    tick = Tick(symbol="NIFTY", exchange="NSE", ltp=24000.0, volume=100,
+                timestamp=datetime.now(UTC), close=23900.0)
+    event = Event(
+        topic=Topic.MARKET_DATA_TICK,
+        data=tick,
+        source="test",
+    )
+
+    await proj.on_market_data(event)
+
+    mock_broadcast.assert_awaited_once()
+    payload = mock_broadcast.call_args[0][1]
+    assert payload["oi"] is None
+    assert payload["strike"] is None
+    assert payload["option_type"] is None
+
+
+@pytest.mark.asyncio
+@patch("shettyxtreme.terminal.projections.ws_bridge.broadcast", new_callable=AsyncMock)
 async def test_watchlist_broadcast_on_tick(mock_broadcast):
     proj = WatchlistProjection()
     event = Event(
@@ -76,6 +127,9 @@ async def test_watchlist_broadcast_on_tick(mock_broadcast):
         "ltp": 24000.0,
         "change_pct": 1.2,
         "volume": 1000,
+        "oi": None,
+        "strike": None,
+        "option_type": None,
     })
 
 

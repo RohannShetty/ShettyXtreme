@@ -9,6 +9,22 @@
 
 export type WsMessageHandler = (data: unknown) => void;
 
+/** Live market-data tick broadcast by the backend (WatchlistProjection).
+ *
+ * Chain fields (oi/strike/option_type) ride the wire so ChainGrid can update
+ * live without REST polling; they are null for non-option symbols (indexes,
+ * equities). iv is intentionally absent — the HSM symbol-update feed has no
+ * IV field, so IV stays REST-polled. */
+export type TickPayload = {
+  symbol: string;
+  ltp: number;
+  change_pct: number;
+  volume: number;
+  oi: number | null;
+  strike: number | null;
+  option_type: string | null;
+};
+
 /** Reconnect policy: exponential backoff (2s → 4s → 8s → 16s → 30s cap)
  *  with ±20% random jitter so a fleet of clients never thundering-herds the
  *  server after an outage. The attempt counter resets on a successful open. */

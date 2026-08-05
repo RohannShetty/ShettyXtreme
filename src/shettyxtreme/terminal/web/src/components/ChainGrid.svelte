@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { get } from "../lib/api";
   import { selectedSymbol } from "../lib/selection";
-  import { onMessage } from "../lib/ws";
+  import { onMessage, type TickPayload } from "../lib/ws";
   import { Input } from "$lib/components/ui/input";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
   import { Select, SelectContent, SelectItem, SelectTrigger } from "$lib/components/ui/select";
@@ -43,10 +43,10 @@
   type Side = "ce" | "pe";
   type Dir = "up" | "down";
 
-  // IV/OI are not carried by the WS tick payload (the backend broadcasts
-  // {symbol, ltp, change_pct, volume} only), so a quiet REST poll keeps those
-  // columns live between loads. LTP of watchlisted contracts ticks in real
-  // time via WS and flashes on each move.
+  // IV is not carried by the WS tick payload (the HSM feed has no IV field),
+  // so a quiet REST poll keeps the IV column live between loads. LTP/OI and
+  // the strike/option_type identity of watchlisted contracts tick in real
+  // time via WS and flash on each move.
   const REFRESH_MS = 15_000;
   const FLASH_MS = 150;
   const LIVE_MS = 60_000;
@@ -147,36 +147,21 @@
     return idx;
   }
 
-  // Parse a contract symbol into (strike, side). Handles Fyers-style
-  // "NIFTY24AUG24500CE" and spaced "NIFTY 24500 CE". Returns null for plain
-  // underlying symbols (e.g. "NIFTY") which carry no strike.
-  function parseTickKey(raw: string): { strike: number; side: Side } | null {
-    const s = raw.trim().toUpperCase();
-    const m = /^(.*?)(\d+(?:\.\d+)?)[A-Z]*\s*(CE|PE)$/.exec(s);
-    if (!m) return null;
-    const strike = Number(m[2]);
-    if (!isFinite(strike) || strike <= 0) return null;
-    return { strike, side: m[3] === "PE" ? "pe" : "ce" };
-  }
-
   function sideOf(optionType: string): Side {
     return String(optionType).toUpperCase() === "PE" ? "pe" : "ce";
   }
 
+  // Live chain tick (P6-W2): the backend broadcasts strike/option_type/oi on
+  // every tick, so the contract identity comes from the wire payload — no
+  // symbol regex parsing. Non-option symbols (indexes, equities) carry
+  // strike/option_type = null and are skipped here.
   function applyTick(data: unknown): void {
-    const t = data as Partial<Contract> & { symbol?: unknown };
+    const t = data as Partial<TickPayload & Contract> & { symbol?: unknown };
     if (!t || typeof t.symbol !== "string" || t.symbol === "") return;
-    // Prefer explicit strike/option_type fields (future payload), else parse
-    // the contract symbol.
-    let strike: number | null = typeof t.strike === "number" && isFinite(t.strike) ? t.strike : null;
-    let side: Side | null = typeof t.option_type === "string" ? sideOf(t.option_type) : null;
-    if (strike === null || side === null) {
-      const parsed = parseTickKey(t.symbol);
-      if (!parsed) return;
-      if (strike === null) strike = parsed.strike;
-      if (side === null) side = parsed.side;
-    }
-    const key = contractKey(strike, side);
+    const strike = typeof t.strike === "number" && isFinite(t.strike) ? t.strike : null;
+    const optionType = typeof t.option_type === "string" ? t.option_type : null;
+    if (strike === null || optionType === null) return;
+    const key = contractKey(strike, sideOf(optionType));
     const entry = matchIndex.get(key);
     if (!entry) return;
     const c = contracts[entry.rowIdx];

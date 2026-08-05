@@ -156,6 +156,72 @@ class TestSubscribeTicks:
         assert received[0].oi is None
 
     @pytest.mark.asyncio
+    async def test_option_tick_extracts_strike_and_option_type(
+        self, adapter: FyersDataAdapter, data_socket: _FakeDataSocket
+    ) -> None:
+        """P6-W2: option ticks carry strike/option_type on the parsed Tick."""
+        received: list[Tick] = []
+        await adapter.subscribe_ticks(["NIFTY"], lambda t: received.append(t))
+        option_tick = dict(
+            _SBIN_TICK,
+            symbol="NSE:NIFTY24OCT25000CE",
+            ltp=245.5,
+            prev_close_price=240.0,
+            OI=123456,
+        )
+        await data_socket.tick_handler([option_tick])
+
+        assert len(received) == 1
+        tick = received[0]
+        assert tick.symbol == "NIFTY"
+        assert tick.strike == 25000.0
+        assert tick.option_type == "CE"
+        assert tick.oi == 123456
+
+    @pytest.mark.asyncio
+    async def test_put_tick_extracts_pe_option_type(
+        self, adapter: FyersDataAdapter, data_socket: _FakeDataSocket
+    ) -> None:
+        """P6-W2: weekly PE tickers resolve to option_type PE."""
+        received: list[Tick] = []
+        await adapter.subscribe_ticks(["NIFTY"], lambda t: received.append(t))
+        put_tick = dict(
+            _SBIN_TICK,
+            symbol="NSE:NIFTY24O0825000PE",
+            ltp=180.25,
+            prev_close_price=240.0,
+            OI=98765,
+        )
+        await data_socket.tick_handler([put_tick])
+
+        assert len(received) == 1
+        tick = received[0]
+        assert tick.strike == 25000.0
+        assert tick.option_type == "PE"
+        assert tick.oi == 98765
+
+    @pytest.mark.asyncio
+    async def test_index_tick_strike_option_type_none(
+        self, adapter: FyersDataAdapter, data_socket: _FakeDataSocket
+    ) -> None:
+        """P6-W2: index ticks carry no strike/option_type (honest None)."""
+        received: list[Tick] = []
+        await adapter.subscribe_ticks(["NIFTY"], lambda t: received.append(t))
+        index_tick = dict(
+            _SBIN_TICK,
+            symbol="NSE:NIFTY50-INDEX",
+            ltp=18123.5,
+            prev_close_price=18100.0,
+        )
+        index_tick.pop("OI", None)
+        await data_socket.tick_handler([index_tick])
+
+        assert len(received) == 1
+        tick = received[0]
+        assert tick.strike is None
+        assert tick.option_type is None
+
+    @pytest.mark.asyncio
     async def test_index_symbol_resolves_to_index_ticker(
         self, adapter: FyersDataAdapter, data_socket: _FakeDataSocket
     ) -> None:
