@@ -66,7 +66,13 @@ graphify-out/
 data/
 
 # Agent / tool configuration
-.opencode/
+.opencode/*
+!.opencode/opencode.json
+!.opencode/oh-my-opencode-slim.jsonc
+!.opencode/oh-my-opencode-slim/
+!.opencode/oh-my-opencode-slim/**
+.opencode/plans/
+.opencode/plugins/
 .serena/
 
 # Reference repo clones (scratch — durable briefs live in docs/references/)

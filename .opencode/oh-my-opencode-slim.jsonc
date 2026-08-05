@@ -1,0 +1,30 @@
+{
+  // oh-my-opencode-slim — project-scoped config for ShettyXtreme
+  // Docs: https://github.com/alvinunreal/oh-my-opencode-slim/blob/master/docs/configuration.md
+  // All models run on opencode-go via headroom (token savings preserved).
+  // gpt-5.6-luna is excluded: its streams break through headroom (headroom issue #1944).
+  "preset": "shettyxtreme",
+  "autoUpdate": false,
+  "disabled_agents": ["observer"],
+  "presets": {
+    "shettyxtreme": {
+      "orchestrator": { "model": "opencode-go/qwen3.7-plus", "mcps": ["*", "!context7", "!gh_grep"], "skills": ["*"] },
+      "explorer":     { "model": "opencode-go/deepseek-v4-flash", "mcps": ["codegraph", "graphify"], "skills": [], "permission": { "edit": "deny" } },
+      "oracle":       { "model": "opencode-go/hy3", "mcps": ["open-second-brain", "codegraph"], "skills": ["simplify", "code-review", "diagnosing-bugs", "verification-planning", "systematic-debugging"], "permission": { "edit": "deny" } },
+      "librarian":    { "model": "opencode-go/deepseek-v4-flash", "mcps": ["context7", "gh_grep", "codegraph"], "skills": ["research"] },
+      "designer":     { "model": "opencode-go/deepseek-v4-flash", "mcps": ["codegraph"], "skills": ["design-taste-frontend", "ui-ux-pro-max", "design-system"] },
+      "fixer":        { "model": "opencode-go/deepseek-v4-flash", "mcps": ["codegraph", "graphify", "serena"], "skills": ["tdd", "verification-before-completion", "verification-planning", "simplify"] },
+      "council":      { "model": "opencode-go/qwen3.7-plus", "mcps": ["codegraph"], "skills": [] }
+    }
+  },
+  "council": {
+    "default_preset": "shettyxtreme",
+    "presets": {
+      "shettyxtreme": {
+        "alpha": { "model": "opencode-go/deepseek-v4-flash", "mcps": ["codegraph"] },
+        "beta":  { "model": "opencode-go/qwen3.7-plus", "mcps": ["codegraph"] },
+        "gamma": { "model": "opencode-go/mimo-v2.5", "mcps": ["codegraph"] }
+      }
+    }
+  }
+}
