@@ -80,6 +80,7 @@ The terminal runs in one of three modes. You choose the mode when you start it.
 
 A few keys answer directly, without reaching for the mouse. You can see the same list inside the terminal any time — press **Ctrl+/** (or **Ctrl+?**) or click the keyboard button at the top right of the screen.
 
+- **Ctrl+K** — Open the command palette. Type a few letters to jump to any screen or action.
 - **Ctrl+R** — Show or hide the right-hand panel (logs, proposals, research, and knowledge).
 - **Ctrl+M** — Move through the three modes: OBSERVER → PAPER → LIVE → back to OBSERVER. Landing on LIVE still asks you to type the confirmation.
 - **Ctrl+F** — Jump straight to the knowledge search box.

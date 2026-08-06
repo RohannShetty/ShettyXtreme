@@ -28,7 +28,7 @@
   } from "$lib/components/ui/dialog";
   import { Kbd } from "$lib/components/ui/kbd";
   import { activeTab, type CenterTabId } from "../lib/activeTab";
-  import { applyTheme, getTheme } from "../lib/theme";
+  import { applyTheme, getTheme, type Theme } from "../lib/theme";
   import {
     BookOpen,
     ChartBar,
@@ -149,7 +149,11 @@
       keywords: ["dark", "light", "appearance", "mode"],
       hint: "light/dark",
       icon: Sun,
-      run: () => applyTheme(getTheme() === "dark" ? "light" : "dark"),
+      run: () => {
+        const next: Theme = theme === "dark" ? "light" : "dark";
+        applyTheme(next);
+        theme = next;
+      },
     },
     {
       id: "act-kill",
@@ -176,17 +180,15 @@
   let selected = $state(0);
   let inputEl = $state<HTMLInputElement | null>(null);
 
-  // Theme toggle icon mirrors the header: Sun when dark (switch to light),
-  // Moon when light (switch to dark).
-  let themeIcon = $derived(getTheme() === "dark" ? Sun : Moon);
+  // Theme state mirrors the header: Sun cross-fades in when dark (switch to
+  // light), Moon when light. Read once on mount; the act-theme run handler
+  // keeps it in sync (R7).
+  let theme: Theme = $state(getTheme());
 
   let filtered = $derived.by(() => {
-    const items = ITEMS.map((item) =>
-      item.id === "act-theme" ? { ...item, icon: themeIcon } : item
-    );
     const q = query.trim();
-    if (!q) return items;
-    return items
+    if (!q) return ITEMS;
+    return ITEMS
       .map((item) => ({
         item,
         score: computeCommandScore(item.label, q, item.keywords),
@@ -299,7 +301,18 @@
               onclick={() => runItem(item)}
               onmouseenter={() => (selected = i)}
             >
+              {#if item.id === "act-theme"}
+              <span class="relative inline-flex size-3.5" aria-hidden="true">
+                <Sun
+                  class="absolute inset-0 size-3.5 transition-[opacity,filter,scale] duration-300 ease-[cubic-bezier(0.2,0,0,1)] {i === selected ? 'text-accent' : 'text-muted-foreground'} {theme === 'dark' ? 'opacity-100 scale-100 blur-0' : 'opacity-0 scale-[0.25] blur-[4px]'}"
+                />
+                <Moon
+                  class="absolute inset-0 size-3.5 transition-[opacity,filter,scale] duration-300 ease-[cubic-bezier(0.2,0,0,1)] {i === selected ? 'text-accent' : 'text-muted-foreground'} {theme === 'dark' ? 'opacity-0 scale-[0.25] blur-[4px]' : 'opacity-100 scale-100 blur-0'}"
+                />
+              </span>
+            {:else}
               <Icon class={i === selected ? "size-3.5 text-accent" : "size-3.5 text-muted-foreground"} />
+            {/if}
               <span class="item-label">{item.label}</span>
               <span class="item-hint mono">{item.hint}</span>
             </button>

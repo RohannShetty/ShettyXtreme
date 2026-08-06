@@ -81,3 +81,9 @@
     box-shadow: 0 0 0 5px rgba(229, 72, 77, 0);
   }
 }
+/* Reduced-motion guard — matches pip-pulse (Header) / live-pulse (ChainGrid). */
+@media (prefers-reduced-motion: reduce) {
+  .kill-pulse {
+    animation: none;
+  }
+}

@@ -11,6 +11,7 @@
   } from "../lib/api";
   import { Badge, type BadgeVariant } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
+  import { ScrollArea } from "$lib/components/ui/scroll-area";
   import {
     Dialog,
     DialogContent,
@@ -208,77 +209,79 @@
       {/if}
     </p>
   {:else}
-    <div class="rows">
-      {#each proposals as p (p.id)}
-        {@const stale = isStale(p.timestamp)}
-        {@const conv = convictionVariant(p.conviction)}
-        <div
-          class="row"
-          tabindex="0"
-          role="button"
-          aria-label={`${p.symbol} ${p.side} ${p.quantity} — press Enter to review and approve`}
-          onkeydown={(e) => {
-            if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
-              e.preventDefault();
-              openConfirm(p);
-            }
-          }}
-        >
-          <div class="row-main">
-            <div class="line1">
-              <span class="sym mono">{p.symbol}</span>
-              <Badge
-                class={p.side === "BUY"
-                  ? "border-price-up text-price-up"
-                  : "border-price-down text-price-down"}
+    <ScrollArea class="min-h-0">
+      <div class="rows">
+        {#each proposals as p (p.id)}
+          {@const stale = isStale(p.timestamp)}
+          {@const conv = convictionVariant(p.conviction)}
+          <div
+            class="row"
+            tabindex="0"
+            role="button"
+            aria-label={`${p.symbol} ${p.side} ${p.quantity} — press Enter to review and approve`}
+            onkeydown={(e) => {
+              if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+                e.preventDefault();
+                openConfirm(p);
+              }
+            }}
+          >
+            <div class="row-main">
+              <div class="line1">
+                <span class="sym mono">{p.symbol}</span>
+                <Badge
+                  class={p.side === "BUY"
+                    ? "border-price-up text-price-up"
+                    : "border-price-down text-price-down"}
+                >
+                  {p.side}
+                </Badge>
+                <Badge variant={conv}>{convictionLabel(conv)}</Badge>
+                {#if stale}
+                  <Badge class="border-warning text-warning">STALE</Badge>
+                {/if}
+                {#if p.hint_kind === "default"}
+                  <Badge class="border-warning text-warning">DEFAULT HINT</Badge>
+                {/if}
+              </div>
+              <div class="line2 mono">
+                <span>QTY <b>{p.quantity}</b></span>
+                <span>PRICE <b>{p.price != null ? fmtMoney(p.price) : "MKT"}</b></span>
+                <span>TYPE <b>{p.order_type}</b></span>
+                {#if stale && ageSeconds(p.timestamp) !== null}
+                  <span class="stale-time">{ageSeconds(p.timestamp)}s</span>
+                {:else}
+                  <span>{timeStr(p.timestamp)}</span>
+                {/if}
+              </div>
+            </div>
+            <div class="row-actions">
+              <Button
+                variant="default"
+                size="sm"
+                class="min-w-16"
+                disabled={busy || !canApprove}
+                title={canApprove
+                  ? "Approve and place this proposal"
+                  : "OBSERVER never places orders — switch to PAPER or LIVE to approve"}
+                onclick={() => openConfirm(p)}
               >
-                {p.side}
-              </Badge>
-              <Badge variant={conv}>{convictionLabel(conv)}</Badge>
-              {#if stale}
-                <Badge class="border-warning text-warning">STALE</Badge>
-              {/if}
-              {#if p.hint_kind === "default"}
-                <Badge class="border-warning text-warning">DEFAULT HINT</Badge>
-              {/if}
-            </div>
-            <div class="line2 mono">
-              <span>QTY <b>{p.quantity}</b></span>
-              <span>PRICE <b>{p.price != null ? fmtMoney(p.price) : "MKT"}</b></span>
-              <span>TYPE <b>{p.order_type}</b></span>
-              {#if stale && ageSeconds(p.timestamp) !== null}
-                <span class="stale-time">{ageSeconds(p.timestamp)}s</span>
-              {:else}
-                <span>{timeStr(p.timestamp)}</span>
-              {/if}
+                APPROVE
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                class="min-w-16"
+                disabled={busy}
+                onclick={() => doReject(p)}
+              >
+                REJECT
+              </Button>
             </div>
           </div>
-          <div class="row-actions">
-            <Button
-              variant="default"
-              size="sm"
-              class="min-w-16"
-              disabled={busy || !canApprove}
-              title={canApprove
-                ? "Approve and place this proposal"
-                : "OBSERVER never places orders — switch to PAPER or LIVE to approve"}
-              onclick={() => openConfirm(p)}
-            >
-              APPROVE
-            </Button>
-            <Button
-              variant="danger"
-              size="sm"
-              class="min-w-16"
-              disabled={busy}
-              onclick={() => doReject(p)}
-            >
-              REJECT
-            </Button>
-          </div>
-        </div>
-      {/each}
-    </div>
+        {/each}
+      </div>
+    </ScrollArea>
   {/if}
 
   {#if feedback}
@@ -432,7 +435,6 @@
     padding: 6px 10px;
   }
   .rows {
-    overflow-y: auto;
     display: flex;
     flex-direction: column;
   }

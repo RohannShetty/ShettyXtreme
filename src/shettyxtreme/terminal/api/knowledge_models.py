@@ -59,3 +59,4 @@ class KnowledgeStatusResponse(BaseModel):
     activated: int = 0
     tags: int = 0
     last_sync_at: datetime | None = None
+    last_sync_result: str | None = None

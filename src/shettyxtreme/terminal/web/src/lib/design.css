@@ -98,6 +98,9 @@ body {
   font-family: var(--font-sans);
   font-size: 13px;
   overflow: hidden;
+  /* macOS: Inter renders heavier than designed without this (R4). */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 .num, .ticker, table td:last-child, .mono {
   font-family: var(--font-mono);

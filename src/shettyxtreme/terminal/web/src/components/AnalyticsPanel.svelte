@@ -3,6 +3,7 @@
   import { get } from "../lib/api";
   import type { CalibrationPoint, RegimeRow, ScorecardMetric, ScorecardResponse } from "../lib/api";
   import { Button } from "$lib/components/ui/button";
+  import { ScrollArea } from "$lib/components/ui/scroll-area";
   import { RotateCw } from "@lucide/svelte";
 
   /** Analytics data older than this is flagged STALE (warning chip in the panel head). */
@@ -135,65 +136,67 @@
   {/if}
 
   {#if !error}
-    <div class="cards" role="listbox" aria-label="Scorecard metrics">
-      {#each metrics as m (m.key)}
-        <div
-          class="card"
-          class:na={!m.available}
-          role="option"
-          aria-selected={false}
-          tabindex="0"
-          title={m.available ? "" : m.note ?? undefined}
-        >
-          <span class="card-label">{m.label}</span>
-          <span class="card-value">{fmtValue(m)}</span>
-        </div>
-      {/each}
-      {#if metrics.length === 0 && !loading}
-        <p class="empty">No scorecard metrics.</p>
-      {/if}
-    </div>
-
-    <div class="block">
-      <div class="block-head">
-        <h3>Calibration</h3>
-        {#if calibration.length > 0}
-          <span class={reliable ? "badge badge-reliable" : "badge badge-unreliable"}>
-            {reliable ? "reliable" : "unreliable"}
-          </span>
+    <ScrollArea class="flex-1 min-h-0">
+      <div class="cards" role="listbox" aria-label="Scorecard metrics">
+        {#each metrics as m (m.key)}
+          <div
+            class="card"
+            class:na={!m.available}
+            role="option"
+            aria-selected={false}
+            tabindex="0"
+            title={m.available ? "" : m.note ?? undefined}
+          >
+            <span class="card-label">{m.label}</span>
+            <span class="card-value">{fmtValue(m)}</span>
+          </div>
+        {/each}
+        {#if metrics.length === 0 && !loading}
+          <p class="empty">No scorecard metrics.</p>
         {/if}
       </div>
-      {#if calibration.length > 0}
-        {@html chart(calibration)}
-        <p class="chart-note mono">diagonal = perfect calibration · dots sized by sample</p>
-      {:else if !loading}
-        <p class="empty">Not enough decided outcomes to fit a calibration curve.</p>
-      {/if}
-    </div>
 
-    <div class="block">
-      <h3>By regime</h3>
-      {#if byRegime.length > 0}
-        <ul class="regimes">
-          {#each byRegime as r (r.regime)}
-            <li class:current={isCurrent(r)}>
-              <span class="regime-label mono" class:current={isCurrent(r)}>{r.regime}</span>
-              <div class="bar-track">
-                <div
-                  class="bar"
-                  class:current={isCurrent(r)}
-                  style="width: {barWidth(r)}"
-                ></div>
-              </div>
-              <span class="regime-pct mono">{winPct(r)}%</span>
-              <span class="regime-counts mono">d{r.decided}·o{r.with_outcome}</span>
-            </li>
-          {/each}
-        </ul>
-      {:else if !loading}
-        <p class="empty">No regime data yet.</p>
-      {/if}
-    </div>
+      <div class="block">
+        <div class="block-head">
+          <h3>Calibration</h3>
+          {#if calibration.length > 0}
+            <span class={reliable ? "badge badge-reliable" : "badge badge-unreliable"}>
+              {reliable ? "reliable" : "unreliable"}
+            </span>
+          {/if}
+        </div>
+        {#if calibration.length > 0}
+          {@html chart(calibration)}
+          <p class="chart-note mono">diagonal = perfect calibration · dots sized by sample</p>
+        {:else if !loading}
+          <p class="empty">Not enough decided outcomes to fit a calibration curve.</p>
+        {/if}
+      </div>
+
+      <div class="block">
+        <h3>By regime</h3>
+        {#if byRegime.length > 0}
+          <ul class="regimes">
+            {#each byRegime as r (r.regime)}
+              <li class:current={isCurrent(r)}>
+                <span class="regime-label mono" class:current={isCurrent(r)}>{r.regime}</span>
+                <div class="bar-track">
+                  <div
+                    class="bar"
+                    class:current={isCurrent(r)}
+                    style="width: {barWidth(r)}"
+                  ></div>
+                </div>
+                <span class="regime-pct mono">{winPct(r)}%</span>
+                <span class="regime-counts mono">d{r.decided}·o{r.with_outcome}</span>
+              </li>
+            {/each}
+          </ul>
+        {:else if !loading}
+          <p class="empty">No regime data yet.</p>
+        {/if}
+      </div>
+    </ScrollArea>
   {/if}
 </section>
 
@@ -207,7 +210,6 @@
     border-radius: 6px;
     background: var(--surface-card);
     border: 1px solid var(--hairline);
-    overflow-y: auto;
   }
   .panel-head {
     display: flex;

@@ -5,6 +5,7 @@
   import ResearchBriefDetail from "./ResearchBriefDetail.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Badge } from "$lib/components/ui/badge";
+  import { ScrollArea } from "$lib/components/ui/scroll-area";
   import { Textarea } from "$lib/components/ui/textarea";
   import { Select, SelectContent, SelectItem, SelectTrigger } from "$lib/components/ui/select";
   import { RotateCw } from "@lucide/svelte";
@@ -285,66 +286,70 @@
 
   <div class="cols">
     <div class="col list-col">
-      <div class="filters">
-        <Select type="single" value={statusFilter} onValueChange={(v) => (statusFilter = v)}>
-          <SelectTrigger class="h-7 w-[110px] text-[11px]" aria-label="Status filter">
-            <span>{statusFilter}</span>
-          </SelectTrigger>
-          <SelectContent>
-            {#each statuses as s (s)}
-              <SelectItem value={s} label={s}>{s}</SelectItem>
-            {/each}
-          </SelectContent>
-        </Select>
-        <Select type="single" value={lensFilter} onValueChange={(v) => (lensFilter = v)}>
-          <SelectTrigger class="h-7 w-[130px] text-[11px]" aria-label="Lens filter">
-            <span>{lensFilter === "All" ? "All lenses" : lensFilter}</span>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="All" label="All">All lenses</SelectItem>
-            {#each lenses as l (l.name)}
-              <SelectItem value={l.name} label={l.name}>{l.name}</SelectItem>
-            {/each}
-          </SelectContent>
-        </Select>
-      </div>
-      <ul class="brief-list" role="listbox" tabindex="0" aria-label="Research briefs" bind:this={listEl} onkeydown={onListKeydown}>
-        {#each filtered as b (b.brief_id)}
-          <li>
-            <button
-              type="button"
-              role="option"
-              aria-selected={b.brief_id === selectedId}
-              class:sel={b.brief_id === selectedId}
-              class="brief-card"
-              onclick={() => select(b.brief_id)}
-            >
-              <span class="thesis ticker">{b.thesis}</span>
-              <span class="meta">
-                <span class="caption">{b.lens}</span>
-                <span class="dir num {dirBadgeClass(b.direction)}">{dirLabel(b.direction)}</span>
-                <span class="conf num">{(b.confidence * 100).toFixed(0)}%</span>
-                {#if isStale(b.as_of)}
-                  <span class="stale">STALE</span>
-                {/if}
-                <span class="time num">{fmtTime(b.as_of)}</span>
-                <Badge variant={statusVariant(b.status)}>{b.status}{b.expired ? " · expired" : ""}</Badge>
-              </span>
-            </button>
-          </li>
-        {/each}
-        {#if filtered.length === 0}
-          <li class="empty">No briefs.</li>
-        {/if}
-      </ul>
+      <ScrollArea class="h-full">
+        <div class="filters">
+          <Select type="single" value={statusFilter} onValueChange={(v) => (statusFilter = v)}>
+            <SelectTrigger class="h-7 w-[110px] text-[11px]" aria-label="Status filter">
+              <span>{statusFilter}</span>
+            </SelectTrigger>
+            <SelectContent>
+              {#each statuses as s (s)}
+                <SelectItem value={s} label={s}>{s}</SelectItem>
+              {/each}
+            </SelectContent>
+          </Select>
+          <Select type="single" value={lensFilter} onValueChange={(v) => (lensFilter = v)}>
+            <SelectTrigger class="h-7 w-[130px] text-[11px]" aria-label="Lens filter">
+              <span>{lensFilter === "All" ? "All lenses" : lensFilter}</span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="All" label="All">All lenses</SelectItem>
+              {#each lenses as l (l.name)}
+                <SelectItem value={l.name} label={l.name}>{l.name}</SelectItem>
+              {/each}
+            </SelectContent>
+          </Select>
+        </div>
+        <ul class="brief-list" role="listbox" tabindex="0" aria-label="Research briefs" bind:this={listEl} onkeydown={onListKeydown}>
+          {#each filtered as b (b.brief_id)}
+            <li>
+              <button
+                type="button"
+                role="option"
+                aria-selected={b.brief_id === selectedId}
+                class:sel={b.brief_id === selectedId}
+                class="brief-card"
+                onclick={() => select(b.brief_id)}
+              >
+                <span class="thesis ticker">{b.thesis}</span>
+                <span class="meta">
+                  <span class="caption">{b.lens}</span>
+                  <span class="dir num {dirBadgeClass(b.direction)}">{dirLabel(b.direction)}</span>
+                  <span class="conf num">{(b.confidence * 100).toFixed(0)}%</span>
+                  {#if isStale(b.as_of)}
+                    <span class="stale">STALE</span>
+                  {/if}
+                  <span class="time num">{fmtTime(b.as_of)}</span>
+                  <Badge variant={statusVariant(b.status)}>{b.status}{b.expired ? " · expired" : ""}</Badge>
+                </span>
+              </button>
+            </li>
+          {/each}
+          {#if filtered.length === 0}
+            <li class="empty">No briefs.</li>
+          {/if}
+        </ul>
+      </ScrollArea>
     </div>
 
     <div class="col detail-col">
-      {#if selected}
-        <ResearchBriefDetail brief={selected} busy={deciding} onDecide={onDecide} />
-      {:else}
-        <p class="empty">Select a brief to see details.</p>
-      {/if}
+      <ScrollArea class="h-full">
+        {#if selected}
+          <ResearchBriefDetail brief={selected} busy={deciding} onDecide={onDecide} />
+        {:else}
+          <p class="empty">Select a brief to see details.</p>
+        {/if}
+      </ScrollArea>
     </div>
   </div>
 </section>
@@ -485,7 +490,6 @@
     }
   }
   .col {
-    overflow-y: auto;
     padding: 8px 10px;
   }
   .list-col {

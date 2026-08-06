@@ -4,6 +4,7 @@
   import { onMessage } from "../lib/ws";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
+  import { ScrollArea } from "$lib/components/ui/scroll-area";
   import { Textarea } from "$lib/components/ui/textarea";
   import { RefreshCw, RotateCw } from "@lucide/svelte";
   import KnowledgeDetail from "./knowledge/KnowledgeDetail.svelte";
@@ -27,6 +28,7 @@
     activated: 0,
     tags: 0,
     last_sync_at: null,
+    last_sync_result: null,
   });
   let error = $state("");
   let searched = $state(false);
@@ -76,6 +78,14 @@
     const mm = String(d.getMinutes()).padStart(2, "0");
     return `${hh}:${mm}`;
   }
+
+  // Non-success sync outcomes are surfaced next to the time so a stale or
+  // failed sync is never mistaken for a healthy one (roadmap #9).
+  let lastSyncSuffix = $derived(
+    status.last_sync_result && status.last_sync_result !== "success"
+      ? ` (${status.last_sync_result})`
+      : "",
+  );
 
   function markActivated(docId: string, doc: KnowledgeDoc): void {
     hits = hits.map((h) => (h.doc_id === docId ? { ...h, status: "activated" } : h));
@@ -277,7 +287,7 @@
   <header class="panel-head">
     <h2>Knowledge</h2>
     <div class="head-right">
-      <span class="counts mono">{status.docs} docs · {status.proposed} prop · {status.activated} act · Last sync: {fmtLastSync(status.last_sync_at)}</span>
+      <span class="counts mono">{status.docs} docs · {status.proposed} prop · {status.activated} act · Last sync: {fmtLastSync(status.last_sync_at)}{lastSyncSuffix}</span>
       <Button variant="ghost" size="icon" class="size-7 text-muted-foreground hover:text-ink" onclick={loadStatus} aria-label="Refresh knowledge status">
         <RotateCw class="size-3.5" />
       </Button>
@@ -320,42 +330,46 @@
   {/if}
   <div class="cols">
     <div class="col list-col">
-      <ul class="hit-list" role="listbox" tabindex="0" aria-label="Knowledge search results" bind:this={listEl} onkeydown={onListKeydown}>
-        {#each hits as h (h.doc_id)}
-          {@const ts = hitCreatedAt(h)}
-          <li>
-            <button
-              type="button"
-              role="option"
-              aria-selected={selectedId === h.doc_id}
-              class:sel={selectedId === h.doc_id}
-              class="hit-card"
-              onclick={() => select(h.doc_id)}
-            >
-              <span class="hit-title">{h.title}</span>
-              <span class="hit-snippet">{h.snippet}</span>
-              <span class="hit-meta">
-                <span class="chip {statusClass(h.status)}">{h.status}</span>
-                <span class="src micro">{h.source_ref}</span>
-                {#if ts}
-                  <span class="time">{fmtHitTs(ts)}</span>
-                {/if}
-                {#if isStaleHit(h)}
-                  <span class="stale">STALE</span>
-                {/if}
-              </span>
-            </button>
-          </li>
-        {/each}
-        {#if !searched && hits.length === 0}
-          <li class="empty">Type a query to search knowledge.</li>
-        {:else if searched && hits.length === 0}
-          <li class="empty">No results.</li>
-        {/if}
-      </ul>
+      <ScrollArea class="h-full">
+        <ul class="hit-list" role="listbox" tabindex="0" aria-label="Knowledge search results" bind:this={listEl} onkeydown={onListKeydown}>
+          {#each hits as h (h.doc_id)}
+            {@const ts = hitCreatedAt(h)}
+            <li>
+              <button
+                type="button"
+                role="option"
+                aria-selected={selectedId === h.doc_id}
+                class:sel={selectedId === h.doc_id}
+                class="hit-card"
+                onclick={() => select(h.doc_id)}
+              >
+                <span class="hit-title">{h.title}</span>
+                <span class="hit-snippet">{h.snippet}</span>
+                <span class="hit-meta">
+                  <span class="chip {statusClass(h.status)}">{h.status}</span>
+                  <span class="src micro">{h.source_ref}</span>
+                  {#if ts}
+                    <span class="time">{fmtHitTs(ts)}</span>
+                  {/if}
+                  {#if isStaleHit(h)}
+                    <span class="stale">STALE</span>
+                  {/if}
+                </span>
+              </button>
+            </li>
+          {/each}
+          {#if !searched && hits.length === 0}
+            <li class="empty">Type a query to search knowledge.</li>
+          {:else if searched && hits.length === 0}
+            <li class="empty">No results.</li>
+          {/if}
+        </ul>
+      </ScrollArea>
     </div>
     <div class="col detail-col">
-      <KnowledgeDetail {selected} {activating} onActivate={() => activate()} />
+      <ScrollArea class="h-full">
+        <KnowledgeDetail {selected} {activating} onActivate={() => activate()} />
+      </ScrollArea>
     </div>
   </div>
 </section>
@@ -441,7 +455,6 @@
     }
   }
   .col {
-    overflow-y: auto;
     padding: 8px 10px;
   }
   .list-col {

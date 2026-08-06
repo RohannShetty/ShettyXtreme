@@ -425,13 +425,19 @@ class FyersDataAdapter:
     async def get_option_chain(
         self, underlying: str, expiry: str, strike_count: int = 50
     ) -> dict[str, Any]:
-        """Fetch the options chain (+ greeks) via ``/data/options-chain-v3``."""
+        """Fetch the options chain (+ greeks) via ``/data/options-chain-v3``.
+
+        When ``expiry`` is empty/None the ``timestamp`` query param is omitted —
+        Fyers returns the nearest expiry by default. Passing an empty string to
+        ``_expiry_epoch`` would raise ``ValueError`` (500), so we guard here.
+        """
         ticker = self._resolve_symbol(underlying, "NSE_FNO")
+        ts_param = f"&timestamp={_expiry_epoch(expiry)}" if expiry else ""
         try:
             return await self._client.get(
                 f"/data/options-chain-v3?symbol={ticker}"
                 f"&strikecount={int(strike_count)}"
-                f"&timestamp={_expiry_epoch(expiry)}&greeks=1"
+                f"{ts_param}&greeks=1"
             )
         except FyersError as exc:
             logger.warning("Fyers options chain failed for %s: %s", ticker, exc)

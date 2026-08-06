@@ -1,7 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { get } from "../lib/api";
-  import { Activity, Crosshair, Gauge, Scale } from "@lucide/svelte";
+  import {
+    Activity,
+    ArrowDown,
+    ArrowLeftRight,
+    ArrowUp,
+    Crosshair,
+    Gauge,
+    Scale,
+  } from "@lucide/svelte";
 
   /* ── Wire types (mirror terminal/api/models.py) ─────────────────────────
      Regime comes from GET /api/intelligence/regime (projection-backed).
@@ -262,9 +270,9 @@
     <div class="metric-value">
       <span class="chip tone-{regimeMeta.tone}">{regimeMeta.label}</span>
       {#if regimeMeta.dir === "up"}
-        <span class="dir dir-up" aria-hidden="true">▲</span>
+        <ArrowUp class="dir-up size-3" aria-hidden="true" />
       {:else if regimeMeta.dir === "down"}
-        <span class="dir dir-down" aria-hidden="true">▼</span>
+        <ArrowDown class="dir-down size-3" aria-hidden="true" />
       {/if}
     </div>
     <div class="metric-sub">
@@ -272,7 +280,7 @@
         <span class="mono">{Math.round(regime.confidence * 100)}%</span>
         <span class="muted-text">conf</span>
         {#if regime.transition}
-          <span class="chip chip-warn">⇄</span>
+          <ArrowLeftRight class="chip-warn size-3" aria-hidden="true" />
         {/if}
       {:else}
         <span class="muted-text">—</span>
@@ -359,7 +367,7 @@
     color: var(--faint);
   }
   .metric-label {
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.08em;
     color: var(--muted);
@@ -410,10 +418,8 @@
   .tone-muted {
     color: var(--muted);
   }
-  /* Regime direction caret — Indian price law: red = up, green = down. */
-  .dir {
-    font-size: 9px;
-  }
+  /* Regime direction caret — Indian price law: red = up, green = down.
+     Rendered as Lucide SVGs (size-3) carrying these color tokens. */
   .dir-up {
     color: var(--price-up);
   }
@@ -446,7 +452,7 @@
     gap: 6px;
     margin-left: auto;
     padding: 4px 6px;
-    font-size: 9px;
+    font-size: 10px;
     color: var(--faint);
   }
   /* Fetch-failure indicator: red dot, message in the strip title. */

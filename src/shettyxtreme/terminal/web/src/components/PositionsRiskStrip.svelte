@@ -10,6 +10,7 @@
     TableHeader,
     TableRow,
   } from "$lib/components/ui/table";
+  import { ScrollArea } from "$lib/components/ui/scroll-area";
   import EmptyState from "./state/EmptyState.svelte";
   import LoadingState from "./state/LoadingState.svelte";
   import ErrorState from "./state/ErrorState.svelte";
@@ -88,7 +89,7 @@
 <section class="strip">
   <div class="pos-table">
     <h2>Positions</h2>
-    <div class="table-wrap">
+    <ScrollArea class="flex-1 min-h-0">
       {#if loading && positions.length === 0}
         <LoadingState label="Loading positions…" rows={3} />
       {:else if positions.length === 0}
@@ -117,7 +118,7 @@
           </TableBody>
         </Table>
       {/if}
-    </div>
+    </ScrollArea>
   </div>
 
   <div class="risk-block">
@@ -191,10 +192,6 @@
     letter-spacing: 0.08em;
     color: var(--muted);
     text-transform: uppercase;
-  }
-  .table-wrap {
-    flex: 1;
-    overflow-y: auto;
   }
   .risk-block {
     gap: 8px;

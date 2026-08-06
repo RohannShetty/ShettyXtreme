@@ -3,6 +3,7 @@
   import { get } from "../lib/api";
   import { onMessage } from "../lib/ws";
   import { Button } from "$lib/components/ui/button";
+  import { ScrollArea } from "$lib/components/ui/scroll-area";
   import { X } from "@lucide/svelte";
 
   type LogEntry = {
@@ -103,21 +104,23 @@
       <X class="size-4" />
     </Button>
   </header>
-  <div class="log-list">
-    {#each logs as log (log.timestamp + log.message)}
-      <div class="line">
-        <span class="time">{fmtTime(log.timestamp)}</span>
-        <span class="level {levelClass(log.level)}">{log.level}</span>
-        <span class="msg">{log.message}</span>
-      </div>
-    {/each}
-    {#if logs.length === 0}
-      <p class="empty">No log entries yet.</p>
-    {/if}
-    {#if error}
-      <p class="error">{error}</p>
-    {/if}
-  </div>
+  <ScrollArea class="flex-1 min-h-0">
+    <div class="log-list">
+      {#each logs as log (log.timestamp + log.message)}
+        <div class="line">
+          <span class="time">{fmtTime(log.timestamp)}</span>
+          <span class="level {levelClass(log.level)}">{log.level}</span>
+          <span class="msg">{log.message}</span>
+        </div>
+      {/each}
+      {#if logs.length === 0}
+        <p class="empty">No log entries yet.</p>
+      {/if}
+      {#if error}
+        <p class="error">{error}</p>
+      {/if}
+    </div>
+  </ScrollArea>
 </aside>
 
 <style>
@@ -155,7 +158,6 @@
   }
   .log-list {
     flex: 1;
-    overflow-y: auto;
     padding: 8px;
     display: flex;
     flex-direction: column;

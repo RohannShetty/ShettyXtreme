@@ -1,5 +1,7 @@
 /** Typed fetch helpers for the ShettyXtreme Terminal API. */
 
+import type { Theme } from "./theme";
+
 type JsonError = { detail?: unknown; message?: string };
 
 const FETCH_TIMEOUT_MS = 10000;
@@ -81,6 +83,25 @@ export async function postBody<T>(path: string, body: unknown): Promise<T> {
   try {
     resp = await fetchWithTimeout(path, {
       method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    if (isAbortError(err)) throw new Error("Request timeout");
+    throw new Error(`Network error reaching ${path}`);
+  }
+  if (!resp.ok) {
+    throw new Error(await describeError(resp));
+  }
+  return (await resp.json()) as T;
+}
+
+export async function putBody<T>(path: string, body: unknown): Promise<T> {
+  let resp: Response;
+  try {
+    resp = await fetchWithTimeout(path, {
+      method: "PUT",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -190,6 +211,7 @@ export type KnowledgeStatusResponse = {
   activated: number;
   tags: number;
   last_sync_at: string | null;
+  last_sync_result: "success" | "partial" | "failed" | null;
 };
 export type KnowledgeSyncResponse = {
   ingested: number;
@@ -374,4 +396,60 @@ export async function getMarketBars(
 ): Promise<MarketBarsResponse> {
   const q = new URLSearchParams({ symbol, exchange, tf: String(tf), days: String(days) });
   return get<MarketBarsResponse>(`/api/market/bars?${q}`);
+}
+
+// --- Settings (Phase 7 W3, settings_router.py) ---
+
+export type SettingsScheduler = {
+  enabled: boolean;
+  interval_minutes: number;
+  lenses: string[] | null;
+  tools: string[] | null;
+  // Live state: is a research loop actually ticking right now?
+  running: boolean;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  last_result: string | null;
+};
+
+export type SettingsResponse = {
+  loss_limit: number;
+  max_positions: number;
+  theme: Theme;
+  scheduler: SettingsScheduler;
+};
+
+export type SettingsUpdate = {
+  loss_limit?: number;
+  max_positions?: number;
+  theme?: Theme;
+};
+
+export type SchedulerUpdate = {
+  enabled?: boolean;
+  interval_minutes?: number;
+  lenses?: string[] | null;
+  tools?: string[] | null;
+};
+
+export type ThemeResponse = { theme: Theme };
+
+export async function getSettings(): Promise<SettingsResponse> {
+  return get<SettingsResponse>("/api/settings");
+}
+
+export async function updateSettings(update: SettingsUpdate): Promise<SettingsResponse> {
+  return putBody<SettingsResponse>("/api/settings", update);
+}
+
+export async function setTheme(theme: Theme): Promise<ThemeResponse> {
+  return putBody<ThemeResponse>("/api/settings/theme", { theme });
+}
+
+export async function getScheduler(): Promise<SettingsScheduler> {
+  return get<SettingsScheduler>("/api/settings/scheduler");
+}
+
+export async function updateScheduler(update: SchedulerUpdate): Promise<SettingsScheduler> {
+  return putBody<SettingsScheduler>("/api/settings/scheduler", update);
 }

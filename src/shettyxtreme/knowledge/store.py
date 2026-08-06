@@ -261,7 +261,11 @@ class KnowledgeStore:
     # -- sync metadata -------------------------------------------------------
 
     def set_last_sync(self, ts: str) -> None:
-        """Record the most recent successful sync time (ISO-8601)."""
+        """Record the most recent sync attempt time (ISO-8601).
+
+        ``set_last_sync_result`` carries the attempt's outcome — a timestamp
+        here does not imply success (a failed attempt is still an attempt).
+        """
         self._conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_sync_at', ?)",
             (ts,),
@@ -269,9 +273,27 @@ class KnowledgeStore:
         self._conn.commit()
 
     def get_last_sync(self) -> str | None:
-        """Return the last successful sync time (ISO-8601) or None."""
+        """Return the last sync attempt time (ISO-8601) or None."""
         row = self._conn.execute(
             "SELECT value FROM meta WHERE key = 'last_sync_at'"
+        ).fetchone()
+        return row[0] if row else None
+
+    def set_last_sync_result(self, result: str) -> None:
+        """Record the outcome of the most recent sync attempt.
+
+        ``result`` is one of "success", "partial", or "failed".
+        """
+        self._conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_sync_result', ?)",
+            (result,),
+        )
+        self._conn.commit()
+
+    def get_last_sync_result(self) -> str | None:
+        """Return the outcome of the last sync attempt, or None."""
+        row = self._conn.execute(
+            "SELECT value FROM meta WHERE key = 'last_sync_result'"
         ).fetchone()
         return row[0] if row else None
 

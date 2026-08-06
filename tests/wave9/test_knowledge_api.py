@@ -37,6 +37,7 @@ async def test_status_empty(client: AsyncClient, kstore) -> None:
         "activated": 0,
         "tags": 0,
         "last_sync_at": None,
+        "last_sync_result": None,
     }
 
 
@@ -70,6 +71,7 @@ async def test_sync_and_search(client: AsyncClient, kstore, tmp_path) -> None:
     resp_status = await client.get("/api/knowledge/status")
     assert resp_status.status_code == 200
     assert resp_status.json()["last_sync_at"] is not None
+    assert resp_status.json()["last_sync_result"] == "success"
 
     resp2 = await client.get("/api/knowledge/search", params={"q": "trending"})
     assert resp2.status_code == 200
@@ -97,6 +99,57 @@ async def test_sync_missing_research_db(client: AsyncClient, kstore, tmp_path) -
     resp = await client.post("/api/knowledge/sync")
     assert resp.status_code == 200  # degraded, never 500
     assert resp.json()["ingested"] == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_partial_records_partial_result(
+    client: AsyncClient, kstore, tmp_path
+) -> None:
+    """An undecided brief → skipped_undecided → last_sync_result == "partial"."""
+    from shettyxtreme.research.briefs import ResearchBrief
+    from shettyxtreme.research.store import ResearchStore
+
+    rstore = ResearchStore(str(tmp_path / "research.db"))
+    kr.RESEARCH_DB_PATH = str(tmp_path / "research.db")
+    brief = ResearchBrief(
+        brief_id="b1",
+        lens="oi_iv_flow",
+        as_of="t",
+        direction=1,
+        confidence=0.6,
+        thesis="NIFTY trending up",
+        rationale="r" * 320,
+        evidence=[],
+        risks=[],
+    )
+    rstore.insert(brief)  # stays proposed → skipped as undecided
+    rstore.close()
+
+    resp = await client.post("/api/knowledge/sync")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ingested"] == 0 and body["skipped_undecided"] == 1
+
+    status = (await client.get("/api/knowledge/status")).json()
+    assert status["last_sync_result"] == "partial"
+    assert status["last_sync_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_sync_failure_records_failed_result(
+    client: AsyncClient, kstore, tmp_path
+) -> None:
+    """An unopenable research store → last_sync_result == "failed" (still 200)."""
+    # Point RESEARCH_DB_PATH at a directory: sqlite cannot open it, so
+    # ResearchStore.__init__ raises and the router records "failed".
+    kr.RESEARCH_DB_PATH = str(tmp_path)
+    resp = await client.post("/api/knowledge/sync")
+    assert resp.status_code == 200  # degraded, never 500
+    assert resp.json()["ingested"] == 0
+
+    status = (await client.get("/api/knowledge/status")).json()
+    assert status["last_sync_result"] == "failed"
+    assert status["last_sync_at"] is not None
 
 
 @pytest.mark.asyncio

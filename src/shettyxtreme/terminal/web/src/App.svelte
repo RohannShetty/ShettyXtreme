@@ -10,8 +10,7 @@
   import KnowledgePanel from "./components/KnowledgePanel.svelte";
   import LogDrawer from "./components/LogDrawer.svelte";
   import PositionsRiskStrip from "./components/PositionsRiskStrip.svelte";
-  import ProposalQueue from "./components/ProposalQueue.svelte";
-  import ResearchPanel from "./components/ResearchPanel.svelte";
+  import RightDockTabs from "./components/RightDockTabs.svelte";
   import ScannerPanel from "./components/ScannerPanel.svelte";
   import SettingsView from "./components/SettingsView.svelte";
   import SetupWizard from "./components/SetupWizard.svelte";
@@ -306,10 +305,7 @@
         <div class="drawer-sep" aria-hidden="true">
           <Separator />
         </div>
-        <ProposalQueue />
-        <ResearchPanel />
-        <KnowledgePanel />
-        <LogDrawer bind:open={drawerOpen} />
+        <RightDockTabs bind:open={drawerOpen} />
       </div>
     </div>
     <div class="positions-row">
@@ -426,9 +422,10 @@
   .rail {
     min-width: 260px;
     min-height: 0;
-    border-radius: 6px;
+    border-radius: 8px;
     background: var(--surface-card);
     border: 1px solid var(--hairline);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
     overflow: hidden;
   }
   .center {
@@ -436,16 +433,17 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
   }
   .tab-panel {
     flex: 1;
     min-height: 0;
     display: flex;
     flex-direction: column;
-    /* Panels scroll inside their column. The chain grid (min 720px) scrolls
-       horizontally here instead of pushing the viewport wide. */
-    overflow-x: auto;
-    overflow-y: hidden;
+    /* Panels scroll inside their column — the ScrollArea viewport handles both
+       axes (the chain grid, min 720px, scrolls horizontally inside the panel
+       instead of pushing the viewport wide). */
   }
   /* Keep-alive hidden state (DESIGN §4 tabs). Tailwind's .hidden utility is
      emitted inside @layer utilities, which the cascade ranks BELOW this
@@ -468,6 +466,7 @@
     min-width: 320px;
     min-height: 0;
     overflow: hidden;
+    border-radius: 8px;
   }
   /* Drawer chrome — only rendered in overlay mode below 1440px. */
   .drawer-head {
@@ -503,7 +502,9 @@
     border: none;
     color: var(--faint);
     cursor: pointer;
-    padding: 2px;
+    /* R5: 6px padding around the size-4 icon → ~28px target inside the
+       44px drawer header. */
+    padding: 6px;
   }
   .drawer-close:hover {
     color: var(--ink);
@@ -529,6 +530,8 @@
     color: var(--muted);
     line-height: 1.6;
     margin: 0;
+    /* Prevent a dangling word on the last line (R13). */
+    text-wrap: pretty;
   }
   .simple-view code {
     color: var(--accent);
@@ -565,15 +568,21 @@
       flex-direction: column;
       gap: 8px;
       padding: 8px;
-      overflow-y: auto;
       background: var(--surface-overlay);
       border-left: 1px solid var(--hairline-strong);
       border-radius: 0;
       transform: translateX(100%);
-      transition: transform 120ms ease-out;
+      /* R10: hidden while off-screen so the four docked panels (Research,
+         Knowledge — the heavy ones) skip paint in the default closed state.
+         visibility transitions discretely: flips to visible on open-start,
+         holds visible through the 120ms slide-out, then flips hidden. The
+         keep-alive DOM + WS state stays intact. */
+      visibility: hidden;
+      transition: transform 120ms ease-out, visibility 120ms;
     }
     .right-col.open {
       transform: translateX(0);
+      visibility: visible;
     }
     .drawer-head {
       display: flex;

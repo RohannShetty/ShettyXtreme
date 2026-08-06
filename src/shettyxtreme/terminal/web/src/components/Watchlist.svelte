@@ -384,13 +384,20 @@
     text-align: right;
     white-space: nowrap;
   }
+  /* Remove control (R5): fill the full 28px row height in its 20px grid
+     column (align-self: stretch) so the hit area approaches the row-height
+     ceiling — without widening into the chg column or the row's select
+     target. The row's onclick is never reached (stopPropagation). */
   .rm {
     background: none;
     border: none;
     color: var(--faint);
     cursor: pointer;
-    padding: 2px;
     display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    align-self: stretch;
+    padding: 0 3px;
   }
   .rm:hover {
     color: var(--danger);

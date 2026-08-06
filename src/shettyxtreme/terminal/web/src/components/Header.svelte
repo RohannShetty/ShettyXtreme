@@ -311,11 +311,14 @@
             onclick={toggleTheme}
             aria-label="Toggle light or dark theme"
           >
-            {#if theme === "dark"}
-              <Sun class="size-4" />
-            {:else}
-              <Moon class="size-4" />
-            {/if}
+            <span class="relative inline-flex size-4" aria-hidden="true">
+              <Sun
+                class="size-4 transition-[opacity,filter,scale] duration-300 ease-[cubic-bezier(0.2,0,0,1)] {theme === "dark" ? "opacity-100 scale-100 blur-0" : "opacity-0 scale-[0.25] blur-[4px]"}"
+              />
+              <Moon
+                class="absolute inset-0 size-4 transition-[opacity,filter,scale] duration-300 ease-[cubic-bezier(0.2,0,0,1)] {theme === "dark" ? "opacity-0 scale-[0.25] blur-[4px]" : "opacity-100 scale-100 blur-0"}"
+              />
+            </span>
           </Button>
         </TooltipTrigger>
         <TooltipContent>Toggle theme</TooltipContent>
@@ -455,7 +458,7 @@
     white-space: nowrap;
   }
   .ltp-exch {
-    font-size: 9px;
+    font-size: 10px;
     letter-spacing: 0.06em;
     color: var(--faint);
     white-space: nowrap;

@@ -3,6 +3,7 @@
   import { get } from "../lib/api";
   import { Button } from "$lib/components/ui/button";
   import { Badge, type BadgeVariant } from "$lib/components/ui/badge";
+  import { ScrollArea } from "$lib/components/ui/scroll-area";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { RotateCw } from "@lucide/svelte";
 
@@ -178,110 +179,112 @@
     <p class="error">{error}</p>
   {/if}
 
-  <div class="cards">
-    <div class="card">
-      <span class="eyebrow">Gaps</span>
-      <span class="stat">{gaps.length}</span>
-      <ul role="list">
-        {#if loading}
-          {#each Array.from({ length: 4 }) as _, i (i)}
-            <li class="item">
-              <Skeleton class="h-3.5 w-16" />
-              <Skeleton class="h-3.5 w-14" />
-              <Skeleton class="h-3.5 w-12 ml-auto" />
+  <ScrollArea class="flex-1 min-h-0">
+    <div class="cards">
+      <div class="card">
+        <span class="eyebrow">Gaps</span>
+        <span class="stat">{gaps.length}</span>
+        <ul role="list">
+          {#if loading}
+            {#each Array.from({ length: 4 }) as _, i (i)}
+              <li class="item">
+                <Skeleton class="h-3.5 w-16" />
+                <Skeleton class="h-3.5 w-14" />
+                <Skeleton class="h-3.5 w-12 ml-auto" />
+              </li>
+            {/each}
+          {:else}
+            {#each gaps as g, i (g.symbol + g.gap_type + g.gap_percent)}
+            <li
+              class="item"
+              role="option"
+              aria-selected={gapIdx(i) === active}
+              tabindex={gapIdx(i) === active ? 0 : -1}
+              data-scanner-idx={gapIdx(i)}
+              onclick={() => select(gapIdx(i))}
+              onkeydown={(e) => onItemKeydown(e, gapIdx(i))}
+            >
+              <span class="ticker">{g.symbol}</span>
+              <span class="badge-regime">{g.gap_type}</span>
+              <span class="num {dirClass(g.direction)}">{g.gap_percent > 0 ? "+" : ""}{g.gap_percent.toFixed(2)}%</span>
             </li>
           {/each}
-        {:else}
-          {#each gaps as g, i (g.symbol + g.gap_type + g.gap_percent)}
-          <li
-            class="item"
-            role="option"
-            aria-selected={gapIdx(i) === active}
-            tabindex={gapIdx(i) === active ? 0 : -1}
-            data-scanner-idx={gapIdx(i)}
-            onclick={() => select(gapIdx(i))}
-            onkeydown={(e) => onItemKeydown(e, gapIdx(i))}
-          >
-            <span class="ticker">{g.symbol}</span>
-            <span class="badge-regime">{g.gap_type}</span>
-            <span class="num {dirClass(g.direction)}">{g.gap_percent > 0 ? "+" : ""}{g.gap_percent.toFixed(2)}%</span>
-          </li>
-        {/each}
-        {/if}
-        {#if gaps.length === 0 && !loading}
-          <li class="empty">No gaps detected.</li>
-        {/if}
-      </ul>
-    </div>
+          {/if}
+          {#if gaps.length === 0 && !loading}
+            <li class="empty">No gaps detected.</li>
+          {/if}
+        </ul>
+      </div>
 
-    <div class="card">
-      <span class="eyebrow">Clusters</span>
-      <span class="stat">{clusters.length}</span>
-      <ul role="list">
-        {#if loading}
-          {#each Array.from({ length: 4 }) as _, i (i)}
-            <li class="item">
-              <Skeleton class="h-3.5 w-16" />
-              <Skeleton class="h-3.5 w-14" />
-              <Skeleton class="h-3.5 w-12 ml-auto" />
+      <div class="card">
+        <span class="eyebrow">Clusters</span>
+        <span class="stat">{clusters.length}</span>
+        <ul role="list">
+          {#if loading}
+            {#each Array.from({ length: 4 }) as _, i (i)}
+              <li class="item">
+                <Skeleton class="h-3.5 w-16" />
+                <Skeleton class="h-3.5 w-14" />
+                <Skeleton class="h-3.5 w-12 ml-auto" />
+              </li>
+            {/each}
+          {:else}
+            {#each clusters as c, i (c.symbol + c.cluster_type)}
+            <li
+              class="item"
+              role="option"
+              aria-selected={clusterIdx(i) === active}
+              tabindex={clusterIdx(i) === active ? 0 : -1}
+              data-scanner-idx={clusterIdx(i)}
+              onclick={() => select(clusterIdx(i))}
+              onkeydown={(e) => onItemKeydown(e, clusterIdx(i))}
+            >
+              <span class="ticker">{c.symbol}</span>
+              <span class="badge-regime">{c.cluster_type}</span>
+              <span class="num">{c.strength.toFixed(1)} / 10</span>
             </li>
           {/each}
-        {:else}
-          {#each clusters as c, i (c.symbol + c.cluster_type)}
-          <li
-            class="item"
-            role="option"
-            aria-selected={clusterIdx(i) === active}
-            tabindex={clusterIdx(i) === active ? 0 : -1}
-            data-scanner-idx={clusterIdx(i)}
-            onclick={() => select(clusterIdx(i))}
-            onkeydown={(e) => onItemKeydown(e, clusterIdx(i))}
-          >
-            <span class="ticker">{c.symbol}</span>
-            <span class="badge-regime">{c.cluster_type}</span>
-            <span class="num">{c.strength.toFixed(1)} / 10</span>
-          </li>
-        {/each}
-        {/if}
-        {#if clusters.length === 0 && !loading}
-          <li class="empty">No clusters found.</li>
-        {/if}
-      </ul>
-    </div>
+          {/if}
+          {#if clusters.length === 0 && !loading}
+            <li class="empty">No clusters found.</li>
+          {/if}
+        </ul>
+      </div>
 
-    <div class="card">
-      <span class="eyebrow">Alerts</span>
-      <span class="stat">{alerts.length}</span>
-      <ul role="list">
-        {#if loading}
-          {#each Array.from({ length: 4 }) as _, i (i)}
-            <li class="item">
-              <Skeleton class="h-3.5 w-16" />
-              <Skeleton class="h-3.5 flex-1" />
+      <div class="card">
+        <span class="eyebrow">Alerts</span>
+        <span class="stat">{alerts.length}</span>
+        <ul role="list">
+          {#if loading}
+            {#each Array.from({ length: 4 }) as _, i (i)}
+              <li class="item">
+                <Skeleton class="h-3.5 w-16" />
+                <Skeleton class="h-3.5 flex-1" />
+              </li>
+            {/each}
+          {:else}
+            {#each alerts as a, i (a.message + a.timestamp)}
+            <li
+              class="item"
+              role="option"
+              aria-selected={alertIdx(i) === active}
+              tabindex={alertIdx(i) === active ? 0 : -1}
+              data-scanner-idx={alertIdx(i)}
+              onclick={() => select(alertIdx(i))}
+              onkeydown={(e) => onItemKeydown(e, alertIdx(i))}
+            >
+              <Badge variant={convictionLevel(a.severity)}>{a.severity}</Badge>
+              <span class="msg">{a.message}</span>
             </li>
           {/each}
-        {:else}
-          {#each alerts as a, i (a.message + a.timestamp)}
-          <li
-            class="item"
-            role="option"
-            aria-selected={alertIdx(i) === active}
-            tabindex={alertIdx(i) === active ? 0 : -1}
-            data-scanner-idx={alertIdx(i)}
-            onclick={() => select(alertIdx(i))}
-            onkeydown={(e) => onItemKeydown(e, alertIdx(i))}
-          >
-            <Badge variant={convictionLevel(a.severity)}>{a.severity}</Badge>
-            <span class="msg">{a.message}</span>
-          </li>
-        {/each}
-        {/if}
-        {#if alerts.length === 0 && !loading}
-          <li class="empty">No alerts.</li>
-        {/if}
-      </ul>
+          {/if}
+          {#if alerts.length === 0 && !loading}
+            <li class="empty">No alerts.</li>
+          {/if}
+        </ul>
+      </div>
     </div>
-  </div>
+  </ScrollArea>
 </section>
 
 <style>
@@ -330,8 +333,6 @@
     white-space: nowrap;
   }
   .cards {
-    flex: 1;
-    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 12px;

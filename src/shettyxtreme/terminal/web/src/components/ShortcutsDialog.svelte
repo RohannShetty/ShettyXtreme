@@ -25,10 +25,16 @@
   import { Keyboard } from "@lucide/svelte";
 
   // Single source of truth for the cockpit shortcuts. Keep in sync with the
-  // window-level handlers: App.svelte (Ctrl+R), ModeSwitcher.svelte (Ctrl+M),
-  // KnowledgePanel.svelte (Ctrl+F), KillSwitch.svelte (Ctrl+Shift+K), and the
-  // Ctrl+/ listener at the bottom of this component.
+  // window-level handlers: CommandPalette.svelte (Ctrl+K), App.svelte (Ctrl+R),
+  // ModeSwitcher.svelte (Ctrl+M), KnowledgePanel.svelte (Ctrl+F),
+  // KillSwitch.svelte (Ctrl+Shift+K), and the Ctrl+/ listener at the bottom of
+  // this component.
   const SHORTCUTS: { keys: string[]; action: string; detail: string }[] = [
+    {
+      keys: ["Ctrl", "K"],
+      action: "Command palette",
+      detail: "Jump to any screen or action without reaching for the mouse.",
+    },
     {
       keys: ["Ctrl", "R"],
       action: "Toggle right dock",
