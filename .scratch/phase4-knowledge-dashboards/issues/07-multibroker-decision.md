@@ -14,3 +14,15 @@ Sharpen: what would trigger "needed" (a concrete broker, a concrete capability D
 
 ## Answer
 DECIDED-DEFER: no concrete second broker need; Dhan stays primary (FR-002); protocols isolate the seam. Trigger for reopening: a concrete broker or missing Dhan capability.
+
+## Re-evaluation — 2026-08-06 (Phase 7 Wave 4, roadmap #13)
+
+Status: DECIDED-DEFER — unchanged; trigger un-fired.
+
+Evidence (live codebase, read-only):
+- Fyers migration complete: `src/shettyxtreme/integration/` contains only `integration/fyers/` (11 modules). Dhan survives as legacy comments (`order_validator.py:7-26`), credential migration (`auth/credential_store.py:89-103`), and the legacy `/api/postback/dhan` webhook (`terminal/api/postback_router.py:137-141`).
+- Config default is Fyers (`core/config/config_manager.py:47` — `broker: str = "fyers"`); no second-broker adapter code exists anywhere in `src/`.
+
+Trigger ("concrete broker need or missing Fyers capability"): NOT met. Fyers covers the Dhan-era capability set (data socket, order WS, option chain, entitlement surfacing via `FyersDataEntitlementError`).
+
+Verdict: **KEEP DEFERRED.** Re-open only on a concrete second-broker requirement or a missing Fyers capability.

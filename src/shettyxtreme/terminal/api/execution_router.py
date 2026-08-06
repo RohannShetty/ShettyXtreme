@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from shettyxtreme.core.settings import get_settings_store
 from shettyxtreme.execution.kill_switch import KillSwitchGate
 from shettyxtreme.terminal.api.models import (
     KillSwitchResponse,
@@ -195,7 +196,9 @@ async def get_risk(request: Request) -> RiskResponse:
     positions = request.app.state.position_projection.get()
     active_positions = sum(1 for p in positions if abs(p.get("net_quantity", 0)) > 0)
     daily_pnl = risk.get("daily_pnl", 0.0)
-    loss_limit = risk.get("loss_limit", -5000.0)
+    # Risk caps default to the shared settings store (P7-W3); the projection
+    # state carries the live values published by the risk bridge.
+    loss_limit = risk.get("loss_limit", get_settings_store().loss_limit())
     return RiskResponse(
         daily_pnl=daily_pnl,
         margin_used=risk.get("margin_used", 0.0),
@@ -204,7 +207,7 @@ async def get_risk(request: Request) -> RiskResponse:
         margin_available=risk.get("margin_available"),
         loss_limit=loss_limit,
         loss_limit_hit=daily_pnl < loss_limit,
-        max_positions=risk.get("max_positions", 5),
+        max_positions=risk.get("max_positions", get_settings_store().max_positions()),
         active_positions=active_positions,
     )
 

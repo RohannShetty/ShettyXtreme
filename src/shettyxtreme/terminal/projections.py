@@ -12,6 +12,7 @@ from typing import Any
 
 from shettyxtreme.core.data_models import Tick
 from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
+from shettyxtreme.core.settings import get_settings_store
 from shettyxtreme.terminal.api import ws_bridge
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,9 @@ class RiskProjection:
     """Subscribes to RISK_DECISION / RISK_ALERT, updates risk state."""
 
     def __init__(self) -> None:
+        # Risk caps come from the shared settings store (P7-W3) so the
+        # initial state reflects persisted operator settings, not constants.
+        store = get_settings_store()
         self._state: dict[str, Any] = {
             "daily_pnl": 0.0,
             "margin_used": 0.0,
@@ -154,9 +158,9 @@ class RiskProjection:
             # fabricated default would silently admit trades on phantom
             # capital; None is the honest "no data yet" state.
             "margin_available": None,
-            "loss_limit": -5000.0,
+            "loss_limit": store.loss_limit(),
             "loss_limit_hit": False,
-            "max_positions": 5,
+            "max_positions": store.max_positions(),
         }
 
     async def on_risk_decision(self, event: Event) -> None:

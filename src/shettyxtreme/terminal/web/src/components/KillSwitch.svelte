@@ -24,11 +24,19 @@
   onMount(() => {
     loadState();
     window.addEventListener("keydown", onKey);
+    // Command palette "Toggle kill switch" → same toggle() so the DISARM
+    // typed-confirm flow (F-EXEC-001) is never bypassed (palette report §3).
+    window.addEventListener("sx:toggle-kill-switch", onToggleKillSwitch);
   });
 
   onDestroy(() => {
     window.removeEventListener("keydown", onKey);
+    window.removeEventListener("sx:toggle-kill-switch", onToggleKillSwitch);
   });
+
+  function onToggleKillSwitch(): void {
+    toggle();
+  }
 
   function onKey(event: KeyboardEvent): void {
     if (event.ctrlKey && event.shiftKey && (event.key === "K" || event.key === "k")) {

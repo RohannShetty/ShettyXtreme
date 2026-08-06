@@ -394,8 +394,8 @@
             {#each rows as row (row.strike)}
               <TableRow
                 class={cn(
-                  "chain-row h-6",
-                  selectedStrike === row.strike ? "border-l-2 border-l-accent bg-row-selected" : "",
+                  "chain-row h-6 border-l-2 border-l-transparent",
+                  selectedStrike === row.strike ? "border-l-accent bg-row-selected" : "",
                 )}
               >
                 <TableCell

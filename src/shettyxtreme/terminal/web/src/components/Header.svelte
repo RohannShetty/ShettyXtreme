@@ -227,108 +227,125 @@
 </script>
 
 <header class="head">
-  <div class="brand">
-    <span class="logo">SX</span>
-    <span class="title">SHETTYXTREME TERMINAL</span>
-  </div>
-
-  <div
-    class="ltp-hero"
-    class:empty={!selected}
-    title={selected ? `${selected} · ${exchange} · LTP ${fmtLtp(ltp)}` : "Select a symbol in the watchlist to pin its live price here"}
-    aria-label={selected ? `${selected} ${exchange}, last traded price ${fmtLtp(ltp)}` : "No symbol selected"}
-  >
-    <div class="ltp-id">
-      <span class="ltp-symbol ticker">{selected || "—"}</span>
-      <span class="ltp-exch mono">{selected ? exchange : "NO SELECTION"}</span>
+  <!-- Two-row fallback (roadmap #7): .head-status + .head-actions are
+       display:contents on wide screens (byte-identical single row, order
+       pinned below), and become two stacked flex rows on <1024px so nothing
+       clips. Row 1 = status cluster (logo, LTP hero, mode, connection pip,
+       entitlement chip, market hours, credential chip); row 2 = action
+       cluster (kill switch, theme, shortcuts, logs drawer), right-aligned. -->
+  <div class="head-status">
+    <div class="brand">
+      <span class="logo">SX</span>
+      <span class="title">SHETTYXTREME TERMINAL</span>
     </div>
-    <span class="num ltp-value {ltpColor} {ltpFlash}">{fmtLtp(ltp)}</span>
-    {#if selected && changePct !== null}
-      <span class="num ltp-chg {ltpColor}">
-        {changePct > 0 ? "+" : ""}{changePct.toFixed(2)}%
+
+    <div
+      class="ltp-hero"
+      class:empty={!selected}
+      title={selected ? `${selected} · ${exchange} · LTP ${fmtLtp(ltp)}` : "Select a symbol in the watchlist to pin its live price here"}
+      aria-label={selected ? `${selected} ${exchange}, last traded price ${fmtLtp(ltp)}` : "No symbol selected"}
+    >
+      <div class="ltp-id">
+        <span class="ltp-symbol ticker">{selected || "—"}</span>
+        <span class="ltp-exch mono">{selected ? exchange : "NO SELECTION"}</span>
+      </div>
+      <span class="num ltp-value {ltpColor} {ltpFlash}">{fmtLtp(ltp)}</span>
+      {#if selected && changePct !== null}
+        <span class="num ltp-chg {ltpColor}">
+          {changePct > 0 ? "+" : ""}{changePct.toFixed(2)}%
+        </span>
+      {/if}
+    </div>
+
+    <span class="head-mode"><ModeSwitcher /></span>
+
+    <div class="health">
+      <span
+        class="pip pip-{pipState()}"
+        title={pipDetail()}
+        aria-label="Connection status: {pipLabel(pipState())}"
+      >
+        <span class="pip-dot" aria-hidden="true"></span>
+        <span class="pip-label">{pipLabel(pipState())}</span>
       </span>
+    </div>
+
+    {#if entitlementMessage()}
+      <span class="ent-chip" title={entitlementMessage()}>{entitlementMessage()}</span>
+    {/if}
+
+    <div class="session">
+      {#if session}
+        <span class="session-status">{sessionText(session.status)}</span>
+        <span class="mono session-time">{session.current_time_ist?.slice(11, 16) ?? ""}</span>
+      {/if}
+    </div>
+
+    {#if credStatus}
+      {#if credStatus.connected}
+        <a class="cred-chip ok" href="#/settings" title="Credentials connected — manage in settings">
+          <span class="dot"></span>CONNECTED
+        </a>
+      {:else if credStatus.has_token && !credStatus.token_valid}
+        <a class="cred-chip warn" href="#/settings" title="Token expired — re-authenticate in settings">
+          <span class="dot"></span>REAUTH
+        </a>
+      {:else}
+        <a class="cred-chip mute" href="#/setup" title="Set up Fyers credentials">
+          <span class="dot"></span>SETUP
+        </a>
+      {/if}
     {/if}
   </div>
 
-  <ModeSwitcher />
-  <KillSwitch />
+  <div class="head-actions">
+    <span class="head-kill"><KillSwitch /></span>
 
-  <div class="health">
-    <span
-      class="pip pip-{pipState()}"
-      title={pipDetail()}
-      aria-label="Connection status: {pipLabel(pipState())}"
-    >
-      <span class="pip-dot" aria-hidden="true"></span>
-      <span class="pip-label">{pipLabel(pipState())}</span>
+    <span class="head-action">
+      <Tooltip>
+        <TooltipTrigger>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="text-muted-foreground hover:text-accent-active"
+            onclick={toggleTheme}
+            aria-label="Toggle light or dark theme"
+          >
+            {#if theme === "dark"}
+              <Sun class="size-4" />
+            {:else}
+              <Moon class="size-4" />
+            {/if}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Toggle theme</TooltipContent>
+      </Tooltip>
+    </span>
+
+    <span class="head-action">
+      <ShortcutsDialog />
+    </span>
+
+    <span class="head-action">
+      <Tooltip>
+        <TooltipTrigger>
+          <Button
+            variant="ghost"
+            size="icon"
+            class={drawerOpen
+              ? "border border-accent-disabled text-accent-active hover:text-accent-active"
+              : "text-muted-foreground hover:text-accent-active"}
+            onclick={toggleDrawer}
+            aria-label="Toggle logs drawer"
+            aria-pressed={drawerOpen}
+          >
+            <FileText class="size-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Toggle logs drawer</TooltipContent>
+      </Tooltip>
     </span>
   </div>
-
-  {#if entitlementMessage()}
-    <span class="ent-chip" title={entitlementMessage()}>{entitlementMessage()}</span>
-  {/if}
-
-  <div class="session">
-    {#if session}
-      <span class="session-status">{sessionText(session.status)}</span>
-      <span class="mono session-time">{session.current_time_ist?.slice(11, 16) ?? ""}</span>
-    {/if}
-  </div>
-
-  {#if credStatus}
-    {#if credStatus.connected}
-      <a class="cred-chip ok" href="#/settings" title="Credentials connected — manage in settings">
-        <span class="dot"></span>CONNECTED
-      </a>
-    {:else if credStatus.has_token && !credStatus.token_valid}
-      <a class="cred-chip warn" href="#/settings" title="Token expired — re-authenticate in settings">
-        <span class="dot"></span>REAUTH
-      </a>
-    {:else}
-      <a class="cred-chip mute" href="#/setup" title="Set up Fyers credentials">
-        <span class="dot"></span>SETUP
-      </a>
-    {/if}
-  {/if}
-
-  <Tooltip>
-    <TooltipTrigger>
-      <Button
-        variant="ghost"
-        size="icon"
-        class="text-muted-foreground hover:text-accent-active"
-        onclick={toggleTheme}
-        aria-label="Toggle light or dark theme"
-      >
-        {#if theme === "dark"}
-          <Sun class="size-4" />
-        {:else}
-          <Moon class="size-4" />
-        {/if}
-      </Button>
-    </TooltipTrigger>
-    <TooltipContent>Toggle theme</TooltipContent>
-  </Tooltip>
-
-  <ShortcutsDialog />
-
-  <Tooltip>
-    <TooltipTrigger>
-      <Button
-        variant="ghost"
-        size="icon"
-        class={drawerOpen
-          ? "border border-accent-disabled text-accent-active hover:text-accent-active"
-          : "text-muted-foreground hover:text-accent-active"}
-        onclick={toggleDrawer}
-        aria-label="Toggle logs drawer"
-        aria-pressed={drawerOpen}
-      >
-        <FileText class="size-4" />
-      </Button>
-    </TooltipTrigger>
-    <TooltipContent>Toggle logs drawer</TooltipContent>
-  </Tooltip>
 </header>
 
 <style>
@@ -343,12 +360,54 @@
     flex: none;
     overflow: hidden;
   }
+  /* Two-row fallback (roadmap #7): on wide screens both clusters collapse
+     into .head's single flex row via display:contents — their children become
+     .head's direct flex items, and the explicit order values below pin the
+     legacy interleave (brand, hero, mode, KILL, pip, ent, session, cred,
+     then the three action toggles) so the ≥1024px layout is unchanged.
+     On <1024px the clusters stop being display:contents and become two
+     stacked full-width flex rows (see the media query at the bottom). */
+  .head-status,
+  .head-actions {
+    display: contents;
+  }
   .brand {
+    order: 1;
     display: flex;
     align-items: center;
     gap: 8px;
     margin-right: 4px;
     min-width: 0;
+  }
+  .ltp-hero {
+    order: 2;
+  }
+  .head-mode {
+    order: 3;
+    display: inline-flex;
+    align-items: center;
+  }
+  .head-kill {
+    order: 4;
+    display: inline-flex;
+    align-items: center;
+  }
+  .health {
+    order: 5;
+  }
+  .ent-chip {
+    order: 6;
+  }
+  .session {
+    order: 7;
+  }
+  .cred-chip {
+    order: 8;
+  }
+  .head-action {
+    order: 9;
+    display: inline-flex;
+    align-items: center;
   }
   .logo {
     background: var(--accent);
@@ -596,6 +655,40 @@
     }
     .session-time {
       display: none;
+    }
+  }
+
+  /* Two-row fallback (roadmap #7, DESIGN §8): below 1024px the single 44px
+     row cannot hold brand + LTP hero + mode + pip + market hours + cred chip
+     + kill switch + toggles without clipping, so the clusters stop being
+     display:contents and become two full-width rows:
+       row 1 = logo + mode + connection pip + market hours (+ status chips)
+       row 2 = kill switch + theme + shortcuts + logs drawer, right-aligned
+     Rows are 36px tall (not 32) because DESIGN §9 floors the kill switch at
+     min-height 36px — .head must never clip it (overflow:hidden is kept).
+     The order values from the base rules still sequence items within each
+     row, so no re-interleaving is needed. */
+  @media (max-width: 1024px) {
+    .head {
+      flex-wrap: wrap;
+      height: auto;
+    }
+    .head-status,
+    .head-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1 1 100%;
+      min-height: 36px;
+    }
+    .head-status {
+      flex-wrap: wrap;
+    }
+    .head-actions {
+      justify-content: flex-end;
+    }
+    .health {
+      margin-left: 0;
     }
   }
 </style>

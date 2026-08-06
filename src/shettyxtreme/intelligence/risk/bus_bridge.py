@@ -4,24 +4,24 @@ from __future__ import annotations
 import logging
 
 from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
+from shettyxtreme.core.settings import get_settings_store
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_LOSS_LIMIT = -5000.0
-_MAX_POSITIONS = 5
 
 
 class RiskBusBridge:
     """Bridges risk metrics to the EventBus.
 
     Maintains in-memory PnL and margin state, publishing RISK_DECISION
-    whenever positions or market ticks update.
+    whenever positions or market ticks update. The loss limit and max
+    positions caps are read live from the shared settings store, so the
+    payload always reflects the operator's current settings.
     """
 
     def __init__(
         self,
         event_bus: EventBus,
-        loss_limit: float = _DEFAULT_LOSS_LIMIT,
+        loss_limit: float | None = None,
     ) -> None:
         self._event_bus = event_bus
         self._daily_pnl = 0.0
@@ -30,7 +30,10 @@ class RiskBusBridge:
         # so publishing any placeholder here would clobber the real value the
         # margin poller publishes via RISK_DECISION (fix #2 honesty rule).
         self._margin_available: float | None = None
-        self._loss_limit = loss_limit
+        # Kept for the startup log; the decision payload reads the live store.
+        self._loss_limit = (
+            loss_limit if loss_limit is not None else get_settings_store().loss_limit()
+        )
 
     async def start(self) -> None:
         self._event_bus.subscribe(Topic.POSITION_CHANGED, self._on_position)
@@ -55,12 +58,16 @@ class RiskBusBridge:
         await self._publish_decision()
 
     async def _publish_decision(self) -> None:
+        # Read the caps live from the settings store so a runtime change
+        # (via /api/settings) is reflected in the very next decision instead
+        # of regressing the projection to a stale value (P7-W3).
+        loss_limit = get_settings_store().loss_limit()
         decision = {
             "daily_pnl": self._daily_pnl,
             "margin_used": self._margin_used,
-            "loss_limit": self._loss_limit,
-            "loss_limit_hit": self._daily_pnl < self._loss_limit,
-            "max_positions": _MAX_POSITIONS,
+            "loss_limit": loss_limit,
+            "loss_limit_hit": self._daily_pnl < loss_limit,
+            "max_positions": get_settings_store().max_positions(),
         }
         # Only carry margin when a real source reported it (fix #2). Omitting
         # the key lets consumers keep the poller's last real value instead of

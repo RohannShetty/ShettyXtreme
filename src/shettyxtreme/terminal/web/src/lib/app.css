@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 /* Dual-theme mapping: shadcn layer aliases -> DESIGN.md design tokens.
    The token VALUES live in src/lib/design.css under :root[data-theme="dark"] /

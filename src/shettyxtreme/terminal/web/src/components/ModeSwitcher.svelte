@@ -30,10 +30,18 @@
   onMount(() => {
     loadMode();
     window.addEventListener("keydown", onKey);
+    // Command palette "Cycle execution mode" → same cycleMode() so LIVE arming
+    // keeps the typed-confirm dialog (D10, palette report §3).
+    window.addEventListener("sx:cycle-mode", onCycleMode);
     return () => {
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("sx:cycle-mode", onCycleMode);
     };
   });
+
+  function onCycleMode(): void {
+    cycleMode();
+  }
 
   // Focus the typed-confirm input the moment the dialog opens so arming LIVE
   // is a single keystroke sequence away (type LIVE → Enter).

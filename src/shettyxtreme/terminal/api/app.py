@@ -23,6 +23,7 @@ from shettyxtreme.auth.fyers_oauth import FyersOAuthHelper
 from shettyxtreme.auth.health_monitor import TokenHealthMonitor
 from shettyxtreme.auth.validator import CredentialValidator
 from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
+from shettyxtreme.core.settings import init_settings_store
 from shettyxtreme.execution.execution_engine import ExecutionEngine
 from shettyxtreme.execution.ledger import TradeLedger
 from shettyxtreme.execution.ledger_recorder import LedgerRecorder
@@ -65,6 +66,7 @@ from shettyxtreme.terminal.api.knowledge_router import router as knowledge_route
 from shettyxtreme.terminal.api.scanner_data import GapDetector, LogCollector, ClusterDetector
 from shettyxtreme.terminal.api.scanner_router import init_scanner_data
 from shettyxtreme.terminal.api.scanner_router import router as scanner_router
+from shettyxtreme.terminal.api.settings_router import init_settings
 from shettyxtreme.terminal.api.settings_router import router as settings_router
 from shettyxtreme.terminal.api.watchlist_router import router as watchlist_router
 from shettyxtreme.terminal.api.ws_manager import WebSocketManager
@@ -91,6 +93,21 @@ _margin_poller_task: asyncio.Task | None = None
 # accept any known one (fix #2 — real margin, never a hardcoded stand-in).
 _MARGIN_AVAILABLE_KEYS = ("availabelBalance", "availableMargin", "available", "balance")
 _MARGIN_POLL_CADENCE_SECONDS = 30.0
+
+
+def _csv_env(name: str) -> list[str] | None:
+    """Parse a comma-separated env var into a list (None when empty)."""
+    raw = os.environ.get(name, "")
+    return [x.strip() for x in raw.split(",") if x.strip()] or None
+
+
+def _scheduler_env_interval() -> float:
+    """Env RESEARCH_SCHEDULE_INTERVAL_MINUTES, clamped to a sane default."""
+    try:
+        interval = float(os.environ.get("RESEARCH_SCHEDULE_INTERVAL_MINUTES", "60"))
+    except ValueError:
+        interval = 60.0
+    return interval if interval > 0 else 60.0
 
 
 async def _margin_poll_loop(app: FastAPI) -> None:
@@ -151,6 +168,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # created until later in this lifespan / after login), publishes real
     # margin via RISK_DECISION → RiskProjection (fix #2).
     _margin_poller_task = asyncio.create_task(_margin_poll_loop(app))
+
+    # ── Settings store (Phase 7 Wave 3) ─────────────────────────────────────
+    # Single source of truth for risk limits / theme / scheduler config.
+    # Initialized before the projections so the risk caps they seed come
+    # from persisted settings rather than constants.
+    settings_store = init_settings_store("data/settings.db")
+    app.state.settings_store = settings_store
 
     # ── Create projection instances and subscribe to EventBus ───────────────
     watchlist_proj = WatchlistProjection()
@@ -227,29 +251,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception:
             logger.exception("research broadcast failed")
 
+    # ── Research scheduler (Phase 7 Wave 3: settings-store driven) ──────────
+    # The settings store is the source of truth for the scheduler config.
+    # On first boot (keys never written) the effective env config is seeded
+    # so legacy RESEARCH_SCHEDULE_* behavior is preserved; once the operator
+    # touches /api/settings/scheduler the store wins.
+    settings_store.seed_if_absent({
+        "scheduler_enabled": os.environ.get("RESEARCH_SCHEDULE_ENABLED") == "1",
+        "scheduler_interval_minutes": _scheduler_env_interval(),
+        "scheduler_lenses": _csv_env("RESEARCH_SCHEDULE_LENSES"),
+        "scheduler_tools": _csv_env("RESEARCH_SCHEDULE_TOOLS"),
+    })
+    sched_cfg = settings_store.scheduler_config()
+
     research_scheduler: ResearchScheduler | None = None
-    if os.environ.get("RESEARCH_SCHEDULE_ENABLED") == "1":
+    if sched_cfg["enabled"]:
         if not os.environ.get("DEEPSEEK_API_KEY"):
             logger.info("research scheduler skipped: DEEPSEEK_API_KEY not set")
         else:
             orch = build_orchestrator()
             if orch is not None:
-                def _csv_env(name: str) -> list[str] | None:
-                    raw = os.environ.get(name, "")
-                    return [x.strip() for x in raw.split(",") if x.strip()] or None
-
-                try:
-                    interval = float(os.environ.get("RESEARCH_SCHEDULE_INTERVAL_MINUTES", "60"))
-                except ValueError:
-                    interval = 60.0
-                if interval <= 0:
-                    interval = 60.0
-
                 research_scheduler = ResearchScheduler(
                     orchestrator=orch,
-                    interval_minutes=interval,
-                    lenses=_csv_env("RESEARCH_SCHEDULE_LENSES"),
-                    tools=_csv_env("RESEARCH_SCHEDULE_TOOLS"),
+                    interval_minutes=sched_cfg["interval_minutes"],
+                    lenses=sched_cfg["lenses"],
+                    tools=sched_cfg["tools"],
                 )
                 research_scheduler.start()
                 logger.info(
@@ -257,8 +283,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     research_scheduler.interval_minutes,
                 )
     else:
-        logger.info("research scheduler disabled (RESEARCH_SCHEDULE_ENABLED not set)")
+        logger.info("research scheduler disabled (settings store)")
     init_research(broadcast_fn=_research_broadcast, scheduler=research_scheduler)
+    init_settings(scheduler=research_scheduler)
 
     # ── Knowledge store + session log (Phase 4) ────────────────────────────
     knowledge_store = KnowledgeStore("data/knowledge.db")
