@@ -2,7 +2,7 @@
 
 **India-first options intelligence workstation** — a standalone, Fyers-connected terminal for NSE/BSE index options (NIFTY/BANKNIFTY weeklies), with equities as market breadth.
 
-v0.12.0 · Python 3.11 + FastAPI + Svelte 5 · 959 tests passing · [Changelog](CHANGELOG.md)
+v0.14.0 · Python 3.11 + FastAPI + Svelte 5 · 1244 tests passing · [Changelog](CHANGELOG.md)
 
 ShettyXtreme turns live Fyers market data into a single cockpit: option chain with greeks and IV, strategy hints with expected-value line items, regime and signal intelligence, positions/risk, and OBSERVER-first execution — the platform watches and proposes; you approve.
 
@@ -17,7 +17,7 @@ pip install -e .
 python run.py --mode OBSERVER
 ```
 
-Your browser opens `http://127.0.0.1:8000/`. First run: connect credentials at the setup view (`#/setup`), then the cockpit (`#/`) renders watchlist, chain, hints, positions/risk, and the logs drawer.
+Your browser opens `http://127.0.0.1:8000/`. First run: connect your Fyers account at the setup view (`#/setup`), then the cockpit (`#/`) renders watchlist, chain, hints, positions/risk, and the logs drawer.
 
 `run.py` flags:
 
@@ -38,7 +38,7 @@ A dark, data-dense Svelte SPA governed by [DESIGN.md](DESIGN.md) (binding token 
 - **Strategy hints** — direction, strategy, strike EV line, rationale (min 320px)
 - **Scanner** — gaps, clusters, alerts
 - **Positions / risk strip** (bottom) — P&L, margin vs limits, loss-limit breach chip
-- **Logs / alerts drawer** (right, min 320px)
+- **Right dock** (right side, tabbed) — Proposals, Research+Knowledge, Logs
 - **Session controls** (header) — mode switcher, kill switch (`Ctrl+Shift+K`, never disabled), health strip incl. Fyers Data-API entitlement state
 
 Frontend dev (Vite on :3000, proxies `/api` + `/ws` to :8000):
@@ -53,7 +53,7 @@ npm run build    # build → terminal/static/ (committed bundle)
 
 ## Architecture
 
-The v2 blueprint is the authoritative spec: [`docs/architecture/v2/ARCHITECTURE_V2.md`](docs/architecture/v2/ARCHITECTURE_V2.md) (master doc + 20 sections, decisions D1–D12, ADR-002…007). In one paragraph:
+The v2 blueprint is the authoritative spec: [`docs/architecture/v2/ARCHITECTURE_V2.md`](docs/architecture/v2/ARCHITECTURE_V2.md) (master doc + 20 sections, decisions D1–D12, ADR-002…008). In one paragraph:
 
 A layered modular monolith. **FastAPI** (`terminal/api/`) is the only REST/WS surface; the **EventBus** (`core/event_bus/`) carries ticks/signals/orders; **Fyers adapters** (`integration/fyers/`) implement `core/interfaces` protocols (one OAuth2 access token per ADR-008 — trading REST, data REST, and both WebSockets); the **intelligence pipeline** (`intelligence/`) runs features → regime → signal (D/P/G conviction voters) → options EV → risk; the **execution engine** (`execution/`) is semi-auto with a mode gate; the **options module** (`options/`) is pure-Python pricing (Black-76, greeks, IV rank, OI tracking, strategy analyzer) with an optional QuantLib backend.
 
@@ -69,7 +69,7 @@ src/shettyxtreme/
   options/         Greeks, IV rank, OI tracker, QuantLib pricer, strategy analyzer
   learning/        Outcome tracking, calibration, walkforward, voter quality, MFE/MAE
   terminal/        FastAPI routers + projections + Svelte web app (built to static/)
-  observability/   Health, metrics
+  knowledge/       FTS5 document store, heuristic tagger, activation gate (imports core only)
 ```
 
 ## Credentials & Fyers
@@ -87,10 +87,10 @@ OpenAlgo execution plumbing is vendored into `vendor/openalgo/` (origin-stamped,
 ## Testing
 
 ```powershell
-.venv\Scripts\python.exe -m pytest tests/ -q --basetemp=C:\Users\<you>\AppData\Local\Temp\pytest-phase2 -p no:cacheprovider
+$env:PYTHONPATH=""; .venv\Scripts\python.exe -m pytest tests/ -q --tb=short --basetemp=C:\Users\rohan\AppData\Local\Temp\pytest-phase2 -p no:cacheprovider
 ```
 
-**1059 passed / 0 failed / 0 skipped.** (Windows note: always use `.venv\Scripts\python.exe` — the PATH `python` may be a different venv — and an explicit `--basetemp` to avoid a session-teardown PermissionError quirk.)
+**1244 passed / 0 failed / 0 skipped.** (Windows note: always use `.venv\Scripts\python.exe` — the PATH `python` may be a different venv — and an explicit `--basetemp` to avoid a session-teardown PermissionError quirk.)
 
 ## Roadmap
 
@@ -99,11 +99,23 @@ OpenAlgo execution plumbing is vendored into `vendor/openalgo/` (origin-stamped,
 | 0 — References + vendoring | **DONE** |
 | 1 — Blueprint v2 + DESIGN.md + ADRs | **DONE** |
 | 2 — Usable MVP: pipeline completion + Svelte terminal | **DONE** |
-| 3 — Advanced intelligence | **3A done** (session-gated shadow graduation, calibration→sizing, correlation caps, D/P/G live, walkforward breakdowns, `/api/learning/*`); **3B done** (DeepSeek briefer harness — OI/IV-flow, directional-momentum, tail-risk lenses → schema-validated briefs, human approve/reject, `/api/research/*`); **3C done** (read-only data tools w/ mid-run function calling, env-config scheduler, ResearchPanel + WS live updates, outcome scoring + decided_at) |
-| 4 — Maturity (knowledge layer, analytics, optional multi-broker) | **4A/4B done (v1)** — D12 knowledge layer (FTS5 store + tagger + activation → `knowledge_search` tool), scorecard dashboards + recording track; multi-broker + backtest depth deferred |
-| Post-4 — v0.11.0 | **DONE** — trades ledger (fill recording + net-EV/cost scorecard metrics), knowledge v2 (operator notes + symbol aliases), hygiene wave |
+| 3 — Advanced intelligence | **DONE** (3A/3B/3C — shadow graduation, calibration, research workspace, data tools) |
+| 4 — Maturity (knowledge layer, analytics) | **DONE** (v1 — FTS5 knowledge store, scorecard dashboards, trades ledger) |
+| 5–6 — Reliability + cockpit polish | **DONE** (19 reliability fixes, live chain streaming, keyboard nav, component migration) |
+| 7 — UI polish + settings + dashboard redesign | **DONE** (tabbed right dock, scroll-area rollout, badge variants, settings frontend, Fyers connection) |
 
 Full detail: [`docs/architecture/v2/sections/17-delivery-roadmap.md`](docs/architecture/v2/sections/17-delivery-roadmap.md).
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+K` | Open command palette |
+| `Ctrl+R` | Toggle right dock |
+| `Ctrl+M` | Cycle execution mode |
+| `Ctrl+F` | Focus knowledge search |
+| `Ctrl+Shift+K` | Kill switch (stops everything) |
+| `Ctrl+/` | Toggle shortcuts help |
 
 ## License
 
