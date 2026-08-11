@@ -1,5 +1,21 @@
 # ShettyXtreme Changelog
 
+## [2026-08-06] — v0.14.0: Dashboard Redesign + Options Chain Fix
+
+Suite: **1244 passed / 0 failed / 0 skipped** (was 1051 at v0.13.0). Dashboard overhaul: tabbed right dock eliminates overlapping frames, modern panel styling with subtle depth. Fixed options chain 500 error when expiry is empty.
+
+### Added
+- **Tabbed right dock** (`RightDockTabs.svelte`): replaces the stacked panels (ProposalQueue + ResearchPanel + KnowledgePanel + LogDrawer) with three tabs — Proposals, Research, Logs. Fixes the overlapping frames issue.
+- **Modern panel styling**: 8px border-radius, subtle `box-shadow: 0 1px 3px rgba(0,0,0,0.4)` on rail, center, and right-dock panels. Keeps DESIGN.md constraints (flat color-block elevation, no gradients).
+- **Redesigned dashboard plan** (`docs/superpowers/plans/2026-08-06-dashboard-redesign.md`).
+
+### Fixed
+- **Options chain 500 error**: `_expiry_epoch("")` raised `ValueError` when the frontend sent an empty `expiry` query parameter. Now omits the `timestamp` param when expiry is empty — Fyers returns the nearest expiry by default.
+- Removed orphaned `.dock-stack` CSS rule from App.svelte (svelte-check warning).
+
+### Changed
+- **OPERATOR_MANUAL.md** updated: all Dhan references replaced with Fyers, connection instructions rewritten for Fyers App ID/Secret ID flow, error explanations updated.
+
 ## [2026-08-05] — v0.13.0: Phase 3 Cockpit Redesign + Phase 4 Lane A Quick Wins
 
 Suite: **1051 passed / 0 failed / 0 skipped** (was 1016 at Lane A start). Phase 3: full cockpit UI redesign (commit `516b60d`) — pure black `#0a0a0a`/white palette with warm amber accent (Indian price convention preserved: red=up `#f6525c`, green=down `#2ebd85`), live WS streaming + keyboard nav across all panels. Phase 4 Lane A: six execution/security quick wins with regression tests.

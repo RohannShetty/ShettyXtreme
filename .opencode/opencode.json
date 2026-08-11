@@ -2,6 +2,6 @@
   "$schema": "https://opencode.ai/config.json",
   "plugin": [
     ".opencode/plugins/graphify.js",
-    "oh-my-opencode-slim@2.2.9"
+    "oh-my-opencode-slim@2.2.11"
   ]
 }
