@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -122,9 +123,14 @@ async def list_docs(
 
 @router.get("/status", response_model=KnowledgeStatusResponse)
 async def status() -> KnowledgeStatusResponse:
-    """Store counts (docs, proposed, activated, tags)."""
+    """Store counts (docs, proposed, activated, tags) + last sync telemetry."""
     try:
-        return KnowledgeStatusResponse(**_store().counts())
+        counts = _store().counts()
+        return KnowledgeStatusResponse(
+            **counts,
+            last_sync_at=_store().get_last_sync(),
+            last_sync_result=_store().get_last_sync_result(),
+        )
     except Exception as exc:
         logger.warning("Knowledge status failed: %s", exc)
         return KnowledgeStatusResponse()
@@ -132,16 +138,33 @@ async def status() -> KnowledgeStatusResponse:
 
 @router.post("/sync", response_model=KnowledgeSyncResponse)
 async def sync() -> KnowledgeSyncResponse:
-    """Ingest decided research briefs into the knowledge store (idempotent)."""
+    """Ingest decided research briefs into the knowledge store (idempotent).
+
+    Records sync telemetry on every attempt: ``last_sync_at`` (attempt time)
+    and ``last_sync_result`` — "success" (nothing skipped), "partial"
+    (undecided/duplicate briefs skipped), or "failed" (research store or
+    ingest error). All failures degrade to a 200 payload, never 500.
+    """
+
+    def _record(result: str) -> None:
+        try:
+            store = _store()
+            store.set_last_sync(datetime.now(UTC).isoformat())
+            store.set_last_sync_result(result)
+        except Exception:
+            logger.warning("Knowledge sync telemetry record failed", exc_info=True)
+
     try:
         rstore = ResearchStore(RESEARCH_DB_PATH)
     except Exception as exc:
         logger.warning("Knowledge sync: research store unavailable: %s", exc)
+        _record("failed")
         return KnowledgeSyncResponse(error=f"research store unavailable: {exc}")
     try:
         briefs = rstore.list()
     except Exception as exc:
         logger.warning("Knowledge sync: research list failed: %s", exc)
+        _record("failed")
         return KnowledgeSyncResponse(error=f"research list failed: {exc}")
     finally:
         rstore.close()
@@ -149,7 +172,14 @@ async def sync() -> KnowledgeSyncResponse:
         result = ingest_decided_briefs(_store(), briefs)
     except Exception as exc:
         logger.warning("Knowledge sync failed: %s", exc)
+        _record("failed")
         return KnowledgeSyncResponse(error=f"ingest failed: {exc}")
+    outcome = (
+        "partial"
+        if result.skipped_undecided > 0 or result.skipped_duplicate > 0
+        else "success"
+    )
+    _record(outcome)
     return KnowledgeSyncResponse(
         ingested=result.ingested,
         skipped_undecided=result.skipped_undecided,

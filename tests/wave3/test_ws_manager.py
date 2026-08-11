@@ -147,3 +147,28 @@ class TestWebSocketManager:
         await mgr.disconnect(ws)
         assert mgr.connection_count == 0
         assert mgr._topics == {}
+
+    @pytest.mark.asyncio
+    async def test_double_disconnect_is_idempotent(self) -> None:
+        """F-TERM-002: a second disconnect (client drop + server shutdown
+        racing) must not raise ValueError from list.remove()."""
+        mgr = WebSocketManager()
+        ws = AsyncMock()
+        ws.send_text = AsyncMock()
+
+        await mgr.connect(ws)
+        await mgr.disconnect(ws)
+        await mgr.disconnect(ws)  # must be a silent no-op
+        assert mgr.connection_count == 0
+        assert mgr._topics == {}
+
+    @pytest.mark.asyncio
+    async def test_disconnect_never_connected_is_noop(self) -> None:
+        """F-TERM-002: disconnecting a WebSocket that was never connected
+        (or already removed) must not raise."""
+        mgr = WebSocketManager()
+        ws = AsyncMock()
+        ws.send_text = AsyncMock()
+
+        await mgr.disconnect(ws)
+        assert mgr.connection_count == 0

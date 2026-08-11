@@ -31,8 +31,8 @@ Multi-broker and backtest depth are decided by tickets as they surface; the dest
 - (2026-08-01) [Activation flow](issues/04-activation-flow.md) — activate → `knowledge_search` research tool (DataSource.knowledge_summary); KnowledgePanel with search + review/approve.
 - (2026-08-01) [Dashboards scorecard](issues/05-dashboards-scorecard-core.md) — calibration now + empty states + recording track (SessionLog at lifespan start/stop; regime_at_decision at decide time); plain SVG/CSS charts, zero new deps.
 - (2026-08-01) [Analytics data inventory](issues/06-analytics-data-inventory.md) — only calibration computable today; sessions/outcomes/walkforward are library-only with zero runtime callers; no trades ledger → recording is new plumbing (ticket 05 absorbed it).
-- (2026-08-01) [Multi-broker](issues/07-multibroker-decision.md) — DECIDED-DEFER (trigger: concrete broker or missing Dhan capability).
-- (2026-08-01) [Backtest depth](issues/08-backtest-depth-scope.md) — DECIDED-DEFER (walkforward stays; no comparison surface in Phase 4).
+- (2026-08-01) [Multi-broker](issues/07-multibroker-decision.md) — DECIDED-DEFER (trigger: concrete broker or missing Dhan capability). **Re-evaluated 2026-08-06 (Phase 7 #13): still deferred — Fyers migration complete, no second-broker need.**
+- (2026-08-01) [Backtest depth](issues/08-backtest-depth-scope.md) — DECIDED-DEFER (walkforward stays; no comparison surface in Phase 4). **Re-evaluated 2026-08-06 (Phase 7 #13): still deferred — no comparison surface exists.**
 
 ## Map state
 
@@ -48,6 +48,6 @@ All 8 tickets resolved — the way is clear: two implementation tracks (knowledg
 ## Out of scope
 
 - SaaS, multi-tenancy, external users (D2/D11 — never).
-- Critic model pass (deferred until order intents exist to gate).
-- Live `/optionchain` fixture (separate open question; needs live Dhan credentials).
+- Critic model pass (deferred until order intents exist to gate). **Re-evaluated 2026-08-06 (Phase 7 #13): still deferred — no order-intent concept in `src/`.**
+- Live `/optionchain` fixture (separate open question; needs live Fyers Data-API credentials). **Re-evaluated 2026-08-06 (Phase 7 #13): still deferred — no fixture; creds env-gated.**
 - The never-stage dirty files listed in Notes.

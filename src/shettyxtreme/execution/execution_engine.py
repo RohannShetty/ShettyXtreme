@@ -13,6 +13,9 @@ position_manager.py.
 """
 from __future__ import annotations
 
+import json
+import logging
+import os
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -21,20 +24,21 @@ from enum import Enum
 from typing import Any
 from uuid import uuid4
 
-from shettyxtreme.core.interfaces.order_executor import (
-    Order,
-    OrderExecutor,
-    OrderSide,
-    OrderType,
-    ProductType,
-)
+from shettyxtreme.core.data_models import OrderRequest, OrderSide, OrderType, ProductType
+from shettyxtreme.core.interfaces.order_executor import OrderExecutor
 from shettyxtreme.integration.order_validator import OrderValidator
 from shettyxtreme.intelligence.risk.risk_engine import (
     Portfolio,
     RiskDecision,
     RiskEngine,
 )
-from shettyxtreme.intelligence.signals.signal_engine import Signal, SignalDirection
+from shettyxtreme.intelligence.signals.signal_engine import (
+    Signal,
+    SignalDirection,
+    Vote,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class ApprovalStatus(str, Enum):
@@ -54,9 +58,128 @@ class PendingApproval:
     timestamp: datetime
     status: str
     expires_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    order: Order | None = None
+    order: OrderRequest | None = None
     signal_id: str = ""
     failure_reason: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Persistence serialization (F-KNOW-002: full payload round-trips the DB)
+# ---------------------------------------------------------------------------
+def _json_default(obj: Any) -> Any:
+    """JSON fallback encoder: enum members and datetimes as plain values."""
+    if isinstance(obj, Enum):
+        return obj.value
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"not JSON serializable: {type(obj).__name__}")
+
+
+def _parse_dt(value: Any, fallback: datetime) -> datetime:
+    try:
+        return datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _signal_to_dict(signal: Signal) -> dict[str, Any]:
+    """JSON-safe serialization of a Signal."""
+    return {
+        "direction": signal.direction.value,
+        "conviction": signal.conviction,
+        "voters": [
+            {
+                "direction": voter.direction,
+                "confidence": voter.confidence,
+                "weight": voter.weight,
+                "name": voter.name,
+            }
+            for voter in signal.voters
+        ],
+        "timestamp": signal.timestamp.isoformat(),
+        "D": signal.D,
+        "P": signal.P,
+        "G": signal.G,
+    }
+
+
+def _signal_from_dict(data: dict[str, Any]) -> Signal:
+    """Rebuild a Signal from _signal_to_dict output (best-effort defaults)."""
+    try:
+        direction = SignalDirection(data.get("direction", "neutral"))
+    except ValueError:
+        direction = SignalDirection.NEUTRAL
+    return Signal(
+        direction=direction,
+        conviction=float(data.get("conviction", 0.0)),
+        voters=[
+            Vote(
+                direction=float(voter.get("direction", 0.0)),
+                confidence=float(voter.get("confidence", 0.0)),
+                weight=float(voter.get("weight", 0.0)),
+                name=str(voter.get("name", "")),
+            )
+            for voter in data.get("voters", [])
+        ],
+        timestamp=_parse_dt(data.get("timestamp"), datetime.now(UTC)),
+        D=float(data.get("D", 0.0)),
+        P=float(data.get("P", 1.0)),
+        G=str(data.get("G", "contested")),
+    )
+
+
+#: strategy_hint fields that hold enum members and must be restored as such.
+_ENUM_HINT_FIELDS: dict[str, type[Enum]] = {
+    "order_type": OrderType,
+    "product": ProductType,
+}
+
+
+def _coerce_hint(hint: dict[str, Any]) -> dict[str, Any]:
+    """Restore persisted enum members (order_type/product) in a strategy hint."""
+    restored = dict(hint)
+    for key, enum_cls in _ENUM_HINT_FIELDS.items():
+        value = restored.get(key)
+        if isinstance(value, str):
+            try:
+                restored[key] = enum_cls(value)
+            except ValueError:
+                pass
+    return restored
+
+
+def _approval_payload(approval: PendingApproval) -> dict[str, Any]:
+    """JSON-safe payload carrying the full proposal (signal + strategy_hint)."""
+    return {
+        "signal": _signal_to_dict(approval.signal),
+        "strategy_hint": approval.strategy_hint,
+        "timestamp": approval.timestamp.isoformat(),
+        "expires_at": approval.expires_at.isoformat(),
+        "signal_id": approval.signal_id,
+        "failure_reason": approval.failure_reason,
+    }
+
+
+def _row_to_approval(row: tuple[Any, ...]) -> PendingApproval | None:
+    """Rebuild a PendingApproval from a stored row; None when unparseable."""
+    approval_id, status, created_at, payload = row
+    if not payload:
+        return None
+    try:
+        data = json.loads(payload)
+    except (TypeError, ValueError):
+        return None
+    timestamp = _parse_dt(data.get("timestamp"), datetime.now(UTC))
+    return PendingApproval(
+        id=approval_id,
+        signal=_signal_from_dict(data.get("signal") or {}),
+        strategy_hint=_coerce_hint(data.get("strategy_hint") or {}),
+        timestamp=timestamp,
+        status=status,
+        expires_at=_parse_dt(data.get("expires_at"), timestamp),
+        signal_id=str(data.get("signal_id", "")),
+        failure_reason=data.get("failure_reason"),
+    )
 
 
 class ExecutionEngine:
@@ -80,31 +203,82 @@ class ExecutionEngine:
         self._portfolio_provider = portfolio_provider
         if db_path is not None:
             self._init_db()
+            self._load_approvals()
 
     # ------------------------------------------------------------------
-    # DB (optional)
+    # DB (optional, F-KNOW-002: persistence is best-effort, never fatal)
     # ------------------------------------------------------------------
     def _init_db(self) -> None:
         assert self._db_path is not None
-        with sqlite3.connect(self._db_path, timeout=5.0) as conn:
-            conn.execute(
-                """CREATE TABLE IF NOT EXISTS pending_approvals (
-                    id TEXT PRIMARY KEY,
-                    status TEXT,
-                    created_at TEXT
-                )"""
-            )
-            conn.commit()
+        db_dir = os.path.dirname(self._db_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
+        try:
+            with sqlite3.connect(self._db_path, timeout=5.0) as conn:
+                conn.execute(
+                    """CREATE TABLE IF NOT EXISTS pending_approvals (
+                        id TEXT PRIMARY KEY,
+                        status TEXT,
+                        created_at TEXT,
+                        payload TEXT
+                    )"""
+                )
+                self._ensure_payload_column(conn)
+                conn.commit()
+        except sqlite3.Error:
+            logger.exception("failed to open proposals db at %s", self._db_path)
+
+    def _ensure_payload_column(self, conn: sqlite3.Connection) -> None:
+        """Migrate the pre-payload schema (id, status, created_at) in place."""
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(pending_approvals)")}
+        if "payload" not in columns:
+            conn.execute("ALTER TABLE pending_approvals ADD COLUMN payload TEXT")
 
     def _db_upsert(self, approval: PendingApproval) -> None:
         if self._db_path is None:
             return
-        with sqlite3.connect(self._db_path) as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO pending_approvals (id, status, created_at) VALUES (?, ?, ?)",
-                (approval.id, approval.status, approval.timestamp.isoformat()),
+        try:
+            payload = json.dumps(_approval_payload(approval), default=_json_default)
+            with sqlite3.connect(self._db_path, timeout=5.0) as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO pending_approvals (id, status, created_at, payload) "
+                    "VALUES (?, ?, ?, ?)",
+                    (approval.id, approval.status, approval.timestamp.isoformat(), payload),
+                )
+                conn.commit()
+        except Exception:
+            logger.exception(
+                "failed to persist proposal %s; continuing in-memory only",
+                approval.id,
             )
-            conn.commit()
+
+    def _load_approvals(self) -> None:
+        """Restore PENDING/APPROVED proposals from the DB into memory."""
+        if self._db_path is None:
+            return
+        try:
+            with sqlite3.connect(self._db_path, timeout=5.0) as conn:
+                rows = conn.execute(
+                    "SELECT id, status, created_at, payload FROM pending_approvals"
+                ).fetchall()
+        except sqlite3.Error:
+            logger.exception("failed to load persisted proposals from %s", self._db_path)
+            return
+        for row in rows:
+            approval = _row_to_approval(row)
+            if approval is None:
+                continue
+            if approval.status in (
+                ApprovalStatus.PENDING.value,
+                ApprovalStatus.APPROVED.value,
+            ):
+                self._approvals[approval.id] = approval
+        if self._approvals:
+            logger.info(
+                "restored %d persisted proposals from %s",
+                len(self._approvals),
+                self._db_path,
+            )
 
     # ------------------------------------------------------------------
     # Submit / approve / reject
@@ -142,7 +316,7 @@ class ExecutionEngine:
         self._db_upsert(approval)
         return approval_id
 
-    async def approve(self, approval_id: str) -> Order:
+    async def approve(self, approval_id: str) -> OrderRequest:
         """Operator approves an approval: risk check -> validate -> place order."""
         approval = self._approvals.get(approval_id)
         if approval is None:
@@ -224,7 +398,7 @@ class ExecutionEngine:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-    def _build_order(self, signal: Signal, strategy_hint: dict[str, Any]) -> Order:
+    def _build_order(self, signal: Signal, strategy_hint: dict[str, Any]) -> OrderRequest:
         if signal.direction == SignalDirection.UP:
             side = OrderSide.BUY
         elif signal.direction == SignalDirection.DOWN:
@@ -239,7 +413,7 @@ class ExecutionEngine:
 
         product = strategy_hint.get("product", ProductType.MIS)
 
-        return Order(
+        return OrderRequest(
             symbol=strategy_hint["symbol"],
             exchange=strategy_hint["exchange"],
             side=side,

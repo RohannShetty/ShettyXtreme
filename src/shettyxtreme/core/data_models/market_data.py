@@ -14,6 +14,15 @@ class Tick:
     symbol: str; exchange: str; ltp: float; volume: int
     timestamp: datetime; bid: float | None = None; ask: float | None = None
     open: float | None = None; high: float | None = None; low: float | None = None; close: float | None = None
+    # F-CORE-001: oi unified from the old interfaces.Tick — the bus tick now
+    # carries open interest end-to-end instead of dropping it at the bridge.
+    oi: int | None = None
+    # P6-W2: chain fields ride the live tick so ChainGrid updates without
+    # REST polling. Populated by the adapter from `from_fyers()` (option
+    # ticks only); index/equity ticks carry None. `iv` deliberately stays
+    # REST-polled — the HSM symbol-update feed has no IV field.
+    strike: float | None = None
+    option_type: str | None = None
 
 @dataclass
 class Quote:

@@ -6,7 +6,7 @@
 
 ShettyXtreme is an options trading dashboard for the Indian market. It puts the things you would normally need four different tools for onto one screen: a live option chain, a market scanner, research briefs, your positions and risk, and a learning memory that keeps notes for you.
 
-It watches NIFTY and BANKNIFTY option chains, and gets its market data from Dhan, your broker. The whole thing runs on your own PC. Your Dhan login details stay on your PC, and nothing happens without you — the terminal never trades on its own.
+It watches NIFTY and BANKNIFTY option chains, and gets its market data from Fyers, your broker. The whole thing runs on your own PC. Your Fyers login details stay on your PC, and nothing happens without you — the terminal never trades on its own.
 
 ## First-run checklist
 
@@ -18,41 +18,37 @@ Getting going takes four steps. You do them once, and from then on the terminal 
 
    Then open your browser and go to `http://127.0.0.1:8000`. It takes you to the setup page.
 2. **Know your way back.** At the very top of the browser window there is a small tag that shows SETUP, CONNECTED, or REAUTH. Clicking that tag takes you to the setup page and the settings page any time you need them.
-3. **Connect your Dhan account.** The next section shows the three ways to do this.
+3. **Connect your Fyers account.** The next section shows how to do this.
 4. **Check the tag.** When the connection is good, the tag at the top shows CONNECTED.
 
-## Connect your Dhan account — 3 ways
+## Connect your Fyers account
 
-The setup page walks you through this. You only need one of the three ways.
+The setup page walks you through this. You only need to do it once.
 
-**Option 1: App credentials (recommended).**
+**Step 1: Create a Fyers app (one-time setup).**
 
-A "Dhan app" is not something you install on your phone. It is a registration you create on the Dhan developer website, and it gives programs permission to use your Dhan account. You can create one in a few minutes — the Dhan site explains it step by step.
+A "Fyers app" is not something you install on your phone. It is a registration you create on the Fyers Developer Portal, and it gives ShettyXtreme permission to use your Fyers account. You can create one in a few minutes.
 
-When you create the app, make sure it has **both** Trading and Market Data access. If it only has Trading, prices will not come through and you will see error 806 (explained in the errors section).
+1. Go to the [Fyers Developer Portal](https://myapi.fyers.in/) and log in with your Fyers account.
+2. Create a new app. Give it any name you like (e.g., "ShettyXtreme").
+3. Make sure you enable **Trading API** on the app.
+4. Set the **Redirect URL** to `http://127.0.0.1:8000/auth/fyers/callback` — this is where Fyers sends you back after you log in.
+5. Note down the **App ID** and **Secret ID** — you will need these in the next step.
 
-On the setup page you fill in three boxes:
+**Step 2: Connect from the setup page.**
 
-- **Client ID** — your Dhan user name.
-- **API key** and **API secret** — two long secret codes that Dhan shows you when the app is created. Think of them as the app's password.
+On the setup page, fill in two boxes:
 
-Press the **Test** button first — it checks your details without connecting anything. When it says the details are good, press **Connect Dhan**.
+- **App ID** — the App ID from the Fyers Developer Portal (looks like `ABC-123`).
+- **Secret ID** — the Secret ID from the Fyers Developer Portal (a long secret code).
 
-**Option 2: Direct token.**
+Press the **Test** button first — it checks your details without connecting anything. When it says the details are good, press **Connect Fyers**.
 
-If you already have a Dhan access token (a long code that proves your identity), paste it into the box. The terminal reads your client ID and the token's expiry date by itself. This is the quickest way if you generate tokens on the Dhan site.
-
-**Option 3: PIN + TOTP.**
-
-Type your Dhan client ID, your 4-digit trading PIN, and the 6-digit code from your authenticator app (the one that changes every 30 seconds). This is the easiest way to connect on the spot.
-
-**Data token (optional, for advanced users).**
-
-Only needed if your app cannot get market data. It adds a separate code for data, so the rest of your connection can stay the way it is. Most people never need this.
+You will be redirected to Fyers to log in. After you approve, you come back to the terminal and it shows CONNECTED.
 
 **Where your details are stored.**
 
-Everything you enter is saved in one encrypted file on your PC. Nobody can read it without your PC's login. If you ever change your Dhan password, or the connection stops working, connect again from the setup page — it takes a minute.
+Everything you enter is saved in one encrypted file on your PC. Nobody can read it without your PC's login. If you ever change your Fyers password, or the connection stops working, connect again from the setup page — it takes a minute.
 
 ## The three modes — OBSERVER, PAPER, LIVE
 
@@ -74,12 +70,25 @@ The terminal runs in one of three modes. You choose the mode when you start it.
 - **Knowledge.** Your learning memory. Every research note you approved, plus any notes you wrote yourself, stays here and can be searched later.
 - **Analytics.** Charts and numbers about how things are moving — useful for spotting patterns through the day.
 - **Positions and Risk (bottom strip).** Your open positions and live risk figures, such as total exposure. One glance tells you how much is at stake right now.
-- **Logs (right).** A running, plain record of what the terminal is doing. If something looks odd, the answer is usually in here — and it is useful to quote from when asking for help.
+- **Right Dock (right side).** Three tabs you can switch between:
+  - **Proposals** — trade ideas waiting for your approval. Each one shows the symbol, action (buy/sell), quantity, and price. You approve or reject each one.
+  - **Research** — AI research briefs and your knowledge base. Run a brief on any symbol, approve or reject what the AI found, and search your saved notes.
+  - **Logs** — a running record of what the terminal is doing. If something looks odd, the answer is usually in here.
+
+## Keyboard shortcuts
+
+A few keys answer directly, without reaching for the mouse. You can see the same list inside the terminal any time — press **Ctrl+/** (or **Ctrl+?**) or click the keyboard button at the top right of the screen.
+
+- **Ctrl+K** — Open the command palette. Type a few letters to jump to any screen or action.
+- **Ctrl+R** — Show or hide the right-hand panel (proposals, research, and logs).
+- **Ctrl+M** — Move through the three modes: OBSERVER → PAPER → LIVE → back to OBSERVER. Landing on LIVE still asks you to type the confirmation.
+- **Ctrl+F** — Jump straight to the knowledge search box.
+- **Ctrl+Shift+K** — The kill switch. Stops everything instantly, in any mode, on any screen. If you are ever unsure what is happening, press it.
 
 ## Errors explained in plain words
 
-- **Error 806.** This one worries people the most. It means your Dhan app is not allowed to fetch market data. It is not a bug in ShettyXtreme, and it is not about your password. Fix it by going to the Dhan developer website and enabling Market Data on your app (or add a data token, described earlier). Prices start flowing after that.
-- **"Token expired".** Dhan security codes expire every day, around 3 AM. When that happens, the tag at the top shows REAUTH. Go to the settings page, choose Re-auth, and connect again — it takes a minute.
+- **"Token expired".** Fyers security codes expire every day, around 3 AM. When that happens, the tag at the top shows REAUTH. Go to the settings page, choose Re-auth, and connect again — it takes a minute.
+- **"Data API entitlement missing".** This means your Fyers app does not have permission to fetch market data. It is not a bug in ShettyXtreme, and it is not about your password. Fix it by going to the Fyers Developer Portal and enabling Market Data on your app. Prices start flowing after that.
 - **"Port 8000 already in use".** Another copy of the terminal is already running. Close the other one and start again, or keep using the copy that is running. Two copies cannot share the same window at once.
 
 ## Good habits and safety

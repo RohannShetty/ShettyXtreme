@@ -17,8 +17,8 @@
     },
     {
       "id": "BOUNDARY-003",
-      "name": "DhanHQ Isolation",
-      "rule": "No code outside integration/ may import from dhanhq. All Dhan-specific operations pass through the DhanAdapter in integration/.",
+      "name": "Broker-SDK Isolation",
+      "rule": "No code outside integration/ may import from any broker SDK (dhanhq, fyers-apiv3, etc.). All broker-specific operations pass through the broker adapters in integration/ (ADR-008).",
       "severity": "fatal"
     },
     {

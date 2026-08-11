@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from shettyxtreme.core.data_models import Position
+from shettyxtreme.core.settings import get_settings_store
 from shettyxtreme.intelligence.signals.signal_engine import Signal
 
 
@@ -70,17 +71,32 @@ class LossLimitFilter:
 
     CRITICAL: Position management always allowed regardless of loss limit.
     This is the fix from ShettyBot V1 where loss limit froze ALL trading.
-    """
 
-    def __init__(self, loss_limit: float = -5000.0) -> None:
-        self.loss_limit = loss_limit
+    ``loss_limit=None`` (the default) makes the filter settings-backed: it
+    resolves the cap from the shared settings store at construction and
+    re-reads it on every ``check``, so a runtime change to the settings
+    form is honored by the live engine without a restart. An explicit
+    value pins the filter to that cap.
+    """
 
     name = "loss_limit"
 
+    def __init__(self, loss_limit: float | None = None) -> None:
+        self._settings_backed = loss_limit is None
+        if loss_limit is None:
+            loss_limit = get_settings_store().loss_limit()
+        self.loss_limit = float(loss_limit)
+
+    def _effective_limit(self) -> float:
+        if self._settings_backed:
+            return get_settings_store().loss_limit()
+        return self.loss_limit
+
     def check(self, signal: Signal, portfolio: Portfolio) -> RiskDecision:
-        if portfolio.daily_pnl < self.loss_limit:
+        limit = self._effective_limit()
+        if portfolio.daily_pnl < limit:
             return RiskDecision.reject(
-                f"daily loss limit reached: {portfolio.daily_pnl:.2f} < {self.loss_limit:.2f}",
+                f"daily loss limit reached: {portfolio.daily_pnl:.2f} < {limit:.2f}",
                 filter_name=self.name,
             )
         return RiskDecision.allow(self.name)
@@ -107,25 +123,55 @@ class MarginFilter:
 
 
 class MaxPositionFilter:
-    """Blocks entry if max concurrent positions reached."""
+    """Blocks entry if max concurrent positions reached.
 
-    def __init__(self, max_positions: int = 5) -> None:
-        self.max_positions = max_positions
+    ``max_positions=None`` (the default) makes the filter settings-backed
+    like ``LossLimitFilter``: the cap comes from the shared settings store
+    and is re-read on every ``check``.
+    """
 
     name = "max_positions"
 
+    def __init__(self, max_positions: int | None = None) -> None:
+        self._settings_backed = max_positions is None
+        if max_positions is None:
+            max_positions = get_settings_store().max_positions()
+        self.max_positions = int(max_positions)
+
+    def _effective_max(self) -> int:
+        if self._settings_backed:
+            return get_settings_store().max_positions()
+        return self.max_positions
+
     def check(self, signal: Signal, portfolio: Portfolio) -> RiskDecision:
         active = sum(1 for p in portfolio.positions if abs(p.net_quantity) > 0)
-        if active >= self.max_positions:
+        limit = self._effective_max()
+        if active >= limit:
             return RiskDecision.reject(
-                f"max positions reached: {active} >= {self.max_positions}",
+                f"max positions reached: {active} >= {limit}",
                 filter_name=self.name,
             )
         return RiskDecision.allow(self.name)
 
 
 class RegimeFilter:
-    """Blocks entry if regime is incompatible with the signal direction."""
+    """Regime gating filter — currently an HONEST STUB.
+
+    Neither ``Signal`` nor ``Portfolio`` carries the market regime, so the
+    risk filter chain has no regime source to gate on. Real regime data is
+    computed in the live pipeline by ``intelligence/regime/regime_classifier``
+    and delivered to subscribers via the ``regime.changed`` EventBus event
+    (see ``intelligence/regime/bus_bridge.py``) — not through ``check()``.
+
+    Until regime data is plumbed into the risk chain, this filter returns a
+    neutral ALLOW with an explicit stub marker so callers and audit trails can
+    see that no regime gating occurred. Do not silently drop it from the
+    chain — it keeps the ``RiskFilter`` protocol uniform and the audit trail
+    complete, and the ``is_stub`` flag makes its no-op nature explicit.
+    """
+
+    #: Explicit marker: this filter performs no regime gating yet.
+    is_stub = True
 
     def __init__(self, allowed_regimes: list[str] | None = None) -> None:
         if allowed_regimes is None:
@@ -135,7 +181,13 @@ class RegimeFilter:
     name = "regime"
 
     def check(self, signal: Signal, portfolio: Portfolio) -> RiskDecision:
-        return RiskDecision.allow(self.name)
+        # Honest stub: no regime source in the risk chain. Neutral ALLOW with
+        # an explicit marker; see the class docstring for the rationale.
+        return RiskDecision(
+            allowed=True,
+            reason="stub: no regime source in risk chain — neutral",
+            filter_name=self.name,
+        )
 
 
 # ---------------------------------------------------------------------------

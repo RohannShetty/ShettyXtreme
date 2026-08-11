@@ -32,6 +32,9 @@ class ScorecardResponse(BaseModel):
     metrics: list[ScorecardMetricResponse] = []
     by_regime: list[RegimeRowResponse] = []
     calibration: list[CalibrationPointResponse] = []
+    #: Current regime from the intelligence projection (None when unwired) —
+    #: lets the SPA accent the by-regime bars without a second REST call.
+    current_regime: str | None = None
 
 
 class SessionsResponse(BaseModel):

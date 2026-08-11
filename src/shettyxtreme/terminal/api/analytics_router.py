@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 from shettyxtreme.learning.sessions import SessionLog
 from shettyxtreme.research.store import ResearchStore
@@ -47,6 +47,25 @@ def _metric(
     )
 
 
+def _current_regime(request: Request) -> str | None:
+    """Best-effort current regime from the intelligence projection.
+
+    Mirrors the defensive access used by the research router: a missing or
+    broken projection must never 500 the scorecard — it degrades to None
+    (accent bar falls back to "all regimes current" on the SPA).
+    """
+    proj = getattr(request.app.state, "intelligence_projection", None)
+    if proj is None:
+        return None
+    try:
+        regime = proj.get_regime() or {}
+    except Exception as exc:
+        logger.warning("Regime lookup failed for scorecard: %s", exc)
+        return None
+    value = regime.get("regime")
+    return value if isinstance(value, str) and value else None
+
+
 @router.get("/sessions", response_model=SessionsResponse)
 async def sessions(limit: int = Query(100, ge=1, le=500)) -> SessionsResponse:
     """Session log rows + counts; missing DB -> empty payload."""
@@ -65,7 +84,7 @@ async def sessions(limit: int = Query(100, ge=1, le=500)) -> SessionsResponse:
 
 
 @router.get("/scorecard", response_model=ScorecardResponse)
-async def scorecard() -> ScorecardResponse:
+async def scorecard(request: Request) -> ScorecardResponse:
     """Scorecard-core aggregates over sessions, decisions, and calibration."""
     metrics: list[ScorecardMetricResponse] = []
 
@@ -244,6 +263,7 @@ async def scorecard() -> ScorecardResponse:
         metrics=metrics,
         by_regime=regime_rows,
         calibration=calibration_points,
+        current_regime=_current_regime(request),
     )
 
 

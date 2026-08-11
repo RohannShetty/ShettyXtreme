@@ -6,9 +6,12 @@ pairing of opposite-side fills per symbol (see pair_fills).
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS fills (
@@ -34,38 +37,67 @@ def pair_fills(fills: list[dict]) -> list[dict]:
     Long (BUY then SELL): pnl = (exit_price - entry_price) * qty.
     Short (SELL then BUY): pnl = (entry_price - exit_price) * qty.
     Unpaired remainder stays open — no pair emitted.
+
+    Partial fills keep their remainder queued (F-KNOW-005): a 75-qty BUY met
+    by a 30-qty SELL pairs 30 now and leaves 45 of the BUY in the queue to
+    pair against the next SELL, FIFO-order preserved.
+
+    Fills without a resolvable symbol are logged at ERROR and excluded
+    from pairing: pairing them would phantom-pair cross-symbol fills
+    (e.g. a NIFTY buy postback against a BANKNIFTY sell postback).
     """
     pairs: list[dict] = []
     by_symbol: dict[str, list[dict]] = {}
     for fill in sorted(fills, key=lambda f: str(f.get("recorded_at", ""))):
-        by_symbol.setdefault(str(fill.get("symbol") or "?"), []).append(fill)
+        symbol = fill.get("symbol")
+        if not symbol:
+            logger.error(
+                "NULL-symbol fill %r (order_id=%r) excluded from pairing — "
+                "symbol could not be resolved at record time",
+                fill.get("fill_id"), fill.get("order_id"),
+            )
+            continue
+        by_symbol.setdefault(str(symbol), []).append(fill)
     for group in by_symbol.values():
-        longs: list[dict] = []
-        shorts: list[dict] = []
+        # Each queue entry is (fill, remaining_qty). Remainders are kept at
+        # the head of the queue so FIFO order holds across partial matches.
+        longs: list[tuple[dict, int]] = []
+        shorts: list[tuple[dict, int]] = []
         for fill in group:
             side = str(fill.get("side", "")).upper()
+            qty = int(fill["quantity"])
             if side == "BUY":
-                if shorts:
-                    entry = shorts.pop(0)
-                    qty = min(int(entry["quantity"]), int(fill["quantity"]))
-                    pnl = (float(entry["price"]) - float(fill["price"])) * qty
+                while qty > 0 and shorts:
+                    entry, entry_remaining = shorts[0]
+                    paired = min(entry_remaining, qty)
+                    pnl = (float(entry["price"]) - float(fill["price"])) * paired
                     pairs.append(
                         {"symbol": fill.get("symbol"), "entry_fill": entry,
-                         "exit_fill": fill, "quantity": qty, "pnl": round(pnl, 4)}
+                         "exit_fill": fill, "quantity": paired, "pnl": round(pnl, 4)}
                     )
-                else:
-                    longs.append(fill)
+                    qty -= paired
+                    if entry_remaining > paired:
+                        shorts[0] = (entry, entry_remaining - paired)
+                    else:
+                        shorts.pop(0)
+                if qty > 0:
+                    longs.append((fill, qty))
             elif side == "SELL":
-                if longs:
-                    entry = longs.pop(0)
-                    qty = min(int(entry["quantity"]), int(fill["quantity"]))
-                    pnl = (float(fill["price"]) - float(entry["price"])) * qty
+                while qty > 0 and longs:
+                    entry, entry_remaining = longs[0]
+                    paired = min(entry_remaining, qty)
+                    pnl = (float(fill["price"]) - float(entry["price"])) * paired
                     pairs.append(
                         {"symbol": fill.get("symbol"), "entry_fill": entry,
-                         "exit_fill": fill, "quantity": qty, "pnl": round(pnl, 4)}
+                         "exit_fill": fill, "quantity": paired, "pnl": round(pnl, 4)}
                     )
-                else:
-                    shorts.append(fill)
+                    qty -= paired
+                    if entry_remaining > paired:
+                        longs[0] = (entry, entry_remaining - paired)
+                    else:
+                        longs.pop(0)
+                if qty > 0:
+                    shorts.append((fill, qty))
     return pairs
 
 
@@ -115,6 +147,22 @@ class TradeLedger:
         sql += " ORDER BY recorded_at DESC LIMIT ?"
         params.append(limit)
         return [self._row(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def symbol_for_order(self, order_id: str) -> str | None:
+        """Resolve the symbol of the fill that originally created an order-id.
+
+        Used by the recorder when a Dhan postback arrives: postbacks carry
+        order_id/status/filled_quantity/average_price but no symbol, so the
+        symbol is taken from the paper/other fill already recorded for that
+        order-id. Returns None when the order-id is unknown or every fill for
+        it is itself NULL-symbol.
+        """
+        row = self._conn.execute(
+            "SELECT symbol FROM fills WHERE order_id = ? AND symbol IS NOT NULL "
+            "ORDER BY recorded_at ASC LIMIT 1",
+            (order_id,),
+        ).fetchone()
+        return row[0] if row else None
 
     def per_session_summary(self) -> list[dict]:
         rows = self._conn.execute(

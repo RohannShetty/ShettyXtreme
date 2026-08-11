@@ -20,7 +20,7 @@ Ship the D12 knowledge layer v1: an FTS5-backed document store for decided resea
 ### 3.1 Core lexicons (`core/knowledge/lexicons.py`)
 
 - `NSE_SYMBOLS: set[str]` — curated NSE instrument symbols (from `configs/default_watchlist.yaml` seed + common F&O names: NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, NIFTYNXT50, plus equity symbols listed there).
-- `REGIME_TERMS: dict[str, str]` — canonical regime keyword → normalized regime tag (`{"trending": "TRENDING_UP", "trending up": "TRENDING_UP", "range": "RANGE_BOUND", "ranging": "RANGE_BOUND", "falling": "TRENDING_DOWN", "downtrend": "TRENDING_DOWN", "bearish": "TRENDING_DOWN", "bullish": "TRENDING_UP", ...}`).
+- `REGIME_TERMS: dict[str, str]` — canonical regime keyword → normalized regime tag (values MUST match `intelligence.regime.regime_classifier.Regime` values, which are lowercase: `trending_up`, `trending_down`, `range_bound`): `{"trending": "trending_up", "trending up": "trending_up", "uptrend": "trending_up", "bullish": "trending_up", "falling": "trending_down", "downtrend": "trending_down", "bearish": "trending_down", "ranging": "range_bound", "range bound": "range_bound", "sideways": "range_bound", "flat": "range_bound"}`.
 - `RISK_THEMES: dict[str, str]` — risk lexicon keyword → normalized risk tag (`{"crowding": "CROWDING", "elevated iv": "ELEVATED_IV", "iv rank": "ELEVATED_IV", "tail risk": "TAIL_RISK", "overbought": "OVERBOUGHT", "gap": "GAP_RISK", "event": "EVENT_RISK", ...}`).
 - Pure data + one helper `normalize_symbol(token) -> str | None` (uppercase, strip exchange suffix like `NSE:`, `NSE_FNO:`).
 

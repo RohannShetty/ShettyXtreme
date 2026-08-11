@@ -1,6 +1,27 @@
 /** Typed fetch helpers for the ShettyXtreme Terminal API. */
 
+import type { Theme } from "./theme";
+
 type JsonError = { detail?: unknown; message?: string };
+
+const FETCH_TIMEOUT_MS = 10000;
+
+/** fetch with an AbortController deadline. A stalled request aborts after
+ *  FETCH_TIMEOUT_MS instead of hanging forever (in-flight requests used to
+ *  pile up); the caller maps the AbortError to "Request timeout". */
+async function fetchWithTimeout(path: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(path, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === "AbortError";
+}
 
 async function describeError(resp: Response): Promise<string> {
   const fallback = `Request to ${resp.url || resp.statusText} failed (HTTP ${resp.status})`;
@@ -18,11 +39,16 @@ async function describeError(resp: Response): Promise<string> {
   return fallback;
 }
 
-async function request<T>(path: string, method: string): Promise<T> {
+async function request<T>(
+  path: string,
+  method: string,
+  headers?: Record<string, string>,
+): Promise<T> {
   let resp: Response;
   try {
-    resp = await fetch(path, { method, credentials: "same-origin" });
-  } catch {
+    resp = await fetchWithTimeout(path, { method, credentials: "same-origin", headers });
+  } catch (err) {
+    if (isAbortError(err)) throw new Error("Request timeout");
     throw new Error(`Network error reaching ${path}`);
   }
   if (!resp.ok) {
@@ -35,15 +61,16 @@ export async function get<T>(path: string): Promise<T> {
   return request<T>(path, "GET");
 }
 
-export async function post<T>(path: string): Promise<T> {
-  return request<T>(path, "POST");
+export async function post<T>(path: string, headers?: Record<string, string>): Promise<T> {
+  return request<T>(path, "POST", headers);
 }
 
 export async function del(path: string): Promise<void> {
   let resp: Response;
   try {
-    resp = await fetch(path, { method: "DELETE", credentials: "same-origin" });
-  } catch {
+    resp = await fetchWithTimeout(path, { method: "DELETE", credentials: "same-origin" });
+  } catch (err) {
+    if (isAbortError(err)) throw new Error("Request timeout");
     throw new Error(`Network error reaching ${path}`);
   }
   if (!resp.ok) {
@@ -54,13 +81,33 @@ export async function del(path: string): Promise<void> {
 export async function postBody<T>(path: string, body: unknown): Promise<T> {
   let resp: Response;
   try {
-    resp = await fetch(path, {
+    resp = await fetchWithTimeout(path, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-  } catch {
+  } catch (err) {
+    if (isAbortError(err)) throw new Error("Request timeout");
+    throw new Error(`Network error reaching ${path}`);
+  }
+  if (!resp.ok) {
+    throw new Error(await describeError(resp));
+  }
+  return (await resp.json()) as T;
+}
+
+export async function putBody<T>(path: string, body: unknown): Promise<T> {
+  let resp: Response;
+  try {
+    resp = await fetchWithTimeout(path, {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    if (isAbortError(err)) throw new Error("Request timeout");
     throw new Error(`Network error reaching ${path}`);
   }
   if (!resp.ok) {
@@ -163,6 +210,8 @@ export type KnowledgeStatusResponse = {
   proposed: number;
   activated: number;
   tags: number;
+  last_sync_at: string | null;
+  last_sync_result: "success" | "partial" | "failed" | null;
 };
 export type KnowledgeSyncResponse = {
   ingested: number;
@@ -198,6 +247,7 @@ export type ScorecardResponse = {
   metrics: ScorecardMetric[];
   by_regime: RegimeRow[];
   calibration: CalibrationPoint[];
+  current_regime: string | null;
 };
 export type SessionRecord = {
   session_id: string;
@@ -213,9 +263,10 @@ export type SessionCounts = {
 };
 export type SessionsResponse = { sessions: SessionRecord[]; counts: SessionCounts };
 
-// --- Auth / credential onboarding (P1) ---
+// --- Auth / credential onboarding (P1, Fyers) ---
 
 export type AuthStatus = {
+  broker: string;
   has_api_key: boolean;
   has_token: boolean;
   token_valid: boolean;
@@ -224,11 +275,9 @@ export type AuthStatus = {
   setup_complete: boolean;
   client_name: string | null;
   client_id: string | null;
-  data_token_valid: boolean;
-  data_token_expiry: string | null;
 };
 
-export type ConsentStart = { consent_app_id: string; login_url: string };
+export type AuthStart = { login_url: string; state: string };
 export type SaveResult = { success: boolean; message: string };
 export type ValidationResult = { valid: boolean; message: string };
 
@@ -236,32 +285,20 @@ export async function authStatus(): Promise<AuthStatus> {
   return get<AuthStatus>("/auth/status");
 }
 
-export async function saveCredentials(apiKey: string, apiSecret: string): Promise<SaveResult> {
-  return postBody<SaveResult>("/auth/credentials", { api_key: apiKey, api_secret: apiSecret });
+export async function saveCredentials(appId: string, secretId: string): Promise<SaveResult> {
+  return postBody<SaveResult>("/auth/credentials", { app_id: appId, secret_id: secretId });
 }
 
-export async function testCredentials(apiKey: string, apiSecret: string): Promise<ValidationResult> {
-  return postBody<ValidationResult>("/auth/test", { api_key: apiKey, api_secret: apiSecret });
+export async function testCredentials(appId: string, secretId: string): Promise<ValidationResult> {
+  return postBody<ValidationResult>("/auth/test", { app_id: appId, secret_id: secretId });
 }
 
-export async function startConsent(): Promise<ConsentStart> {
-  return post<ConsentStart>("/auth/start-consent");
+export async function startAuth(): Promise<AuthStart> {
+  return post<AuthStart>("/auth/start-auth");
 }
 
-export async function saveDirectToken(accessToken: string): Promise<SaveResult> {
-  return postBody<SaveResult>("/auth/token", { access_token: accessToken });
-}
-
-export async function savePinTotp(clientId: string, pin: string, totp: string): Promise<SaveResult> {
-  return postBody<SaveResult>("/auth/token/pin-totp", { client_id: clientId, pin, totp });
-}
-
-export async function saveDataToken(accessToken: string, expiry: string | null = null): Promise<SaveResult> {
-  return postBody<SaveResult>("/auth/data-token", { access_token: accessToken, expiry });
-}
-
-export async function reauth(): Promise<ConsentStart> {
-  return post<ConsentStart>("/auth/start-consent");
+export async function reauth(): Promise<AuthStart> {
+  return post<AuthStart>("/auth/start-auth");
 }
 
 export async function logoutAuth(): Promise<SaveResult> {
@@ -291,24 +328,34 @@ export type Proposal = {
   timestamp: string | null;
 };
 
-export type ExecutionMode = { mode: string };
+export type ExecutionMode = { mode: string; csrf_token: string | null };
 export type RiskSummary = {
   daily_pnl: number;
   margin_used: number;
-  margin_available: number;
+  margin_available: number | null; // null = unknown, never render as ₹0
   loss_limit: number;
   loss_limit_hit: boolean;
   max_positions: number;
   active_positions: number;
 };
 
+export async function approveProposal(
+  id: string,
+  confirm: boolean,
+  csrfToken: string | null,
+): Promise<Proposal> {
+  // LIVE placements require the per-session CSRF token minted on typed LIVE
+  // activation (F-EXEC-001).
+  const headers = csrfToken ? { "X-CSRF-Token": csrfToken } : undefined;
+  return post<Proposal>(
+    `/api/execution/proposals/${encodeURIComponent(id)}/approve?confirm=${confirm}`,
+    headers,
+  );
+}
+
 export async function getProposals(status?: string): Promise<Proposal[]> {
   const qs = status ? `?status=${encodeURIComponent(status)}` : "";
   return get<Proposal[]>(`/api/execution/proposals${qs}`);
-}
-
-export async function approveProposal(id: string, confirm: boolean): Promise<Proposal> {
-  return post<Proposal>(`/api/execution/proposals/${encodeURIComponent(id)}/approve?confirm=${confirm}`);
 }
 
 export async function rejectProposal(id: string, reason = ""): Promise<Proposal> {
@@ -322,4 +369,87 @@ export async function executionMode(): Promise<ExecutionMode> {
 
 export async function riskSummary(): Promise<RiskSummary> {
   return get<RiskSummary>("/api/execution/risk");
+}
+
+// --- Market: intraday bars (T2) ---
+
+export type MarketBar = {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+export type MarketBarsResponse = {
+  symbol: string;
+  exchange: string;
+  bars: MarketBar[];
+};
+
+export async function getMarketBars(
+  symbol: string,
+  exchange: string = "NSE_FNO",
+  tf: number = 1,
+  days: number = 1,
+): Promise<MarketBarsResponse> {
+  const q = new URLSearchParams({ symbol, exchange, tf: String(tf), days: String(days) });
+  return get<MarketBarsResponse>(`/api/market/bars?${q}`);
+}
+
+// --- Settings (Phase 7 W3, settings_router.py) ---
+
+export type SettingsScheduler = {
+  enabled: boolean;
+  interval_minutes: number;
+  lenses: string[] | null;
+  tools: string[] | null;
+  // Live state: is a research loop actually ticking right now?
+  running: boolean;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  last_result: string | null;
+};
+
+export type SettingsResponse = {
+  loss_limit: number;
+  max_positions: number;
+  theme: Theme;
+  scheduler: SettingsScheduler;
+};
+
+export type SettingsUpdate = {
+  loss_limit?: number;
+  max_positions?: number;
+  theme?: Theme;
+};
+
+export type SchedulerUpdate = {
+  enabled?: boolean;
+  interval_minutes?: number;
+  lenses?: string[] | null;
+  tools?: string[] | null;
+};
+
+export type ThemeResponse = { theme: Theme };
+
+export async function getSettings(): Promise<SettingsResponse> {
+  return get<SettingsResponse>("/api/settings");
+}
+
+export async function updateSettings(update: SettingsUpdate): Promise<SettingsResponse> {
+  return putBody<SettingsResponse>("/api/settings", update);
+}
+
+export async function setTheme(theme: Theme): Promise<ThemeResponse> {
+  return putBody<ThemeResponse>("/api/settings/theme", { theme });
+}
+
+export async function getScheduler(): Promise<SettingsScheduler> {
+  return get<SettingsScheduler>("/api/settings/scheduler");
+}
+
+export async function updateScheduler(update: SchedulerUpdate): Promise<SettingsScheduler> {
+  return putBody<SettingsScheduler>("/api/settings/scheduler", update);
 }

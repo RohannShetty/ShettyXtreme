@@ -9,7 +9,27 @@
 
 export type WsMessageHandler = (data: unknown) => void;
 
-const RECONNECT_MS = 2000;
+/** Live market-data tick broadcast by the backend (WatchlistProjection).
+ *
+ * Chain fields (oi/strike/option_type) ride the wire so ChainGrid can update
+ * live without REST polling; they are null for non-option symbols (indexes,
+ * equities). iv is intentionally absent — the HSM symbol-update feed has no
+ * IV field, so IV stays REST-polled. */
+export type TickPayload = {
+  symbol: string;
+  ltp: number;
+  change_pct: number;
+  volume: number;
+  oi: number | null;
+  strike: number | null;
+  option_type: string | null;
+};
+
+/** Reconnect policy: exponential backoff (2s → 4s → 8s → 16s → 30s cap)
+ *  with ±20% random jitter so a fleet of clients never thundering-herds the
+ *  server after an outage. The attempt counter resets on a successful open. */
+const RECONNECT_BASE_MS = 2000;
+const RECONNECT_MAX_MS = 30000;
 const PING_MS = 30000;
 
 const handlers = new Map<string, Set<WsMessageHandler>>();
@@ -18,6 +38,7 @@ let socket: WebSocket | null = null;
 let keepAlive: number | undefined;
 let retryTimer: number | undefined;
 let stopped = true;
+let reconnectAttempt = 0;
 
 function wsUrl(): string {
   if (import.meta.env.DEV) {
@@ -27,12 +48,20 @@ function wsUrl(): string {
   return `${proto}://${location.host}/ws`;
 }
 
+function reconnectDelay(): number {
+  const exp = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempt, RECONNECT_MAX_MS);
+  const jitter = 0.8 + Math.random() * 0.4; // ±20%
+  return Math.round(exp * jitter);
+}
+
 function scheduleReconnect(): void {
   if (stopped || retryTimer !== undefined) return;
+  const delay = reconnectDelay();
+  reconnectAttempt += 1;
   retryTimer = window.setTimeout(() => {
     retryTimer = undefined;
     connect();
-  }, RECONNECT_MS);
+  }, delay);
 }
 
 function clearTimers(): void {
@@ -77,6 +106,7 @@ export function connect(): void {
   socket = ws;
 
   ws.onopen = () => {
+    reconnectAttempt = 0;
     keepAlive = window.setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) ws.send("ping");
     }, PING_MS);
@@ -112,6 +142,7 @@ export function connect(): void {
 
 export function stop(): void {
   stopped = true;
+  reconnectAttempt = 0;
   clearTimers();
   if (socket) {
     const ws = socket;

@@ -1,8 +1,7 @@
 """FastAPI application for the ShettyXtreme terminal.
 
-Lifespan: starts event bus, credential store, health monitor,
-Dhan adapters, and ingestion pipeline.
-Mounts static files and includes all routers.
+Lifespan: starts event bus, credential store, health monitor, Fyers adapters,
+and the market-data bridge. Mounts static files and includes all routers.
 """
 from __future__ import annotations
 
@@ -14,39 +13,42 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from shettyxtreme.auth.credential_store import CredentialStore
-from shettyxtreme.auth.dhan_oauth import DhanOAuthHelper
+from shettyxtreme.auth.fyers_oauth import FyersOAuthHelper
 from shettyxtreme.auth.health_monitor import TokenHealthMonitor
 from shettyxtreme.auth.validator import CredentialValidator
-from shettyxtreme.core.event_bus.event_bus import EventBus
-from shettyxtreme.core.storage.time_series_store import TimeSeriesStore
-from shettyxtreme.data.ingestion import IngestionPipeline
+from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
+from shettyxtreme.core.settings import init_settings_store
 from shettyxtreme.execution.execution_engine import ExecutionEngine
 from shettyxtreme.execution.ledger import TradeLedger
 from shettyxtreme.execution.ledger_recorder import LedgerRecorder
 from shettyxtreme.execution.mode_router import ModeRoutingExecutor
 from shettyxtreme.execution.paper_trading import PaperTradingEngine
 from shettyxtreme.execution.signal_bridge import ExecutionSignalBridge
-from shettyxtreme.integration.dhan.data_adapter import DhanDataAdapter
-from shettyxtreme.integration.dhan.trading_adapter import DhanTradingAdapter
 from shettyxtreme.knowledge.store import KnowledgeStore
 from shettyxtreme.learning.sessions import SessionLog
 from shettyxtreme.learning.shadow_loop import ShadowLoop, session_outcome_label
 from shettyxtreme.terminal.api.auth_router import init_auth
 from shettyxtreme.terminal.api.auth_router import router as auth_router
 from shettyxtreme.terminal.api.execution_router import (
+    get_kill_switch_gate,
     get_mode_value,
     is_kill_switch_armed,
     router as execution_router,
 )
 from shettyxtreme.terminal.api.health_router import router as health_router
+from shettyxtreme.terminal.api.terminal_init import (
+    init_terminal_adapters,
+    wire_terminal_init,
+)
 from shettyxtreme.terminal.api.intelligence_router import router as intelligence_router
 from shettyxtreme.terminal.api.learning_router import router as learning_router
+from shettyxtreme.terminal.api.market_router import router as market_router
 from shettyxtreme.terminal.api.research_router import router as research_router
 from shettyxtreme.research.scheduler import ResearchScheduler
 from shettyxtreme.research.tools import set_data_source
@@ -64,6 +66,7 @@ from shettyxtreme.terminal.api.knowledge_router import router as knowledge_route
 from shettyxtreme.terminal.api.scanner_data import GapDetector, LogCollector, ClusterDetector
 from shettyxtreme.terminal.api.scanner_router import init_scanner_data
 from shettyxtreme.terminal.api.scanner_router import router as scanner_router
+from shettyxtreme.terminal.api.settings_router import init_settings
 from shettyxtreme.terminal.api.settings_router import router as settings_router
 from shettyxtreme.terminal.api.watchlist_router import router as watchlist_router
 from shettyxtreme.terminal.api.ws_manager import WebSocketManager
@@ -83,29 +86,95 @@ ws_bridge.configure(ws_manager)
 _event_bus: EventBus | None = None
 _event_bus_task: asyncio.Task | None = None
 _health_monitor: TokenHealthMonitor | None = None
-_trading_adapter: DhanTradingAdapter | None = None
-_data_adapter: DhanDataAdapter | None = None
-_ingestion_pipeline: IngestionPipeline | None = None
 _intelligence_pipeline: IntelligencePipeline | None = None
+_margin_poller_task: asyncio.Task | None = None
+
+# Brokers disagree on the available-balance key name in get_margin() payloads;
+# accept any known one (fix #2 — real margin, never a hardcoded stand-in).
+_MARGIN_AVAILABLE_KEYS = ("availabelBalance", "availableMargin", "available", "balance")
+_MARGIN_POLL_CADENCE_SECONDS = 30.0
+
+
+def _csv_env(name: str) -> list[str] | None:
+    """Parse a comma-separated env var into a list (None when empty)."""
+    raw = os.environ.get(name, "")
+    return [x.strip() for x in raw.split(",") if x.strip()] or None
+
+
+def _scheduler_env_interval() -> float:
+    """Env RESEARCH_SCHEDULE_INTERVAL_MINUTES, clamped to a sane default."""
+    try:
+        interval = float(os.environ.get("RESEARCH_SCHEDULE_INTERVAL_MINUTES", "60"))
+    except ValueError:
+        interval = 60.0
+    return interval if interval > 0 else 60.0
+
+
+async def _margin_poll_loop(app: FastAPI) -> None:
+    """Poll trading_adapter.get_margin() and publish real available margin.
+
+    Margin starts UNKNOWN (None). We only publish a number once the broker
+    reports one; on failure we publish nothing, so the risk projection keeps
+    its previous honest value instead of a fabricated default.
+    """
+    while True:
+        try:
+            adapter = getattr(app.state, "trading_adapter", None)
+            if adapter is not None and hasattr(adapter, "get_margin"):
+                raw = await adapter.get_margin()
+                payload = raw.get("data", raw) if isinstance(raw, dict) else {}
+                available: float | None = None
+                if isinstance(payload, dict):
+                    for key in _MARGIN_AVAILABLE_KEYS:
+                        value = payload.get(key)
+                        if value is not None:
+                            try:
+                                available = float(value)
+                                break
+                            except (TypeError, ValueError):
+                                continue
+                if available is not None and _event_bus is not None:
+                    await _event_bus.publish(Event(
+                        topic=Topic.RISK_DECISION,
+                        data={"margin_available": available},
+                        source="margin_poller",
+                    ))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("margin poller iteration failed")
+        await asyncio.sleep(_MARGIN_POLL_CADENCE_SECONDS)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown lifecycle."""
-    global _event_bus, _event_bus_task, _health_monitor, _trading_adapter, _data_adapter, _ingestion_pipeline
-    global _intelligence_pipeline
+    global _event_bus, _event_bus_task, _health_monitor, _intelligence_pipeline, _margin_poller_task
     logger.info("ShettyXtreme Terminal starting up...")
 
     store = CredentialStore.load() or CredentialStore()
-    oauth = DhanOAuthHelper()
+    oauth = FyersOAuthHelper()
     validator = CredentialValidator()
     init_auth(store, oauth, validator)
 
     _event_bus = EventBus()
     _event_bus_task = asyncio.create_task(_event_bus.start())
     postback_router.set_event_bus(_event_bus)
+    postback_router.set_credential_store(store)
     _health_monitor = TokenHealthMonitor(store, _event_bus)
     await _health_monitor.start()
+
+    # Margin poller: reads app.state.trading_adapter each tick (it is not
+    # created until later in this lifespan / after login), publishes real
+    # margin via RISK_DECISION → RiskProjection (fix #2).
+    _margin_poller_task = asyncio.create_task(_margin_poll_loop(app))
+
+    # ── Settings store (Phase 7 Wave 3) ─────────────────────────────────────
+    # Single source of truth for risk limits / theme / scheduler config.
+    # Initialized before the projections so the risk caps they seed come
+    # from persisted settings rather than constants.
+    settings_store = init_settings_store("data/settings.db")
+    app.state.settings_store = settings_store
 
     # ── Create projection instances and subscribe to EventBus ───────────────
     watchlist_proj = WatchlistProjection()
@@ -160,7 +229,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Store adapters and pipeline on app.state for router access
     app.state.trading_adapter = None
     app.state.data_adapter = None
-    app.state.ingestion_pipeline = None
+    app.state.instrument_master = None
+    app.state.symbol_resolver = None
+    app.state.fyers_session = None
     app.state.event_bus = _event_bus
 
     # Store projections on app.state for router access
@@ -180,31 +251,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception:
             logger.exception("research broadcast failed")
 
+    # ── Research scheduler (Phase 7 Wave 3: settings-store driven) ──────────
+    # The settings store is the source of truth for the scheduler config.
+    # On first boot (keys never written) the effective env config is seeded
+    # so legacy RESEARCH_SCHEDULE_* behavior is preserved; once the operator
+    # touches /api/settings/scheduler the store wins.
+    settings_store.seed_if_absent({
+        "scheduler_enabled": os.environ.get("RESEARCH_SCHEDULE_ENABLED") == "1",
+        "scheduler_interval_minutes": _scheduler_env_interval(),
+        "scheduler_lenses": _csv_env("RESEARCH_SCHEDULE_LENSES"),
+        "scheduler_tools": _csv_env("RESEARCH_SCHEDULE_TOOLS"),
+    })
+    sched_cfg = settings_store.scheduler_config()
+
     research_scheduler: ResearchScheduler | None = None
-    if os.environ.get("RESEARCH_SCHEDULE_ENABLED") == "1":
+    if sched_cfg["enabled"]:
         if not os.environ.get("DEEPSEEK_API_KEY"):
             logger.info("research scheduler skipped: DEEPSEEK_API_KEY not set")
         else:
             orch = build_orchestrator()
             if orch is not None:
-                def _csv_env(name: str) -> list[str] | None:
-                    raw = os.environ.get(name, "")
-                    return [x.strip() for x in raw.split(",") if x.strip()] or None
-
-                try:
-                    interval = float(
-                        os.environ.get("RESEARCH_SCHEDULE_INTERVAL_MINUTES", "60")
-                    )
-                except ValueError:
-                    interval = 60.0
-                if interval <= 0:
-                    interval = 60.0
-
                 research_scheduler = ResearchScheduler(
                     orchestrator=orch,
-                    interval_minutes=interval,
-                    lenses=_csv_env("RESEARCH_SCHEDULE_LENSES"),
-                    tools=_csv_env("RESEARCH_SCHEDULE_TOOLS"),
+                    interval_minutes=sched_cfg["interval_minutes"],
+                    lenses=sched_cfg["lenses"],
+                    tools=sched_cfg["tools"],
                 )
                 research_scheduler.start()
                 logger.info(
@@ -212,8 +283,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     research_scheduler.interval_minutes,
                 )
     else:
-        logger.info("research scheduler disabled (RESEARCH_SCHEDULE_ENABLED not set)")
+        logger.info("research scheduler disabled (settings store)")
     init_research(broadcast_fn=_research_broadcast, scheduler=research_scheduler)
+    init_settings(scheduler=research_scheduler)
 
     # ── Knowledge store + session log (Phase 4) ────────────────────────────
     knowledge_store = KnowledgeStore("data/knowledge.db")
@@ -265,8 +337,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.shadow_loop = shadow_loop
 
     # ── Execution wiring (P4b): proposal queue + mode-routed placement ───────
-    # OBSERVER = proposals only; PAPER → PaperTradingEngine; LIVE → Dhan
-    # adapter (typed gate enforced at the mode endpoint, D10).
+    # OBSERVER = proposals only; PAPER → PaperTradingEngine; LIVE → broker
+    # adapter (Fyers; typed gate + session-validity gate, D10).
     paper_engine = PaperTradingEngine(event_bus=_event_bus)
     app.state.paper_engine = paper_engine
 
@@ -277,6 +349,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         paper_engine=paper_engine,
         mode_provider=get_mode_value,
         kill_switch_provider=is_kill_switch_armed,
+        kill_gate=get_kill_switch_gate(),
         live_provider=_live_adapter_provider,
     )
     app.state.mode_executor = mode_executor
@@ -302,17 +375,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     product=p.get("product", "NRML"),
                 ))
         risk = risk_proj.get() if risk_proj is not None else {}
+        # Unknown margin (None) → 0.0: the risk engine then rejects proposals
+        # it cannot verify rather than admitting them on phantom capital.
+        margin_available = risk.get("margin_available")
         return Portfolio(
             positions=positions,
             daily_pnl=risk.get("daily_pnl", 0.0),
             total_margin_used=risk.get("margin_used", 0.0),
-            available_margin=risk.get("margin_available", 0.0),
+            available_margin=margin_available if margin_available is not None else 0.0,
         )
 
     execution_engine = ExecutionEngine(
         executor=mode_executor,
         risk_engine=RiskEngine(),
         portfolio_provider=_portfolio_provider,
+        db_path="data/proposals.db",
     )
     app.state.execution_engine = execution_engine
 
@@ -326,14 +403,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # ── Seed watchlist from YAML FIRST (before pipeline needs it) ───────────
     watchlist_path = Path(__file__).resolve().parent.parent.parent.parent.parent / "configs" / "default_watchlist.yaml"
+    symbol_map: dict[str, str] = {}
     if watchlist_path.exists():
         import yaml
         with open(watchlist_path, "r") as f:
             watchlist_data = yaml.safe_load(f)
         for idx in watchlist_data.get("default_watchlist", {}).get("indices", []):
-            sec_id = idx["security_id"]
+            sec_id = str(idx["security_id"])
+            name = idx.get("name", sec_id)
             exchange = idx.get("exchange", "NSE_FNO")
-            watchlist_proj.add(str(sec_id), exchange)
+            watchlist_proj.add(name, exchange, security_id=sec_id)
+            symbol_map[sec_id] = name
         logger.info(
             "Default watchlist seeded with %d instruments",
             len(watchlist_data.get("default_watchlist", {}).get("indices", [])),
@@ -341,120 +421,90 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         logger.warning("Default watchlist not found at %s", watchlist_path)
 
-    # ── Initialize Dhan adapters and start data pipeline ─────────────────────
+    # ── Initialize Fyers adapters + market-data bridge (lifespan & post-login) ──
+    wire_terminal_init(lambda: init_terminal_adapters(app, store, symbol_map))
     if store.is_token_valid():
-        try:
-            _trading_adapter = DhanTradingAdapter(
-                client_id=store.client_id,
-                access_token=store.access_token,
-            )
-            app.state.trading_adapter = _trading_adapter
-            logger.info("DhanTradingAdapter initialized")
-        except Exception as exc:
-            logger.error("Failed to initialize DhanTradingAdapter: %s", exc)
+        ok = await init_terminal_adapters(app, store, symbol_map)
+        logger.info("Fyers adapters initialized at lifespan: %s", ok)
 
-        try:
-            _data_adapter = DhanDataAdapter(
-                client_id=store.client_id,
-                access_token=store.access_token,
-                data_access_token=store.data_access_token,
-            )
-            app.state.data_adapter = _data_adapter
-            logger.info("DhanDataAdapter initialized")
+    # Configure HealthProjection with actual adapter references. The token
+    # health provider reads the FyersSession (daily token, no silent refresh)
+    # so a known-expired token reports honestly instead of object existence.
+    def _token_health() -> bool:
+        session = getattr(app.state, "fyers_session", None)
+        return True if session is None else session.is_valid()
 
-            # Group watchlist symbols by exchange for correct MarketFeed subscription
-            watchlist_data_proj = watchlist_proj.get()
-            if watchlist_data_proj:
-                # Group symbols by their exchange segment
-                exchange_groups: dict[str, list[str]] = {}
-                for sym, info in watchlist_data_proj.items():
-                    exch = info.get("exchange", "NSE_FNO")
-                    # Map exchange names to Dhan feed segments
-                    feed_segment = {"NSE_FNO": "NSE_FNO", "NSE": "NSE_EQ", "BSE": "BSE_EQ"}.get(exch, exch)
-                    exchange_groups.setdefault(feed_segment, []).append(sym)
-
-                ts_store = TimeSeriesStore()
-                # Start one pipeline per exchange segment
-                for feed_segment, symbols in exchange_groups.items():
-                    # Map feed segment back to exchange name for IngestionPipeline
-                    pipeline_exchange = {"NSE_FNO": "NFO", "NSE_EQ": "NSE", "BSE_EQ": "BSE"}.get(feed_segment, "NSE")
-                    _ingestion_pipeline = IngestionPipeline(
-                        event_bus=_event_bus,
-                        ts_store=ts_store,
-                        dhan_client_id=store.client_id,
-                        dhan_access_token=store.access_token,
-                        exchange=pipeline_exchange,
-                    )
-                    app.state.ingestion_pipeline = _ingestion_pipeline
-                    await _ingestion_pipeline.start(symbols)
-                    logger.info("IngestionPipeline started for %s with symbols: %s", feed_segment, symbols)
-            else:
-                logger.warning("Watchlist empty — pipeline not started")
-        except Exception as exc:
-            logger.error("Failed to initialize DhanDataAdapter or IngestionPipeline: %s", exc)
-
-    # Configure HealthProjection with actual adapter references
     health_proj.configure(
         event_bus=_event_bus,
         data_adapter=app.state.data_adapter,
         trading_adapter=app.state.trading_adapter,
         feature_engine=app.state.feature_engine,
         signal_engine=app.state.signal_engine,
+        token_health_provider=_token_health,
     )
 
     yield
-
     logger.info("ShettyXtreme Terminal shutting down...")
-    if _intelligence_pipeline is not None:
-        _intelligence_pipeline.unsubscribe()
     try:
-        execution_bridge = getattr(app.state, "execution_bridge", None)
-        if execution_bridge is not None:
-            await execution_bridge.stop()
+        if _intelligence_pipeline is not None:
+            _intelligence_pipeline.unsubscribe()
+        try:
+            execution_bridge = getattr(app.state, "execution_bridge", None)
+            if execution_bridge is not None:
+                await execution_bridge.stop()
+        except Exception:
+            logger.exception("execution bridge stop failed")
+        await regime_bridge.stop()
+        await risk_bridge.stop()
+        if research_scheduler is not None:
+            research_scheduler.stop()
+        try:
+            session_log.end(_session_id)
+        except Exception:
+            logger.exception("session end failed")
+        try:
+            fills = trade_ledger.list(session_id=_session_id)
+            outcome = session_outcome_label(fills)
+            shadow_loop.evaluate_session(_session_id, outcome)
+            logger.info(
+                "session %s learning outcome: %s",
+                _session_id,
+                outcome.value if outcome is not None else "none",
+            )
+        except Exception:
+            logger.exception("session learning evaluation failed")
+        try:
+            shadow_loop.close()
+        except Exception:
+            logger.exception("shadow loop close failed")
+        knowledge_store.close()
+        trade_ledger.close()
+        bar_builder = getattr(app.state, "bar_builder", None)
+        data_adapter = getattr(app.state, "data_adapter", None)
+        trading_adapter = getattr(app.state, "trading_adapter", None)
+        if bar_builder:
+            await bar_builder.stop()
+        # FyersDataAdapter.disconnect() tears down both the HSM data socket
+        # and the JSON order socket (F3).
+        if data_adapter:
+            await data_adapter.disconnect()
+        if trading_adapter:
+            await trading_adapter.disconnect()
+        if _health_monitor:
+            await _health_monitor.stop()
+        if _margin_poller_task:
+            _margin_poller_task.cancel()
+        if _event_bus:
+            await _event_bus.stop()
+        if _event_bus_task:
+            _event_bus_task.cancel()
     except Exception:
-        logger.exception("execution bridge stop failed")
-    await regime_bridge.stop()
-    await risk_bridge.stop()
-    if research_scheduler is not None:
-        research_scheduler.stop()
-    try:
-        session_log.end(_session_id)
-    except Exception:
-        logger.exception("session end failed")
-    try:
-        fills = trade_ledger.list(session_id=_session_id)
-        outcome = session_outcome_label(fills)
-        shadow_loop.evaluate_session(_session_id, outcome)
-        logger.info(
-            "session %s learning outcome: %s",
-            _session_id,
-            outcome.value if outcome is not None else "none",
-        )
-    except Exception:
-        logger.exception("session learning evaluation failed")
-    try:
-        shadow_loop.close()
-    except Exception:
-        logger.exception("shadow loop close failed")
-    knowledge_store.close()
-    trade_ledger.close()
-    if _ingestion_pipeline:
-        await _ingestion_pipeline.stop()
-    if _data_adapter:
-        await _data_adapter.disconnect()
-    if _trading_adapter:
-        await _trading_adapter.disconnect()
-    if _health_monitor:
-        await _health_monitor.stop()
-    if _event_bus:
-        await _event_bus.stop()
-    if _event_bus_task:
-        _event_bus_task.cancel()
+        logger.exception("shutdown teardown failed")
 
 
 app = FastAPI(
     title="ShettyXtreme Terminal",
-    version="0.11.0",
+    version="0.13.0",
     lifespan=lifespan,
 )
 
@@ -494,18 +544,17 @@ app.include_router(learning_router)
 app.include_router(research_router)
 app.include_router(knowledge_router)
 app.include_router(analytics_router)
+app.include_router(market_router)
 
 
 # ── Root: redirect to the Svelte SPA ────────────────────────────────────────
 @app.get("/")
 async def root() -> RedirectResponse:
-    """Root endpoint — redirect to the Svelte SPA."""
     return RedirectResponse(url="/static/")
 
 
 @app.get("/setup")
 async def setup_redirect() -> RedirectResponse:
-    """Setup endpoint — redirect to the Svelte setup view."""
     return RedirectResponse(url="/static/#/setup")
 
 
@@ -514,12 +563,14 @@ async def setup_redirect() -> RedirectResponse:
 async def websocket_endpoint(websocket: WebSocket) -> None:
     """WebSocket endpoint for live data push.
 
-    Clients connect and receive: ticks, signals, alerts, regime changes.
-    Client frames: "ping" (plain text) keeps the connection warm;
-    {"type": "subscribe", "topics": [...]} / {"type": "unsubscribe",
-    "topics": [...]} declare per-client topic interest. Clients that never
-    subscribe receive all topics (backward compatible).
+    Clients receive ticks/signals/alerts/regime changes. Frames: "ping"
+    keepalive; subscribe/unsubscribe {"type": ..., "topics": [...]}.
+    Only local terminal origins may connect (F-EXEC-001).
     """
+    if not ws_manager.is_origin_allowed(websocket.headers.get("origin")):
+        # Close before accept → the client receives HTTP 403 (F-EXEC-001).
+        await websocket.close(code=1008)
+        return
     await ws_manager.connect(websocket)
     try:
         while True:
@@ -542,8 +593,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await ws_manager.subscribe(websocket, topics)
             elif msg.get("type") == "unsubscribe":
                 await ws_manager.unsubscribe(websocket, topics)
-    except WebSocketDisconnect:
-        await ws_manager.disconnect(websocket)
     except Exception:
         await ws_manager.disconnect(websocket)
 

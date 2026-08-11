@@ -18,6 +18,7 @@ class WatchlistItem(BaseModel):
     change_pct: float = 0.0
     volume: int = 0
     timestamp: datetime | None = None
+    security_id: str | None = None
 
 
 # ── Intelligence ───────────────────────────────────────────────────────────
@@ -77,6 +78,33 @@ class StrategyHintResponse(BaseModel):
     rationale: str = ""
 
 
+# ── Market data ────────────────────────────────────────────────────────────
+class MarketBar(BaseModel):
+    timestamp: str  # ISO-8601 (normalized from epoch seconds)
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+
+class MarketBarsResponse(BaseModel):
+    symbol: str
+    exchange: str
+    bars: list[MarketBar] = []
+
+
+class MarketLtpResponse(BaseModel):
+    symbol: str
+    exchange: str
+    ltp: float
+    change_pct: float | None = None
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    prev_close: float | None = None
+
+
 # ── Execution ──────────────────────────────────────────────────────────────
 class PositionResponse(BaseModel):
     symbol: str
@@ -92,7 +120,9 @@ class PositionResponse(BaseModel):
 class RiskResponse(BaseModel):
     daily_pnl: float = 0.0
     margin_used: float = 0.0
-    margin_available: float = 0.0
+    # None = unknown (no broker report yet); clients must render this as
+    # "no data", never as zero or a fabricated amount (fix #2).
+    margin_available: float | None = None
     loss_limit: float = 0.0
     loss_limit_hit: bool = False
     max_positions: int = 0
@@ -101,11 +131,18 @@ class RiskResponse(BaseModel):
 
 class ModeResponse(BaseModel):
     mode: str  # OBSERVER / LIVE / PAPER
+    # Per-session CSRF token (minted on typed LIVE activation). None outside
+    # a LIVE session. Returned on every mode read so the SPA can recover it
+    # across reloads (F-EXEC-001).
+    csrf_token: str | None = None
 
 
 class KillSwitchResponse(BaseModel):
     active: bool
     activated_at: datetime | None = None
+    # Placements already dispatched to the broker when the switch was armed
+    # (Phase 6 Lane B arm-window reporting: "placed just before kill").
+    placements_in_flight: int = 0
 
 
 class ProposalResponse(BaseModel):
@@ -164,7 +201,7 @@ class LogResponse(BaseModel):
 # ── Health ─────────────────────────────────────────────────────────────────
 class ComponentHealth(BaseModel):
     name: str
-    status: str  # healthy / degraded / down
+    status: str  # healthy / stale / disconnected / token_expired / down
     latency_ms: float | None = None
     last_check: datetime | None = None
     message: str = ""
@@ -172,7 +209,7 @@ class ComponentHealth(BaseModel):
 
 class HealthResponse(BaseModel):
     components: list[ComponentHealth] = []
-    overall: str = "healthy"  # healthy / degraded / down
+    overall: str = "healthy"  # healthy / degraded / down (aggregate severity)
 
 
 class SessionResponse(BaseModel):

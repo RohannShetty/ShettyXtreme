@@ -380,9 +380,46 @@ class TestFeatureEngine:
             pass
 
     def test_register_and_get_indicator(self) -> None:
-        engine = FeatureEngine(event_bus=MagicMock(), symbol="NIFTY")
+        engine = FeatureEngine(event_bus=AsyncMock(), symbol="NIFTY")
         sma = SMA(period=3)
         engine.register("test_sma", sma)
         assert engine.get_indicator("test_sma") is sma
         assert engine.get_indicator("nonexistent") is None
         assert "test_sma" in engine.indicator_names
+
+
+# ---------------------------------------------------------------------------
+# F-INTEL-006: last_update freshness tracking
+# ---------------------------------------------------------------------------
+class TestLastUpdateTracking:
+    @pytest.mark.asyncio
+    async def test_fresh_tick_updates_last_update(self) -> None:
+        """A fresh tick stamps ``last_update`` so consumers can bound signal age."""
+        engine = FeatureEngine(event_bus=AsyncMock(), symbol="NIFTY")
+        assert engine.last_update == 0.0  # never updated
+
+        tick = _make_tick(100.0)
+        await engine.process_tick(tick)
+
+        assert engine.last_update > 0.0
+        assert abs(engine.last_update - time.time()) < 5.0
+
+    @pytest.mark.asyncio
+    async def test_stale_tick_does_not_touch_features_or_last_update(self) -> None:
+        """F-INTEL-006: a stale tick must neither refresh ``last_update`` nor
+        overwrite the last good features — otherwise old bars look fresh."""
+        engine = FeatureEngine(event_bus=AsyncMock(), symbol="NIFTY")
+        engine.register("sma_2", SMA(period=2))
+        await engine.process_tick(_make_tick(100.0))
+        await engine.process_tick(_make_tick(102.0))
+        stamp_before = engine.last_update
+        assert engine.features.get("sma_2") == 101.0
+
+        old_ts = datetime.fromtimestamp(time.time() - 15, tz=timezone.utc)
+        old_tick = Tick(
+            symbol="NIFTY", exchange="NSE", ltp=200.0, volume=100, timestamp=old_ts,
+        )
+        await engine.process_tick(old_tick)
+
+        assert engine.last_update == stamp_before, "stale tick must not refresh freshness"
+        assert engine.features.get("sma_2") == 101.0, "stale tick must not mutate features"

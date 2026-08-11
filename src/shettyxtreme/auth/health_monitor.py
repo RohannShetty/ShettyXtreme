@@ -1,26 +1,51 @@
-"""Async background monitor for Dhan API token health.
+"""Async background monitor for Fyers token health.
 
 Checks credential health periodically and publishes events to the bus.
+At 8:45 AM IST (pre-market) it additionally runs a live ``/profile`` probe
+so a daily-expiring Fyers token is detected before the market opens.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
 from shettyxtreme.auth.credential_store import CredentialStore
 from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
+from shettyxtreme.integration.fyers.client import FyersHTTPClient, FyersTokenExpired
 
 logger = logging.getLogger(__name__)
+
+_IST = ZoneInfo("Asia/Kolkata")
+_PRE_MARKET_PROBE_HOUR = 8
+_PRE_MARKET_PROBE_MINUTE = 45
+_PRE_MARKET_WINDOW_MINUTES = 10
+_TOKEN_EXPIRED_WARNING = "TOKEN EXPIRED — re-auth required"
 
 
 class TokenHealthMonitor:
 
-    def __init__(self, credential_store: CredentialStore, event_bus: EventBus) -> None:
+    def __init__(
+        self,
+        credential_store: CredentialStore,
+        event_bus: EventBus,
+        cadence_seconds: int = 60,
+        http_client: FyersHTTPClient | None = None,
+    ) -> None:
         self._credential_store = credential_store
         self._event_bus = event_bus
+        self._cadence_seconds = cadence_seconds
+        # No default client: the pre-market probe builds a credentialed
+        # FyersHTTPClient from the store when credentials exist. Eagerly
+        # creating a credential-less client here made ``_http_client or
+        # FyersHTTPClient(app_id, access_token)`` always pick the
+        # credential-less one — a false daily 'TOKEN EXPIRED' alarm
+        # (F-AUTH-001).
+        self._http_client = http_client
         self._task: asyncio.Task | None = None
         self._running: bool = False
+        self._last_premarket_probe: date | None = None
 
     async def start(self) -> None:
         self._running = True
@@ -35,7 +60,8 @@ class TokenHealthMonitor:
         try:
             while self._running:
                 await self._check_health()
-                await asyncio.sleep(300)
+                await self._maybe_premarket_probe()
+                await asyncio.sleep(self._cadence_seconds)
         except asyncio.CancelledError:
             pass
 
@@ -61,6 +87,55 @@ class TokenHealthMonitor:
                 ))
         except Exception:
             logger.exception("Health check failed")
+
+    async def _maybe_premarket_probe(self, now: datetime | None = None) -> None:
+        """Live /profile probe once per day in the 8:45 AM IST window.
+
+        A probe failure (401 / expired error code) means the daily token is
+        dead before market open — publish the re-auth warning.
+        """
+        try:
+            now_ist = (now or datetime.now(_IST)).astimezone(_IST)
+            in_window = (
+                now_ist.hour == _PRE_MARKET_PROBE_HOUR
+                and _PRE_MARKET_PROBE_MINUTE
+                <= now_ist.minute
+                <= _PRE_MARKET_PROBE_MINUTE + _PRE_MARKET_WINDOW_MINUTES
+            )
+            if not in_window or self._last_premarket_probe == now_ist.date():
+                return
+
+            self._last_premarket_probe = now_ist.date()
+            access_token = getattr(self._credential_store, "access_token", None)
+            app_id = getattr(self._credential_store, "app_id", "")
+            # Probe only when there is something real to authenticate with —
+            # otherwise the call is guaranteed to fail and would raise a
+            # false 'TOKEN EXPIRED' alarm every morning (F-AUTH-001).
+            if not access_token or not app_id:
+                return
+
+            client = self._http_client or FyersHTTPClient(
+                app_id=app_id, access_token=access_token
+            )
+            try:
+                data = await client.get("/profile")
+                if isinstance(data, dict) and data.get("s") == "ok":
+                    logger.info("Pre-market Fyers liveness probe: token valid")
+                    return
+            except FyersTokenExpired:
+                pass  # definite expiry — warn below
+            except Exception:
+                logger.exception("Pre-market Fyers liveness probe failed (non-auth)")
+                return
+
+            logger.warning("Pre-market probe: Fyers token expired — re-auth required")
+            await self._event_bus.publish(Event(
+                Topic.CREDENTIAL_WARNING,
+                {"message": _TOKEN_EXPIRED_WARNING},
+                source="health_monitor",
+            ))
+        except Exception:
+            logger.exception("Pre-market probe failed")
 
     def _get_status(self, token_expiry: str | None) -> tuple[str, float | None]:
         if token_expiry is None:

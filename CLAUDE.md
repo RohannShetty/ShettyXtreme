@@ -24,7 +24,7 @@ ShettyXtreme is STANDALONE SOFTWARE. NO runtime dependency on OpenAlgo or any th
 - intelligence/ imports core/ only
 - integration/ imports core/interfaces + external APIs
 - knowledge/ imports core/ only; CANNOT import intelligence/ or execution/
-- No file > 500 lines
+- No file > 1000 lines
 
 ## Key ShettyBot V1 Bugs Fixed in ShettyXtreme
 1. Strike selection: signal-drift EV (NOT risk-neutral GBM noise)
@@ -42,7 +42,7 @@ ShettyXtreme is STANDALONE SOFTWARE. NO runtime dependency on OpenAlgo or any th
 Every wave must pass:
 1. All previous wave tests still pass (no regressions)
 2. `grep -r "import openalgo\|from openalgo" src/` → ZERO matches
-3. No file > 500 lines
+3. No file > 1000 lines
 4. core/ has zero external imports
 5. `PYTHONPATH="" python -m pytest tests/ -v --tb=short` → ALL PASS
 

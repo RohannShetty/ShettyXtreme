@@ -1,92 +1,85 @@
-"""Tests for CredentialValidator."""
+"""Tests for CredentialValidator (Fyers /profile liveness probe)."""
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
-
 import pytest
 
 from shettyxtreme.auth.validator import CredentialValidator, ValidationResult
+from shettyxtreme.integration.fyers.client import FyersHTTPClient, FyersTokenExpired
 
 
-def test_validate_credentials_valid() -> None:
-    async def _run() -> None:
-        validator = CredentialValidator()
-        result = await validator.validate_credentials(
-            api_key="test_key", api_secret="test_secret", client_id="123"
-        )
-        assert result.valid is True
-        assert "OAuth consent" in result.message
-    asyncio.run(_run())
+def _mock_client(return_value=None, side_effect=None) -> MagicMock:
+    client = MagicMock(spec=FyersHTTPClient)
+    client.get = AsyncMock(return_value=return_value, side_effect=side_effect)
+    return client
 
 
-def test_validate_credentials_invalid_empty_key() -> None:
-    async def _run() -> None:
-        validator = CredentialValidator()
-        result = await validator.validate_credentials(
-            api_key="", api_secret="test_secret", client_id="123"
-        )
-        assert result.valid is False
-    asyncio.run(_run())
+@pytest.mark.asyncio
+async def test_validate_credentials_valid() -> None:
+    validator = CredentialValidator()
+    result = await validator.validate_credentials(app_id="APP", secret_id="SECRET")
+    assert result.valid is True
+    assert "Connect Fyers" in result.message
 
 
-def test_validate_credentials_invalid_empty_secret() -> None:
-    async def _run() -> None:
-        validator = CredentialValidator()
-        result = await validator.validate_credentials(
-            api_key="test_key", api_secret="", client_id="123"
-        )
-        assert result.valid is False
-    asyncio.run(_run())
+@pytest.mark.asyncio
+async def test_validate_credentials_invalid_empty_app_id() -> None:
+    validator = CredentialValidator()
+    result = await validator.validate_credentials(app_id="", secret_id="SECRET")
+    assert result.valid is False
+    assert "App ID" in result.message
 
 
-def test_validate_access_token_valid() -> None:
-    async def _run() -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        with patch("shettyxtreme.auth.validator.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.get = AsyncMock(return_value=mock_resp)
-            mock_client_cls.return_value = mock_client
-            validator = CredentialValidator()
-            result = await validator.validate_access_token(access_token="valid_token")
-            assert result.valid is True
-    asyncio.run(_run())
+@pytest.mark.asyncio
+async def test_validate_credentials_invalid_empty_secret() -> None:
+    validator = CredentialValidator()
+    result = await validator.validate_credentials(app_id="APP", secret_id="")
+    assert result.valid is False
 
 
-def test_validate_access_token_expired() -> None:
-    async def _run() -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 401
-        mock_resp.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError(
-            "401", request=MagicMock(), response=mock_resp
-        ))
-        with patch("shettyxtreme.auth.validator.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.get = AsyncMock(return_value=mock_resp)
-            mock_client_cls.return_value = mock_client
-            validator = CredentialValidator()
-            result = await validator.validate_access_token(access_token="expired_token")
-            assert result.valid is False
-    asyncio.run(_run())
+@pytest.mark.asyncio
+async def test_validate_access_token_valid() -> None:
+    client = _mock_client(return_value={"s": "ok", "data": {"name": "Rohan"}})
+    validator = CredentialValidator(http_client=client)
+    result = await validator.validate_access_token(app_id="APP", access_token="tok")
+    assert result.valid is True
+    assert "valid" in result.message.lower()
+    client.get.assert_awaited_once_with("/profile")
 
 
-def test_validate_handles_network_error() -> None:
-    async def _run() -> None:
-        with patch("shettyxtreme.auth.validator.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.get = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
-            mock_client_cls.return_value = mock_client
-            validator = CredentialValidator()
-            result = await validator.validate_access_token(access_token="token")
-            assert result.valid is False
-            assert "error" in result.message.lower() or "invalid" in result.message.lower()
-    asyncio.run(_run())
+@pytest.mark.asyncio
+async def test_validate_access_token_401_expired() -> None:
+    client = _mock_client(side_effect=FyersTokenExpired("HTTP 401"))
+    validator = CredentialValidator(http_client=client)
+    result = await validator.validate_access_token(app_id="APP", access_token="tok")
+    assert result.valid is False
+    assert "expired" in result.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_validate_access_token_non_ok_200() -> None:
+    client = _mock_client(return_value={"s": "error", "code": -99})
+    validator = CredentialValidator(http_client=client)
+    result = await validator.validate_access_token(app_id="APP", access_token="tok")
+    assert result.valid is False
+    assert "rejected" in result.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_validate_access_token_handles_network_error() -> None:
+    client = _mock_client(side_effect=httpx.ConnectError("refused"))
+    validator = CredentialValidator(http_client=client)
+    result = await validator.validate_access_token(app_id="APP", access_token="tok")
+    assert result.valid is False
+    assert "network" in result.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_validate_access_token_handles_unexpected_error() -> None:
+    client = _mock_client(side_effect=RuntimeError("boom"))
+    validator = CredentialValidator(http_client=client)
+    result = await validator.validate_access_token(app_id="APP", access_token="tok")
+    assert result.valid is False

@@ -150,13 +150,13 @@ class ProjectionDataSource:
                 symbols = []
             for symbol in symbols:
                 try:
-                    result = rank.compute_iv_rank(symbol)
+                    result = rank.compute_iv_rank_percent(symbol)
                 except Exception:
                     continue
                 if result is None:
                     continue
                 lines.append(
-                    f"{symbol} iv_rank={result.iv_rank:.1f}% "
+                    f"{symbol} iv_rank={result.iv_rank_percent:.1f}% "
                     f"(iv={result.current_iv:.1f}%, {result.classification}, "
                     f"n={result.num_data_points})"
                 )

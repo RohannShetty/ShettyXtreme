@@ -1,19 +1,50 @@
 """Configuration management - YAML files with env var overrides.
 
-Pattern: Load config.yaml -> override with env vars -> validate with pydantic.
+Pattern: Load config.yaml -> override with env vars -> validate.
 Secrets from env vars only, never from config files committed to git.
 """
 import os
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
+
+
+# Basic schema: config key -> expected type(s). ``mode`` is the only key a
+# config file MUST declare — it selects the execution mode and is the
+# load-bearing safety switch (OBSERVER first, D10). Every other key has a
+# safe dataclass default, so a partial config file is accepted as long as
+# the keys it does declare type-check. Unknown keys are ignored (forward
+# compatibility).
+_SCHEMA: dict[str, type | tuple[type, ...]] = {
+    "mode": str,
+    "broker": str,
+    "log_level": str,
+    "dry_run": bool,
+    "data_dir": str,
+    "config_dir": str,
+    "log_dir": str,
+    "fyers_app_id": (str, type(None)),
+    "fyers_secret_id": (str, type(None)),
+}
+
+# Keys a config file must provide. Deliberately just ``mode``: the legacy
+# behaviour of accepting partial configs (everything else falls back to a
+# dataclass default) is preserved — see test_unknown_key_in_yaml_ignored.
+_REQUIRED_KEYS: tuple[str, ...] = ("mode",)
+
+
+def _type_name(expected: type | tuple[type, ...]) -> str:
+    if isinstance(expected, tuple):
+        return " | ".join(t.__name__ for t in expected)
+    return expected.__name__
 
 
 @dataclass
 class Config:
     mode: str = "observer"  # backtest | simulation | observer | live | paper
-    broker: str = "dhan"
+    broker: str = "fyers"
     log_level: str = "INFO"
     dry_run: bool = True
 
@@ -22,16 +53,43 @@ class Config:
     config_dir: str = "configs"
     log_dir: str = "logs"
 
-    # Broker credentials (loaded from env)
-    dhan_client_id: str | None = None
-    dhan_access_token: str | None = None
+    # Broker credentials (loaded from env; the OAuth flow is the primary
+    # path — these are optional overrides for headless runs)
+    fyers_app_id: str | None = None
+    fyers_secret_id: str | None = None
 
 class ConfigManager:
     def __init__(self, config_path: str | None = None):
         self._config = Config()
+        self.load(config_path)
+
+    def load(self, config_path: str | None = None) -> None:
+        """Load config from an optional YAML file + env overrides, then validate."""
         if config_path:
             self._load_yaml(config_path)
         self._load_env_overrides()
+        self.validate()
+
+    def validate(self, data: dict[str, Any] | None = None) -> None:
+        """Validate a config mapping against the schema.
+
+        Checks that required keys are present and that every declared key
+        has the expected type; unknown keys are ignored (forward
+        compatibility). With ``data`` omitted, the merged config state
+        (defaults + YAML + env) is validated.
+        """
+        source = data if data is not None else asdict(self._config)
+        missing = [k for k in _REQUIRED_KEYS if k not in source]
+        if missing:
+            raise ValueError(
+                f"config missing required key(s): {', '.join(missing)}"
+            )
+        for key, expected in _SCHEMA.items():
+            if key in source and not isinstance(source[key], expected):
+                raise ValueError(
+                    f"config key '{key}' must be {_type_name(expected)}, "
+                    f"got {type(source[key]).__name__}"
+                )
 
     def _load_yaml(self, path: str):
         p = Path(path)
@@ -39,6 +97,7 @@ class ConfigManager:
             with open(p) as f:
                 data = yaml.safe_load(f)
                 if data:
+                    self.validate(data)
                     for k, v in data.items():
                         if hasattr(self._config, k):
                             setattr(self._config, k, v)
@@ -48,9 +107,8 @@ class ConfigManager:
             "SHETTY_MODE": "mode",
             "SHETTY_BROKER": "broker",
             "SHETTY_DRY_RUN": "dry_run",
-            "DHAN_CLIENT_ID": "dhan_client_id",
-            "DHAN_ACCESS_TOKEN": "dhan_access_token",
-
+            "FYERS_APP_ID": "fyers_app_id",
+            "FYERS_SECRET_ID": "fyers_secret_id",
         }
         for env_key, config_key in env_map.items():
             val = os.environ.get(env_key)

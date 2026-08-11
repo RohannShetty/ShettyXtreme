@@ -7,17 +7,17 @@ themes:
   default: dark
   light: opt-in (operator chooses; never the default)
 colors:
-  canvas: "#0d0c0a"
-  canvas-raised: "#141210"
-  surface-card: "#181613"
-  surface-elevated: "#1e1b17"
-  surface-overlay: "#221f19"
-  hairline: "#26221c"
-  hairline-strong: "#322d25"
-  ink: "#f4f0e7"
-  body: "#c6bfb1"
-  muted: "#948b7c"
-  faint: "#5f584c"
+  canvas: "#0a0a0a"
+  canvas-raised: "#141414"
+  surface-card: "#1a1a1a"
+  surface-elevated: "#262626"
+  surface-overlay: "#333333"
+  hairline: "#333333"
+  hairline-strong: "#404040"
+  ink: "#fafafa"
+  body: "#d4d4d4"
+  muted: "#737373"
+  faint: "#525252"
   accent: "#f5b942"
   accent-active: "#ffce6b"
   accent-disabled: "#5c4712"
@@ -35,30 +35,30 @@ colors:
   danger: "#e5484d"
   info: "#3b82f6"
   focus-ring: "#f5b942"
-  row-hover: "#211d17"
-  row-selected: "#2b2210"
+  row-hover: "#1f1f1f"
+  row-selected: "#2a2a2a"
   scrim: "rgba(0,0,0,0.6)"
   candle-up: "#f6525c"
   candle-down: "#2ebd85"
-  volume: "#3b362c"
-  grid-line: "#211d17"
-  crosshair: "#948b7c"
-  watermark: "#26221c"
+  volume: "#333333"
+  grid-line: "#1f1f1f"
+  crosshair: "#737373"
+  watermark: "#333333"
 light:
-  canvas: "#f7f5f1"
-  canvas-raised: "#efede6"
-  surface-card: "#ffffff"
-  surface-elevated: "#f2efe9"
-  surface-overlay: "#faf8f4"
-  hairline: "#e0dcd2"
-  hairline-strong: "#c9c4b8"
-  ink: "#1a1a18"
-  body: "#3f3d38"
-  muted: "#6f6a60"
-  faint: "#9a948a"
-  accent: "#a16207"
-  accent-active: "#7c4a03"
-  accent-disabled: "#d8c6a3"
+  canvas: "#ffffff"
+  canvas-raised: "#fafafa"
+  surface-card: "#f5f5f5"
+  surface-elevated: "#e5e5e5"
+  surface-overlay: "#f5f5f5"
+  hairline: "#e5e5e5"
+  hairline-strong: "#d4d4d4"
+  ink: "#0a0a0a"
+  body: "#404040"
+  muted: "#737373"
+  faint: "#a3a3a3"
+  accent: "#d97706"
+  accent-active: "#b45309"
+  accent-disabled: "#fde68a"
   on-accent: "#ffffff"
   price-up: "#f6525c"
   price-up-strong: "#f6525c"
@@ -72,16 +72,16 @@ light:
   warning: "#92400e"
   danger: "#c62828"
   info: "#1e40af"
-  focus-ring: "#a16207"
-  row-hover: "#f1eee8"
-  row-selected: "#f4e9cf"
-  scrim: "rgba(23,20,14,0.4)"
+  focus-ring: "#d97706"
+  row-hover: "#f5f5f5"
+  row-selected: "#fef3c7"
+  scrim: "rgba(0,0,0,0.4)"
   candle-up: "#f6525c"
   candle-down: "#1e9e6b"
-  volume: "#d6d0c4"
-  grid-line: "#e6e2d8"
-  crosshair: "#6f6a60"
-  watermark: "#e0dcd2"
+  volume: "#d4d4d4"
+  grid-line: "#e5e5e5"
+  crosshair: "#737373"
+  watermark: "#e5e5e5"
 typography:
   sans: "Inter, system-ui, sans-serif"
   mono: "JetBrains Mono, IBM Plex Mono, ui-monospace, monospace"
@@ -102,10 +102,10 @@ Design contract for the ShettyXtreme terminal — a dark, data-dense, operator-g
 
 ## 1. Visual Theme & Atmosphere
 
-A near-black canvas `{colors.canvas}` carrying dense instrument panels. The chrome (borders, titles, tabs, scrollbars) recedes so the data dominates; the only animated elements are price flashes on tick, the pulsing LIVE indicator, and the selected row's accent edge. Everything reads as calibrated equipment — zero playfulness, zero decoration.
+A pure black canvas `{colors.canvas}` carrying dense instrument panels. The chrome (borders, titles, tabs, scrollbars) recedes so the data dominates; the only animated elements are price flashes on tick, the pulsing LIVE indicator, and the selected row's accent edge. Everything reads as calibrated equipment — zero playfulness, zero decoration.
 
 **Key Characteristics (never violate):**
-- Warm near-black canvas `{colors.canvas}` (`#0d0c0a` family) carrying dense instrument panels; never pure black, never pure white. Dark is the default and the operator norm; a warm-paper light theme exists as an opt-in companion (see §2.1 Themes Contract).
+- Pure black canvas `{colors.canvas}` (`#0a0a0a`) carrying dense instrument panels; clean monochrome with warm amber accent. Dark is the default and the operator norm; a pure white light theme exists as an opt-in companion (see §2.1 Themes Contract).
 - High information density with a fixed 4px grid — density is the product.
 - Elevation is carried exclusively by hairline borders and surface steps; no drop shadows, no glassmorphism, no gradients.
 - One accent color (warm amber) for the few moments that need attention (interactive, live, selected); every other hue is semantic.
@@ -119,27 +119,27 @@ A near-black canvas `{colors.canvas}` carrying dense instrument panels. The chro
 
 The terminal ships **two themes**:
 
-- **Dark (default, operator norm)** — the warm near-black palette in §2.2. `data-theme="dark"` on `<html>`. This is what the operator runs in; light is never the default, and `--mode OBSERVER`-style behavior is theme-independent.
-- **Light (opt-in)** — the warm paper palette in §2.3. The operator may switch via the header toggle; the choice persists (`sx-theme` in `localStorage`) and applies before first paint.
+- **Dark (default, operator norm)** — the pure black palette in §2.2. `data-theme="dark"` on `<html>`. This is what the operator runs in; light is never the default, and `--mode OBSERVER`-style behavior is theme-independent.
+- **Light (opt-in)** — the pure white palette in §2.3. The operator may switch via the header toggle; the choice persists (`sx-theme` in `localStorage`) and applies before first paint.
 - Both themes pass **WCAG AA for text** (contrast ≥ 4.5:1 for body text; the price tokens are the single documented exception — see below).
 - **Red = rise, green = fall in BOTH themes. Never invert.** The price convention law holds in dark and light alike; `{colors.price-up}` / `{colors.price-down}` keep their hex in dark and may only *darken* in light for AA (green may darken to `#1e9e6b`; the red `#f6525c` is kept as-is and is the one accepted sub-AA text usage at ~3.5:1 on paper, used in 600-weight data numerals only).
 - Theme selection changes tokens only — never layout, density, typography, or component structure.
 
-### 2.2 Token reference — dark (warm amber)
+### 2.2 Token reference — dark (pure black + warm amber)
 
 | Token | Hex | Role |
 |---|---|---|
-| `{colors.canvas}` | `#0d0c0a` | App background. The only full-screen surface. |
-| `{colors.canvas-raised}` | `#141210` | Header bars, tab strips, status strips sitting on canvas. |
-| `{colors.surface-card}` | `#181613` | Panels, cards, tables, dialogs' body background. |
-| `{colors.surface-elevated}` | `#1e1b17` | Hovered panels, dropdowns, tooltips, floating summary strips. |
-| `{colors.surface-overlay}` | `#221f19` | Modals, drawers, command palette. Always under `{colors.scrim}`. |
-| `{colors.hairline}` | `#26221c` | 1px borders between panels and on canvas. Default border. |
-| `{colors.hairline-strong}` | `#322d25` | Borders of interactive/active elements, table header underline, divider inside cards. |
-| `{colors.ink}` | `#f4f0e7` | Primary text — LTP hero, panel titles, values of consequence. |
-| `{colors.body}` | `#c6bfb1` | Regular text, table cell text. |
-| `{colors.muted}` | `#948b7c` | Secondary labels, non-numeric captions, icon strokes. |
-| `{colors.faint}` | `#5f584c` | Placeholders, empty states, disabled text, timestamps. |
+| `{colors.canvas}` | `#0a0a0a` | App background. The only full-screen surface. |
+| `{colors.canvas-raised}` | `#141414` | Header bars, tab strips, status strips sitting on canvas. |
+| `{colors.surface-card}` | `#1a1a1a` | Panels, cards, tables, dialogs' body background. |
+| `{colors.surface-elevated}` | `#262626` | Hovered panels, dropdowns, tooltips, floating summary strips. |
+| `{colors.surface-overlay}` | `#333333` | Modals, drawers, command palette. Always under `{colors.scrim}`. |
+| `{colors.hairline}` | `#333333` | 1px borders between panels and on canvas. Default border. |
+| `{colors.hairline-strong}` | `#404040` | Borders of interactive/active elements, table header underline, divider inside cards. |
+| `{colors.ink}` | `#fafafa` | Primary text — LTP hero, panel titles, values of consequence. |
+| `{colors.body}` | `#d4d4d4` | Regular text, table cell text. |
+| `{colors.muted}` | `#737373` | Secondary labels, non-numeric captions, icon strokes. |
+| `{colors.faint}` | `#525252` | Placeholders, empty states, disabled text, timestamps. |
 | `{colors.accent}` | `#f5b942` | THE single accent — warm amber. Live indicators, active tab, selected controls, links, focus. |
 | `{colors.accent-active}` | `#ffce6b` | Accent hover / pressed glow (brightens on dark). |
 | `{colors.accent-disabled}` | `#5c4712` | Accent controls in disabled state. |
@@ -167,26 +167,26 @@ The terminal ships **two themes**:
 | `{colors.crosshair}` | `#948b7c` | Chart crosshair. |
 | `{colors.watermark}` | `#26221c` | Chart watermark / background annotations. |
 
-### 2.3 Token reference — light (warm paper)
+### 2.3 Token reference — light (pure white)
 
-Same roles as §2.2 — only the hex differs. The price law holds unchanged: `{colors.price-up}` red, `{colors.price-down}` green (darkened to `#1e9e6b` for AA on paper; hue stays green, never swapped).
+Same roles as §2.2 — only the hex differs. The price law holds unchanged: `{colors.price-up}` red, `{colors.price-down}` green (darkened to `#1e9e6b` for AA on white; hue stays green, never swapped).
 
 | Token | Hex | Role |
 |---|---|---|
-| `{colors.canvas}` | `#f7f5f1` | App background. Warm paper. |
-| `{colors.canvas-raised}` | `#efede6` | Header bars, tab strips, status strips. |
-| `{colors.surface-card}` | `#ffffff` | Panels, cards, tables, dialogs' body background. |
-| `{colors.surface-elevated}` | `#f2efe9` | Hovered panels, dropdowns, tooltips, floating strips. |
-| `{colors.surface-overlay}` | `#faf8f4` | Modals, drawers, command palette. Under `{colors.scrim}`. |
-| `{colors.hairline}` | `#e0dcd2` | 1px borders. Default border. |
-| `{colors.hairline-strong}` | `#c9c4b8` | Borders of interactive/active elements, dividers. |
-| `{colors.ink}` | `#1a1a18` | Primary text. |
-| `{colors.body}` | `#3f3d38` | Regular text, table cell text. |
-| `{colors.muted}` | `#6f6a60` | Secondary labels, captions, icon strokes. |
-| `{colors.faint}` | `#9a948a` | Placeholders, empty states, disabled text, timestamps. |
-| `{colors.accent}` | `#a16207` | The single accent — dark amber (AA on paper). |
-| `{colors.accent-active}` | `#7c4a03` | Accent hover / pressed (darkens on light). |
-| `{colors.accent-disabled}` | `#d8c6a3` | Accent controls in disabled state. |
+| `{colors.canvas}` | `#ffffff` | App background. Pure white. |
+| `{colors.canvas-raised}` | `#fafafa` | Header bars, tab strips, status strips. |
+| `{colors.surface-card}` | `#f5f5f5` | Panels, cards, tables, dialogs' body background. |
+| `{colors.surface-elevated}` | `#e5e5e5` | Hovered panels, dropdowns, tooltips, floating strips. |
+| `{colors.surface-overlay}` | `#f5f5f5` | Modals, drawers, command palette. Under `{colors.scrim}`. |
+| `{colors.hairline}` | `#e5e5e5` | 1px borders. Default border. |
+| `{colors.hairline-strong}` | `#d4d4d4` | Borders of interactive/active elements, dividers. |
+| `{colors.ink}` | `#0a0a0a` | Primary text. |
+| `{colors.body}` | `#404040` | Regular text, table cell text. |
+| `{colors.muted}` | `#737373` | Secondary labels, captions, icon strokes. |
+| `{colors.faint}` | `#a3a3a3` | Placeholders, empty states, disabled text, timestamps. |
+| `{colors.accent}` | `#d97706` | The single accent — dark amber (AA on white). |
+| `{colors.accent-active}` | `#b45309` | Accent hover / pressed (darkens on light). |
+| `{colors.accent-disabled}` | `#fde68a` | Accent controls in disabled state. |
 | `{colors.on-accent}` | `#ffffff` | Text on accent fills. |
 | `{colors.price-up}` | `#f6525c` | **Price rose.** Same hex as dark — law. |
 | `{colors.price-up-strong}` | `#f6525c` | LTP flash / candle body tone; on paper the law-red is already the strongest readable tone, so "strong" equals the base. |
@@ -360,20 +360,20 @@ Rules:
 ## 9. Agent Prompt Guide
 
 **Quick hex reference — dark (default):**
-- Canvas `#0d0c0a` · Surface card `#181613` · Surface elevated `#1e1b17` · Hairline `#26221c`
-- Ink `#f4f0e7` · Body `#c6bfb1` · Muted `#948b7c`
+- Canvas `#0a0a0a` · Surface card `#1a1a1a` · Surface elevated `#262626` · Hairline `#333333`
+- Ink `#fafafa` · Body `#d4d4d4` · Muted `#737373`
 - Accent amber `#f5b942` · Focus ring `#f5b942`
 - **Rise (red)** `#f6525c` · **Fall (green)** `#2ebd85` · Flash tints `rgba(246,82,92,0.16)` / `rgba(46,189,133,0.16)`
 - Success `#22c55e` · Warning `#ffb020` · Danger `#e5484d` · Info `#3b82f6`
-- Row hover `#211d17` · Row selected `#2b2210` + accent left edge
+- Row hover `#1f1f1f` · Row selected `#2a2a2a` + accent left edge
 
 **Quick hex reference — light (opt-in):**
-- Canvas `#f7f5f1` · Surface card `#ffffff` · Surface elevated `#f2efe9` · Hairline `#e0dcd2`
-- Ink `#1a1a18` · Body `#3f3d38` · Muted `#6f6a60`
-- Accent amber `#a16207` · Focus ring `#a16207`
+- Canvas `#ffffff` · Surface card `#f5f5f5` · Surface elevated `#e5e5e5` · Hairline `#e5e5e5`
+- Ink `#0a0a0a` · Body `#404040` · Muted `#737373`
+- Accent amber `#d97706` · Focus ring `#d97706`
 - **Rise (red)** `#f6525c` · **Fall (green)** `#1e9e6b` (AA-darkened; hue stays green)
 - Success `#15803d` · Warning `#92400e` · Danger `#c62828` · Info `#1e40af`
-- Row hover `#f1eee8` · Row selected `#f4e9cf` + accent left edge
+- Row hover `#f5f5f5` · Row selected `#fef3c7` + accent left edge
 
 **Prompt templates:**
 

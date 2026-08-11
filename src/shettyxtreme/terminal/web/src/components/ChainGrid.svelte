@@ -2,8 +2,13 @@
   import { onMount } from "svelte";
   import { get } from "../lib/api";
   import { selectedSymbol } from "../lib/selection";
-  import { Button } from "$lib/components/ui/button";
+  import { onMessage, type TickPayload } from "../lib/ws";
   import { Input } from "$lib/components/ui/input";
+  import { ScrollArea } from "$lib/components/ui/scroll-area";
+  import { Select, SelectContent, SelectItem, SelectTrigger } from "$lib/components/ui/select";
+  import { Skeleton } from "$lib/components/ui/skeleton";
+  import { cn } from "$lib/utils.js";
+  import CandleChart from "./CandleChart.svelte";
   import {
     Table,
     TableBody,
@@ -35,24 +40,87 @@
   };
 
   type ChainRow = { strike: number; ce?: Contract; pe?: Contract };
+  type Side = "ce" | "pe";
+  type Dir = "up" | "down";
+
+  // IV is not carried by the WS tick payload (the HSM feed has no IV field),
+  // so a quiet REST poll keeps the IV column live between loads. LTP/OI and
+  // the strike/option_type identity of watchlisted contracts tick in real
+  // time via WS and flash on each move.
+  const REFRESH_MS = 15_000;
+  const FLASH_MS = 150;
+  const LIVE_MS = 60_000;
 
   let symbol = $state("NIFTY");
+  let exchange = $state("NSE_FNO");
   let expiry = $state("");
   let expiries = $state<string[]>([]);
   let contracts = $state<Contract[]>([]);
   let loading = $state(false);
   let error = $state("");
+  let selectedStrike = $state<number | null>(null);
+  let live = $state(false);
+  let now = $state(Date.now());
+  // Committed request — the pair the grid is loaded for. The display `symbol`
+  // / `expiry` bind to the inputs and change on every keystroke, but the grid
+  // reloads only when this pair changes (blur / Enter / select / selection
+  // change), never mid-typing.
+  let snapshot = $state({ symbol: "NIFTY", expiry: "" });
+  // Reactive flash record keyed by `${strike}|${side}`. $state so the 150ms
+  // removal re-renders and the CSS animation restarts on the next tick.
+  let flashes = $state<Record<string, Dir>>({});
+  const flashTimers = new Map<string, number>();
+  // Per-contract last-tick direction (persistent LTP cell color) and last LTP.
+  const dirMap = new Map<string, Dir>();
+  const prevLtp = new Map<string, number>();
+  let lastTickAt: number | null = null;
+
+  let reqId = 0;
+  let refreshTimer: number | undefined;
+  let nowTimer: number | undefined;
+  let wrapEl: HTMLDivElement | undefined;
 
   let rows = $derived(buildRows(contracts));
+  let matchIndex = $derived(buildMatchIndex(contracts));
+
+  // Auto-load: runs on mount and whenever a committed request differs from
+  // what the grid currently holds. The reqId guard drops stale responses so
+  // a newer request always wins.
+  $effect(() => {
+    const req = snapshot; // reactive dependency
+    const id = ++reqId;
+    void load(req.symbol, req.expiry, id);
+  });
 
   onMount(() => {
-    load();
-    return selectedSymbol.subscribe((v) => {
-      if (v && v !== symbol) {
-        symbol = v;
-        load();
+    const unsubTick = onMessage("tick", applyTick);
+    // Selection now carries {symbol, exchange}: the grid's symbol AND the
+    // candle chart's exchange come from the selection. "NSE_FNO" stays as the
+    // default only for the manual symbol input, where no selection exists yet.
+    const unsubSel = selectedSymbol.subscribe((sel) => {
+      if (!sel) return;
+      if (sel.symbol && sel.symbol !== symbol) {
+        symbol = sel.symbol;
+        snapshot = { symbol: sel.symbol, expiry: snapshot.expiry };
+      }
+      if (sel.exchange && sel.exchange !== exchange) {
+        exchange = sel.exchange;
       }
     });
+    refreshTimer = window.setInterval(() => {
+      void refreshSilently();
+    }, REFRESH_MS);
+    nowTimer = window.setInterval(() => {
+      now = Date.now();
+    }, 5000);
+    return () => {
+      unsubTick();
+      unsubSel();
+      if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
+      if (nowTimer !== undefined) window.clearInterval(nowTimer);
+      for (const id of flashTimers.values()) window.clearTimeout(id);
+      flashTimers.clear();
+    };
   });
 
   function buildRows(list: Contract[]): ChainRow[] {
@@ -69,21 +137,126 @@
     return [...byStrike.values()].sort((a, b) => a.strike - b.strike);
   }
 
-  async function load(): Promise<void> {
+  function strikeKey(strike: number): number {
+    return Number(strike.toFixed(2));
+  }
+
+  function contractKey(strike: number, side: Side): string {
+    return `${strikeKey(strike)}|${side}`;
+  }
+
+  function buildMatchIndex(list: Contract[]): Map<string, { rowIdx: number; side: Side }> {
+    const idx = new Map<string, { rowIdx: number; side: Side }>();
+    list.forEach((c, i) => {
+      const side: Side = String(c.option_type).toUpperCase() === "PE" ? "pe" : "ce";
+      idx.set(contractKey(c.strike, side), { rowIdx: i, side });
+    });
+    return idx;
+  }
+
+  function sideOf(optionType: string): Side {
+    return String(optionType).toUpperCase() === "PE" ? "pe" : "ce";
+  }
+
+  // Live chain tick (P6-W2): the backend broadcasts strike/option_type/oi on
+  // every tick, so the contract identity comes from the wire payload — no
+  // symbol regex parsing. Non-option symbols (indexes, equities) carry
+  // strike/option_type = null and are skipped here.
+  function applyTick(data: unknown): void {
+    const t = data as Partial<TickPayload & Contract> & { symbol?: unknown };
+    if (!t || typeof t.symbol !== "string" || t.symbol === "") return;
+    const strike = typeof t.strike === "number" && isFinite(t.strike) ? t.strike : null;
+    const optionType = typeof t.option_type === "string" ? t.option_type : null;
+    if (strike === null || optionType === null) return;
+    const key = contractKey(strike, sideOf(optionType));
+    const entry = matchIndex.get(key);
+    if (!entry) return;
+    const c = contracts[entry.rowIdx];
+    if (!c) return;
+
+    const ltp = typeof t.ltp === "number" ? t.ltp : undefined;
+    if (ltp !== undefined) {
+      const prev = prevLtp.get(key) ?? c.ltp;
+      if (ltp !== prev) {
+        // Indian price law: red = up, green = down. Direction is the
+        // tick-vs-previous-tick move.
+        const dir: Dir = ltp > prev ? "up" : "down";
+        dirMap.set(key, dir);
+        scheduleFlash(key, dir);
+      }
+      prevLtp.set(key, ltp);
+      c.ltp = ltp;
+    }
+    if (typeof t.iv === "number") c.iv = t.iv;
+    if (typeof t.oi === "number") c.oi = t.oi;
+    if (typeof t.bid === "number") c.bid = t.bid;
+    if (typeof t.ask === "number") c.ask = t.ask;
+    lastTickAt = Date.now();
+    live = now - lastTickAt <= LIVE_MS;
+  }
+
+  function scheduleFlash(key: string, dir: Dir): void {
+    flashes[key] = dir;
+    const prev = flashTimers.get(key);
+    if (prev !== undefined) window.clearTimeout(prev);
+    const id = window.setTimeout(() => {
+      const next = { ...flashes };
+      delete next[key];
+      flashes = next;
+      flashTimers.delete(key);
+    }, FLASH_MS);
+    flashTimers.set(key, id);
+  }
+
+  async function load(sym: string, exp: string, id: number): Promise<void> {
     loading = true;
-    error = "";
+    if (id === reqId) error = "";
     try {
-      const q = `?symbol=${encodeURIComponent(symbol)}&expiry=${encodeURIComponent(expiry)}`;
+      const q = `?symbol=${encodeURIComponent(sym)}&expiry=${encodeURIComponent(exp)}`;
       const resp = await get<OptionsResponse>(`/api/intelligence/options${q}`);
-      contracts = resp.contracts ?? [];
+      if (id !== reqId) return; // superseded by a newer request
+      applyResponse(resp);
+    } catch (err) {
+      if (id !== reqId) return;
+      error = err instanceof Error ? err.message : String(err);
+    } finally {
+      if (id === reqId) loading = false;
+    }
+  }
+
+  function applyResponse(resp: OptionsResponse): void {
+    contracts = resp.contracts ?? [];
+    if (resp.expiry) {
+      if (!expiries.includes(resp.expiry)) expiries = [...expiries, resp.expiry].sort();
+      expiry = resp.expiry;
+      // Align the committed request with the expiry the server resolved
+      // (e.g. nearest expiry when none was requested). Converges after one
+      // reload — never loops, because the next response matches.
+      if (resp.expiry !== snapshot.expiry) {
+        snapshot = { symbol: snapshot.symbol, expiry: resp.expiry };
+      }
+    }
+  }
+
+  // Quiet 15s poll: refreshes LTP/IV/OI numbers without flashing or touching
+  // per-tick direction colors (a flash storm across 100 rows every poll would
+  // be noise, not signal).
+  async function refreshSilently(): Promise<void> {
+    if (loading) return; // never pile on an in-flight committed load
+    try {
+      const q = `?symbol=${encodeURIComponent(snapshot.symbol)}&expiry=${encodeURIComponent(snapshot.expiry)}`;
+      const resp = await get<OptionsResponse>(`/api/intelligence/options${q}`);
+      if (resp.contracts) contracts = resp.contracts;
       if (resp.expiry && !expiries.includes(resp.expiry)) {
         expiries = [...expiries, resp.expiry].sort();
       }
-      if (resp.expiry) expiry = resp.expiry;
-    } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+    } catch {
+      /* silent — the committed load path surfaces errors */
     }
-    loading = false;
+  }
+
+  function commit(): void {
+    snapshot = { symbol: symbol.trim().toUpperCase() || "NIFTY", expiry: expiry.trim() };
   }
 
   function fmtNum(value: number | undefined, digits = 2): string {
@@ -95,23 +268,87 @@
     if (value === undefined) return "—";
     return Math.round(value).toLocaleString("en-IN");
   }
+
+  function ltpCellClass(row: ChainRow, side: Side): string {
+    const c = side === "ce" ? row.ce : row.pe;
+    if (!c) return "";
+    const key = contractKey(c.strike, side);
+    const dir = dirMap.get(key);
+    const flash = flashes[key];
+    return cn(
+      dir === "up" ? "price-up" : dir === "down" ? "price-down" : "",
+      flash ? (flash === "up" ? "flash-up" : "flash-down") : "",
+    );
+  }
+
+  // Arrow-key navigation over the chain. Handled per strike cell (the
+  // focusable gridcells) so no non-interactive container carries the handler.
+  // ArrowDown with no row focused picks the first row; ArrowUp the last.
+  function onStrikeKeydown(event: KeyboardEvent, strike: number): void {
+    if (rows.length === 0) return;
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    const idx = rows.findIndex((r) => r.strike === strike);
+    let next: number;
+    if (event.key === "ArrowDown") {
+      next = idx < 0 ? 0 : Math.min(idx + 1, rows.length - 1);
+    } else {
+      next = idx < 0 ? rows.length - 1 : Math.max(idx - 1, 0);
+    }
+    event.preventDefault();
+    const s = rows[next].strike;
+    selectedStrike = s;
+    focusStrike(s);
+  }
+
+  function focusStrike(strike: number): void {
+    const el = wrapEl?.querySelector<HTMLElement>(`[data-strike="${strike}"]`);
+    el?.scrollIntoView({ block: "nearest" });
+    el?.focus();
+  }
 </script>
 
 <section class="panel chain">
   <header class="panel-head">
     <h2>Option Chain</h2>
     <div class="controls">
-      <Input class="mono h-7 w-[110px]" bind:value={symbol} placeholder="SYMBOL" />
+      <Input
+        class="mono h-7 w-[110px]"
+        bind:value={symbol}
+        placeholder="SYMBOL"
+        onchange={commit}
+        onkeydown={(e) => e.key === "Enter" && commit()}
+      />
       {#if expiries.length > 0}
-        <select class="expiry-select mono" bind:value={expiry}>
-          {#each expiries as e (e)}
-            <option value={e}>{e}</option>
-          {/each}
-        </select>
+        <Select
+          type="single"
+          value={expiry}
+          onValueChange={(v) => {
+            expiry = v;
+            commit();
+          }}
+        >
+          <SelectTrigger class="mono h-7 w-[130px] text-[12px]" aria-label="Expiry">
+            <span>{expiry}</span>
+          </SelectTrigger>
+          <SelectContent>
+            {#each expiries as e (e)}
+              <SelectItem value={e} label={e} class="font-mono text-[12px]">{e}</SelectItem>
+            {/each}
+          </SelectContent>
+        </Select>
       {:else}
-        <Input class="mono h-7 w-[130px]" bind:value={expiry} placeholder="EXPIRY (optional)" />
+        <Input
+          class="mono h-7 w-[130px]"
+          bind:value={expiry}
+          placeholder="EXPIRY (optional)"
+          onchange={commit}
+          onkeydown={(e) => e.key === "Enter" && commit()}
+        />
       {/if}
-      <Button size="sm" onclick={load} disabled={loading}>{loading ? "Loading…" : "Load"}</Button>
+      <span class="live-chip" class:on={live} title={live ? "Live: watchlisted contracts tick in; chain refreshes every 15s" : "Synchronizing — no recent ticks"}>
+        <span class="live-dot" aria-hidden="true"></span>
+        <span class="live-label">{live ? "LIVE" : "SYNC"}</span>
+      </span>
     </div>
   </header>
 
@@ -119,41 +356,75 @@
     <p class="error">{error}</p>
   {/if}
 
-  <div class="table-wrap">
-    <Table class="text-[12px]">
-      <TableHeader>
-        <TableRow class="hover:bg-transparent">
-          <TableHead class="font-semibold text-ink">Strike</TableHead>
-          <TableHead class="text-right" colspan={3}>Call (CE)</TableHead>
-          <TableHead class="text-right" colspan={3}>Put (PE)</TableHead>
-        </TableRow>
-        <TableRow class="hover:bg-transparent">
-          <TableHead class="font-semibold text-ink"></TableHead>
-          <TableHead class="text-right">LTP</TableHead>
-          <TableHead class="text-right">IV</TableHead>
-          <TableHead class="text-right">OI</TableHead>
-          <TableHead class="text-right">LTP</TableHead>
-          <TableHead class="text-right">IV</TableHead>
-          <TableHead class="text-right">OI</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {#each rows as row (row.strike)}
-          <TableRow class="h-6">
-            <TableCell class="font-mono text-right text-[12px] font-semibold text-ink tabular-nums">{fmtNum(row.strike, 0)}</TableCell>
-            <TableCell class="font-mono text-right text-[12px] tabular-nums">{fmtNum(row.ce?.ltp)}</TableCell>
-            <TableCell class="font-mono text-right text-[12px] tabular-nums">{fmtNum(row.ce?.iv, 1)}</TableCell>
-            <TableCell class="font-mono text-right text-[12px] tabular-nums">{fmtOi(row.ce?.oi)}</TableCell>
-            <TableCell class="font-mono text-right text-[12px] tabular-nums">{fmtNum(row.pe?.ltp)}</TableCell>
-            <TableCell class="font-mono text-right text-[12px] tabular-nums">{fmtNum(row.pe?.iv, 1)}</TableCell>
-            <TableCell class="font-mono text-right text-[12px] tabular-nums">{fmtOi(row.pe?.oi)}</TableCell>
+  <CandleChart {symbol} {exchange} />
+
+  <div class="table-wrap" bind:this={wrapEl}>
+    <ScrollArea class="h-full w-full" orientation="both">
+      <Table class="chain-table text-[12px]">
+        <TableHeader>
+          <TableRow class="hover:bg-transparent">
+            <TableHead class="text-center font-semibold text-ink">Strike</TableHead>
+            <TableHead class="text-right" colspan={3}>Call (CE)</TableHead>
+            <TableHead class="text-right" colspan={3}>Put (PE)</TableHead>
           </TableRow>
-        {/each}
-      </TableBody>
-    </Table>
-    {#if rows.length === 0 && !loading}
-      <p class="empty">No chain data. {error ? "" : "Check the symbol or start the data pipeline."}</p>
-    {/if}
+          <TableRow class="hover:bg-transparent">
+            <TableHead class="text-center text-faint"></TableHead>
+            <TableHead class="text-right">LTP</TableHead>
+            <TableHead class="text-right">IV</TableHead>
+            <TableHead class="text-right">OI</TableHead>
+            <TableHead class="text-right">LTP</TableHead>
+            <TableHead class="text-right">IV</TableHead>
+            <TableHead class="text-right">OI</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {#if loading && rows.length === 0}
+            {#each Array.from({ length: 8 }) as _, i (i)}
+              <TableRow class="chain-row h-6 hover:bg-transparent">
+                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-12 mx-auto" /></TableCell>
+                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-14 ml-auto" /></TableCell>
+                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-10 ml-auto" /></TableCell>
+                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-12 ml-auto" /></TableCell>
+                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-14 ml-auto" /></TableCell>
+                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-10 ml-auto" /></TableCell>
+                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-12 ml-auto" /></TableCell>
+              </TableRow>
+            {/each}
+          {:else}
+            {#each rows as row (row.strike)}
+              <TableRow
+                class={cn(
+                  "chain-row h-6 border-l-2 border-l-transparent",
+                  selectedStrike === row.strike ? "border-l-accent bg-row-selected" : "",
+                )}
+              >
+                <TableCell
+                  class="strike-cell"
+                  data-strike={String(row.strike)}
+                  tabindex={0}
+                  role="gridcell"
+                  aria-selected={selectedStrike === row.strike}
+                  onfocus={() => (selectedStrike = row.strike)}
+                  onclick={() => (selectedStrike = row.strike)}
+                  onkeydown={(e) => onStrikeKeydown(e, row.strike)}
+                >
+                  {fmtNum(row.strike, 0)}
+                </TableCell>
+                <TableCell class={cn("mono-num px-1.5", ltpCellClass(row, "ce"))}>{fmtNum(row.ce?.ltp)}</TableCell>
+                <TableCell class="mono-num px-1.5">{fmtNum(row.ce?.iv, 1)}</TableCell>
+                <TableCell class="mono-num px-1.5">{fmtOi(row.ce?.oi)}</TableCell>
+                <TableCell class={cn("mono-num px-1.5", ltpCellClass(row, "pe"))}>{fmtNum(row.pe?.ltp)}</TableCell>
+                <TableCell class="mono-num px-1.5">{fmtNum(row.pe?.iv, 1)}</TableCell>
+                <TableCell class="mono-num px-1.5">{fmtOi(row.pe?.oi)}</TableCell>
+              </TableRow>
+            {/each}
+          {/if}
+        </TableBody>
+      </Table>
+      {#if rows.length === 0 && !loading}
+        <p class="empty">No chain data. {error ? "" : "Check the symbol or start the data pipeline."}</p>
+      {/if}
+    </ScrollArea>
   </div>
 </section>
 
@@ -161,8 +432,13 @@
   .chain {
     display: flex;
     flex-direction: column;
-    min-width: 720px;
+    /* Container-query breakpoint for the chain (DESIGN §8 — breakpoints
+       follow container queries inside panels). The old hard min-width: 720px
+       here pushed the whole panel wide; the chain now shrinks with its panel
+       and the table scrolls internally at narrow widths instead. */
+    min-width: 0;
     height: 100%;
+    container-type: inline-size;
   }
   .panel-head {
     display: flex;
@@ -187,18 +463,100 @@
     gap: 6px;
     align-items: center;
   }
-  .expiry-select {
-    background: var(--canvas-raised);
+  /* LIVE / SYNC chip replaces the removed manual Load button — the grid now
+     streams ticks and auto-refreshes, so the affordance is a status, not an
+     action. */
+  .live-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--faint);
+    white-space: nowrap;
+    text-transform: uppercase;
+    padding: 2px 6px;
     border: 1px solid var(--hairline);
-    border-radius: 4px;
-    color: var(--body);
-    padding: 5px 6px;
-    font-size: 12px;
-    max-width: 150px;
+    border-radius: 2px;
+    background: var(--canvas-raised);
+  }
+  .live-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--faint);
+    flex: none;
+  }
+  .live-chip.on {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  .live-chip.on .live-dot {
+    background: var(--accent);
+    animation: live-pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes live-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .live-chip.on .live-dot {
+      animation: none;
+    }
   }
   .table-wrap {
     flex: 1;
-    overflow: auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+  /* Chain table width contract (DESIGN §8 — tables never reflow mid-row:
+     truncate with nowrap, scroll horizontally, never squeeze). The class is
+     on the table root (a child component), so it must be :global.
+     Wide panels: the table stretches to fill the panel. */
+  :global(.chain-table) {
+    width: 100%;
+  }
+  /* Narrow panels (<720px): pin the chain's full 720px layout so the
+     ScrollArea scrolls it horizontally inside the panel instead of the
+     panel (or viewport) overflowing. The ScrollArea already renders a
+     horizontal scrollbar via orientation="both". */
+  @container (max-width: 719px) {
+    :global(.chain-table) {
+      width: 720px;
+    }
+  }
+  /* 24px chain rows (DESIGN §4). These classes are applied to <td> / <tr>
+     rendered by the table primitives (child components), so they must be
+     :global — Svelte scoped CSS cannot target elements owned by a child.
+     Numerals mono + tabular, right-aligned, never wrapping. Color is left to
+     the global .price-up/.price-down tokens so tick direction wins. */
+  :global(.mono-num) {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    text-align: right;
+    white-space: nowrap;
+  }
+  /* Strike column centered in ticker mono (DESIGN prompt 3). */
+  :global(.strike-cell) {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink);
+    text-align: center;
+    white-space: nowrap;
+    cursor: pointer;
+    outline: none;
+  }
+  :global(.strike-cell:focus-visible) {
+    box-shadow: inset 0 0 0 2px var(--focus-ring);
   }
   .empty {
     color: var(--faint);

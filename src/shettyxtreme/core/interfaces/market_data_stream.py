@@ -1,21 +1,10 @@
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from datetime import datetime
 from typing import Protocol, runtime_checkable
 
-
-@dataclass
-class Tick:
-    symbol: str; exchange: str; ltp: float; volume: int
-    timestamp: datetime; bid: float|None=None; ask: float|None=None
-    open: float|None=None; high: float|None=None
-    low: float|None=None; close: float|None=None; oi: int|None=None
-
-@dataclass
-class Bar:
-    symbol: str; exchange: str; timeframe: str
-    open: float; high: float; low: float; close: float; volume: int
-    timestamp: datetime; oi: int|None=None
+# F-CORE-001: Tick/Bar are canonical in core.data_models; this module
+# re-exports the same classes so protocol consumers share one identity
+# with the bus-facing side (isinstance works across both import paths).
+from shettyxtreme.core.data_models import Bar, Tick
 
 TickCallback = Callable[[Tick], Awaitable[None]|None]
 BarCallback = Callable[[Bar], Awaitable[None]|None]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -39,6 +40,10 @@ class Signal:
     D: float = 0.0
     P: float = 1.0
     G: str = "contested"
+    #: True when the feature data feeding this signal is older than the
+    #: engine's ``max_age_seconds`` — the computation was skipped and the
+    #: signal carries no voter output (NEUTRAL, 0 conviction, empty voters).
+    stale: bool = False
 
 class VoterRegistry:
     """Registry of named voter callables with weights."""
@@ -92,6 +97,7 @@ class SignalEngine:
         regime: Regime | None = None,
         options_context: dict | None = None,
         consume_registry: bool = False,
+        max_age_seconds: float = 60.0,
         **kwargs,
     ) -> None:
         self.feature_engine = feature_engine
@@ -99,6 +105,9 @@ class SignalEngine:
         self.history_window = history_window
         self.regime = regime
         self.options_context = options_context
+        #: F-INTEL-006: signals are only computed from feature data fresher than
+        #: this many seconds. Older snapshots produce a stale (skipped) signal.
+        self.max_age_seconds = max_age_seconds
         self.voters: dict[str, Callable[[dict[str, float]], Vote]] = {}
         self.voter_weights: dict[str, float] = {}
         self._synced_registry_names: set[str] = set()
@@ -137,7 +146,32 @@ class SignalEngine:
             self.register_voter(name, adapt_shadow_fn(fn, self), registry.get_weight(name))
             self._synced_registry_names.add(name)
 
+    def _data_stale(self) -> bool:
+        """True when the feature snapshot feeding signals is too old.
+
+        Engines that do not track freshness (e.g. test doubles without a
+        ``last_update`` attribute) are treated as fresh so their behavior is
+        unchanged. A real FeatureEngine starts with ``last_update = 0.0``,
+        meaning no fresh data has ever arrived → stale.
+        """
+        last = getattr(self.feature_engine, "last_update", None)
+        if not isinstance(last, (int, float)):
+            return False
+        if last <= 0.0:
+            return True
+        return (time.time() - last) > self.max_age_seconds
+
     def compute_signal(self, *args, **kwargs) -> Signal:
+        if self._data_stale():
+            # F-INTEL-006: do not let old ticks/bars masquerade as fresh
+            # signals. Voters are skipped entirely — the signal is NEUTRAL,
+            # zero-conviction, empty-voter, flagged stale.
+            logger.warning(
+                "signal computation skipped: feature data older than "
+                "max_age_seconds=%.1f", self.max_age_seconds,
+            )
+            return Signal(SignalDirection.NEUTRAL, 0.0, [], stale=True)
+
         votes = []
         for name, voter in self.voters.items():
             vote = voter(self.feature_engine.features)

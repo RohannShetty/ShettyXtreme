@@ -1,5 +1,72 @@
 # ShettyXtreme Changelog
 
+## [2026-08-06] — v0.14.0: Dashboard Redesign + Options Chain Fix
+
+Suite: **1244 passed / 0 failed / 0 skipped** (was 1051 at v0.13.0). Dashboard overhaul: tabbed right dock eliminates overlapping frames, modern panel styling with subtle depth. Fixed options chain 500 error when expiry is empty.
+
+### Added
+- **Tabbed right dock** (`RightDockTabs.svelte`): replaces the stacked panels (ProposalQueue + ResearchPanel + KnowledgePanel + LogDrawer) with three tabs — Proposals, Research, Logs. Fixes the overlapping frames issue.
+- **Modern panel styling**: 8px border-radius, subtle `box-shadow: 0 1px 3px rgba(0,0,0,0.4)` on rail, center, and right-dock panels. Keeps DESIGN.md constraints (flat color-block elevation, no gradients).
+- **Redesigned dashboard plan** (`docs/superpowers/plans/2026-08-06-dashboard-redesign.md`).
+
+### Fixed
+- **Options chain 500 error**: `_expiry_epoch("")` raised `ValueError` when the frontend sent an empty `expiry` query parameter. Now omits the `timestamp` param when expiry is empty — Fyers returns the nearest expiry by default.
+- Removed orphaned `.dock-stack` CSS rule from App.svelte (svelte-check warning).
+
+### Changed
+- **OPERATOR_MANUAL.md** updated: all Dhan references replaced with Fyers, connection instructions rewritten for Fyers App ID/Secret ID flow, error explanations updated.
+
+## [2026-08-05] — v0.13.0: Phase 3 Cockpit Redesign + Phase 4 Lane A Quick Wins
+
+Suite: **1051 passed / 0 failed / 0 skipped** (was 1016 at Lane A start). Phase 3: full cockpit UI redesign (commit `516b60d`) — pure black `#0a0a0a`/white palette with warm amber accent (Indian price convention preserved: red=up `#f6525c`, green=down `#2ebd85`), live WS streaming + keyboard nav across all panels. Phase 4 Lane A: six execution/security quick wins with regression tests.
+
+### Added (Phase 3 cockpit redesign)
+- Shell layout with right-col overlay drawer <1440px, header LTP hero, styled positions/risk strip (S1).
+- Watchlist STALE chips + tick flash, ChainGrid live WS streaming + keyboard navigation (S2).
+- ProposalQueue OBSERVER prominence + LIVE typed-confirm, ModeSwitcher `Ctrl+M` (S4).
+- Scanner/Hints/Analytics regime badges + conviction levels + STALE chips (S5).
+- Research/Knowledge/Settings/Logs toggle switches + keyboard nav (S6).
+
+### Fixed (Phase 4 Lane A quick wins)
+- **F-TERM-007**: legacy `POST /api/postback/dhan` now requires `Authorization: Bearer <stored Fyers access token>` — arbitrary unauthenticated payloads can no longer mint `ORDER_UPDATED` events into the ledger (401 without/with wrong token).
+- **F-AUTH-002**: OAuth login CSRF closed — `start_auth` persists the `state` in an HttpOnly, Lax-samesite cookie scoped to the callback path; `fyers_callback` rejects missing/mismatched state with 400 before exchanging the auth code.
+- **F-EXEC-004**: paper MARKET orders now fill at the last LTP from the data feed instead of `order.price` (0.0); without an LTP the order is rejected honestly — no more poisoned paper P&L / learning data.
+- **F-CORE-003**: `PaperTradingEngine.get_pnl()` no longer raises `AttributeError` on the first fill (`Fill` carries no `pnl` field — guarded with `getattr`).
+- **F-TERM-006**: weekday before 09:15 now reports "Market opens at 09:15 today" instead of "opens tomorrow".
+- **F-KNOW-005**: `pair_fills` re-queues partial-fill remainders (FIFO preserved) instead of dropping them — a 30-qty close against a 75-qty entry leaves 45 queued for the next fill.
+- **Version drift**: all five version files aligned to 0.13.0 (`__init__.py`, `app.py`, `pyproject.toml`, frontend `package.json`, `CHANGELOG.md`).
+
+### Known
+- Frontend bundle unchanged this release — the Phase 3 redesign bundle was committed in `516b60d`; Phase 4 Lane A is backend-only.
+
+## [2026-08-05] — v0.12.0: Fyers Migration (Phase 1)
+
+Suite: **1059 passed / 0 failed / 0 skipped**. Broker migration: Dhan → **Fyers** (ADR-008). `integration/dhan/` and `auth/dhan_oauth.py` deleted; `src/` is Dhan-free (grep-gated: zero `dhanhq`/`DhanTrading`/`DhanData` matches). Frozen rules FR-002/FR-003 and BOUNDARY-003 amended; ADR-007 superseded by ADR-008; ARCHITECTURE_V2 §11 rewritten as Fyers Integration.
+
+### Added
+- **Fyers REST transport** (`integration/fyers/client.py`): raw `httpx`, token-bucket throttle (~8/s), `Retry-After` backoff, error taxonomy (`FyersTokenExpired` on 401/-8/-15/-16/-17, `FyersDataEntitlementError` on 403/-373, `FyersRateLimitError` on 429).
+- **Fyers session** (`session.py`): daily token lifecycle, `GET /profile` liveness probe, persist/load through the Fernet credential store.
+- **Symbol resolver + instrument master** (`symbols.py`, `instrument_master.py`): internal names ↔ Fyers tickers with the weekly month-code (`1-9/O/N/D`) handling, exact-match master validation (the `-300` gotcha gate), public master download → SQLite.
+- **Fyers order socket** (`ws_client.py`): JSON order WS (`SUB_ORD`), 10s heartbeat, exponential backoff, 403-handshake → re-auth trigger — replaces Dhan postback webhooks; `postback_router.py` now bridges order-socket frames to `ORDER_UPDATED` (legacy HTTP path kept for the migration window).
+- **Fyers data socket** (`data_socket.py`): supervised SDK HSM socket wrapper with restart backoff; token-expiry codes 11001/-99 surfaced as `FyersTokenExpired`.
+- **Fyers adapters** (`trading_adapter.py`, `data_adapter.py`): implement `OrderExecutor`/`AccountInfo`/`MarketDataStream`/`DataProvider` (zero Protocol changes); history chunking (≤100d/req intraday, ≤366d daily), client-side bar aggregation, options chain with greeks.
+- **Fyers auth**: `auth/fyers_oauth.py` OAuth2 authorization-code helper, broker-discriminated credential store (`app_id`/`secret_id`), `/auth/fyers/callback` exchange, 60s health monitor + pre-market probe, validator → `/profile`.
+- **Terminal wiring**: `terminal_init.py` builds the Fyers adapter stack, bridges ticks onto the EventBus, and subscribes the order socket; routers de-Dhaned (market, watchlist, intelligence).
+- **Fyers instrument-master tests**: `tests/integration/` — client, session, symbols, instrument master, mappings, WS client, data socket, and adapter unit tests (mock transport, no network).
+
+### Removed
+- `integration/dhan/` (trading + data adapters), `auth/dhan_oauth.py`, Dhan wire-format tests (`test_dhan_trading_adapter.py`, `test_dhan_data_adapter.py`), shared Dhan `integration/instrument_master.py`, `dhanhq` dependency, `tests/terminal/conftest.py` dhanhq mock.
+
+### Fixed
+- `stream_manager.py` Dhan feed coupling removed; the market-data bridge now runs through the Fyers data adapter.
+- `configs/default_watchlist.yaml` holds internal symbols (was Dhan numeric security IDs).
+- Version drift resolved: all five version files at 0.11.0.
+
+### Known
+- Fyers token TTL is unpublished — daily interactive re-auth is the reliable path; the pre-market `/profile` probe is authoritative.
+- Data socket relies on the `fyers-apiv3` SDK (HSM protocol) — pinned with `--no-deps`; REST + order WS are raw and SDK-free.
+- No Fyers sandbox — real account, OBSERVER-first, small notionals.
+
 ## [2026-08-02] — v0.11.0: Trades Ledger + Knowledge v2 + Hygiene Wave
 
 Suite: **732 passed / 0 failed / 0 skipped** (was 703). Three tracks: the trades-ledger recording track that unblocks net-EV scoring (ticket 06), knowledge v2 (operator notes + tag refinement), and the deferred-minors hygiene wave.

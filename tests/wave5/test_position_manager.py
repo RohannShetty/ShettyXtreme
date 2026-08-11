@@ -104,6 +104,41 @@ async def test_eod_exit(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_eod_cutoff_is_ist_not_utc() -> None:
+    """F-KNOW-003: eod_exit_time "15:15" is IST, i.e. 09:45 UTC.
+
+    EOD must trigger right after 09:45 UTC (15:15 IST) — not at 15:15 UTC,
+    which would be 20:45 IST, 5h30m after market close.
+    """
+    pm = PositionManager(config={"eod_exit_time": "15:15"})
+
+    # 10:00 UTC == 15:30 IST — after close → EOD must fire.
+    assert pm._is_eod(datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)) is True
+    # 09:44 UTC == 15:14 IST — before cutoff → must NOT fire.
+    assert pm._is_eod(datetime(2026, 1, 1, 9, 44, tzinfo=timezone.utc)) is False
+    # 09:45 UTC == 15:15 IST — strict '>' comparison keeps the exact cutoff open.
+    assert pm._is_eod(datetime(2026, 1, 1, 9, 45, tzinfo=timezone.utc)) is False
+    # Regression: the old buggy behavior required 15:30 UTC (20:45 IST).
+    assert pm._is_eod(datetime(2026, 1, 1, 15, 30, tzinfo=timezone.utc)) is True
+
+
+@pytest.mark.asyncio
+async def test_eod_default_manage_position_at_ist_cutoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    """F-KNOW-003: end-to-end — at 10:00 UTC (15:30 IST) manage_position EODs."""
+    pm = PositionManager()
+    pos = ManagedPosition(symbol="X", entry_price=100.0, quantity=75, direction=1, atr=5.0, ltp=100.5)
+
+    class _FakeDT:
+        @staticmethod
+        def now(tz=None) -> datetime:
+            return datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr("shettyxtreme.execution.position_manager.datetime", _FakeDT)
+    action = await pm.manage_position(pos, _make_signal())
+    assert action.action == Action.EXIT_EOD
+
+
+@pytest.mark.asyncio
 async def test_hold_when_nothing_hit(monkeypatch: pytest.MonkeyPatch) -> None:
     pm = PositionManager()
     pos = ManagedPosition(symbol="X", entry_price=100.0, quantity=75, direction=1, atr=5.0, ltp=100.5)

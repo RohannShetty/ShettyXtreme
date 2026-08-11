@@ -98,6 +98,26 @@ def test_counts(tmp_path) -> None:
     store.close()
 
 
+def test_last_sync_meta(tmp_path) -> None:
+    store = KnowledgeStore(str(tmp_path / "k.db"))
+    assert store.get_last_sync() is None
+    store.set_last_sync("2026-08-05T10:00:00+00:00")
+    assert store.get_last_sync() == "2026-08-05T10:00:00+00:00"
+    store.set_last_sync("2026-08-05T11:00:00+00:00")  # overwrite, not append
+    assert store.get_last_sync() == "2026-08-05T11:00:00+00:00"
+    store.close()
+
+
+def test_last_sync_result_meta(tmp_path) -> None:
+    store = KnowledgeStore(str(tmp_path / "k.db"))
+    assert store.get_last_sync_result() is None
+    store.set_last_sync_result("success")
+    assert store.get_last_sync_result() == "success"
+    store.set_last_sync_result("failed")  # overwrite, not append
+    assert store.get_last_sync_result() == "failed"
+    store.close()
+
+
 def test_list_status_filter_and_limit(tmp_path) -> None:
     store = KnowledgeStore(str(tmp_path / "k.db"))
     for i in range(5):

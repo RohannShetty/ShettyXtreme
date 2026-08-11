@@ -1,4 +1,4 @@
-"""Tests for AuthRouter (onboarding and OAuth callback)."""
+"""Tests for AuthRouter (Fyers onboarding and OAuth callback)."""
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from shettyxtreme.auth.credential_store import CredentialStore
-from shettyxtreme.auth.dhan_oauth import ConsentResult, ConsumeResult, DhanOAuthHelper
+from shettyxtreme.auth.fyers_oauth import FyersAuthError, FyersOAuthHelper, FyersTokenResult
 from shettyxtreme.auth.validator import CredentialValidator, ValidationResult
 import shettyxtreme.terminal.api.auth_router as _auth_router
 from shettyxtreme.terminal.api.auth_router import (
@@ -29,20 +29,20 @@ def _make_store() -> CredentialStore:
 
 
 def _make_mock_oauth() -> MagicMock:
-    oauth = MagicMock(spec=DhanOAuthHelper)
-    oauth.generate_consent = AsyncMock(return_value="consent_abc123")
-    oauth.get_login_url = MagicMock(
-        return_value="https://auth.dhan.co/login/consentApp-login?consentAppId=consent_abc123"
+    oauth = MagicMock(spec=FyersOAuthHelper)
+    oauth.generate_auth_url = MagicMock(
+        return_value=(
+            "https://api-t1.fyers.in/api/v3/generate-authcode"
+            "?client_id=APP123&redirect_uri=http%3A%2F%2Ftestserver%2Fauth%2Ffyers%2Fcallback"
+            "&response_type=code&state=state123&scope=openid&nonce=nonce123"
+        )
     )
-    oauth.consume_consent = AsyncMock(
-        return_value=ConsumeResult(
-            consent=ConsentResult(
-                access_token="tok_abcdef123456",
-                expiry_time="2026-12-31T23:59:59",
-                client_id="DHAN123",
-                client_name="Test User",
-                ddpi_status=True,
-            )
+    oauth.exchange_auth_code = AsyncMock(
+        return_value=FyersTokenResult(
+            access_token="tok_fyers_123456",
+            token_expiry="2026-12-31T23:59:59+00:00",
+            client_id="FY123",
+            refresh_token="rf_1",
         )
     )
     return oauth
@@ -51,7 +51,10 @@ def _make_mock_oauth() -> MagicMock:
 def _make_mock_validator() -> MagicMock:
     validator = MagicMock(spec=CredentialValidator)
     validator.validate_credentials = AsyncMock(
-        return_value=ValidationResult(valid=True, message="Credentials valid")
+        return_value=ValidationResult(valid=True, message="Credentials valid. Connect Fyers to obtain an access token.")
+    )
+    validator.validate_access_token = AsyncMock(
+        return_value=ValidationResult(valid=True, message="Access token valid")
     )
     return validator
 
@@ -73,6 +76,7 @@ def test_auth_status_no_creds() -> None:
     assert data["has_token"] is False
     assert data["token_valid"] is False
     assert data["connected"] is False
+    assert data["broker"] == "fyers"
 
 
 def test_save_credentials() -> None:
@@ -80,7 +84,7 @@ def test_save_credentials() -> None:
     client = TestClient(app)
     resp = client.post(
         "/auth/credentials",
-        json={"api_key": "test_key_123", "api_secret": "test_secret_456"},
+        json={"app_id": "APP123", "secret_id": "SECRET456"},
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -88,34 +92,176 @@ def test_save_credentials() -> None:
     assert "saved" in data["message"].lower()
     status = client.get("/auth/status").json()
     assert status["has_api_key"] is True
+    assert _get_store().app_id == "APP123"
+    assert _get_store().secret_id == "SECRET456"
+    assert _get_store().broker == "fyers"
 
 
-def test_start_consent() -> None:
+def test_save_credentials_trims_whitespace() -> None:
     app = _make_app()
     client = TestClient(app)
-    resp = client.post("/auth/start-consent")
+    client.post(
+        "/auth/credentials",
+        json={"app_id": "  APP123  ", "secret_id": "  SECRET456  "},
+    )
+    assert _get_store().app_id == "APP123"
+    assert _get_store().secret_id == "SECRET456"
+
+
+def test_start_auth_returns_auth_url() -> None:
+    app = _make_app()
+    client = TestClient(app)
+    client.post(
+        "/auth/credentials",
+        json={"app_id": "APP123", "secret_id": "SECRET456"},
+    )
+    resp = client.post("/auth/start-auth")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["consent_app_id"] == "consent_abc123"
-    assert "login_url" in data
-    assert "consentAppId" in data["login_url"]
+    assert "generate-authcode" in data["login_url"]
+    assert "client_id=APP123" in data["login_url"]
+    assert "state" in data
+    # Callback redirect_uri is derived from the request base URL.
+    assert "auth%2Ffyers%2Fcallback" in data["login_url"]
 
 
-def test_dhan_callback_success() -> None:
+def test_start_auth_requires_saved_app_id() -> None:
+    app = _make_app()
+    client = TestClient(app)
+    resp = client.post("/auth/start-auth")
+    assert resp.status_code == 400
+    assert "App ID" in resp.json()["detail"]
+
+
+def test_fyers_callback_success() -> None:
     app = _make_app()
     client = TestClient(app, follow_redirects=False)
 
     client.post(
         "/auth/credentials",
-        json={"api_key": "trading_key", "api_secret": "trading_secret"},
+        json={"app_id": "APP123", "secret_id": "SECRET456"},
     )
+    state = client.post("/auth/start-auth").json()["state"]
 
-    resp = client.get("/auth/dhan/callback?tokenId=tok_trade_123")
+    resp = client.get(
+        f"/auth/fyers/callback?auth_code=code_jwt&user_id=FY123&state={state}"
+    )
     assert resp.status_code == 307
     assert "connected=true" in resp.headers["location"]
 
-    status = client.get("/auth/status").json()
-    assert status["has_token"] is True
+    store = _get_store()
+    assert store.access_token == "tok_fyers_123456"
+    assert store.client_id == "FY123"
+    assert store.token_expiry == "2026-12-31T23:59:59+00:00"
+    assert store.is_token_valid() is True
+
+
+def test_fyers_callback_state_mismatch_rejected() -> None:
+    """F-AUTH-002: a callback echoing the wrong state is a CSRF attempt → 400."""
+    app = _make_app()
+    client = TestClient(app, follow_redirects=False)
+
+    client.post(
+        "/auth/credentials",
+        json={"app_id": "APP123", "secret_id": "SECRET456"},
+    )
+    client.post("/auth/start-auth")  # persists state cookie
+
+    resp = client.get(
+        "/auth/fyers/callback?auth_code=code_jwt&user_id=FY123&state=WRONG_STATE"
+    )
+    assert resp.status_code == 400
+    assert "state mismatch" in resp.json()["detail"].lower()
+    assert _get_store().access_token is None  # no exchange happened
+
+
+def test_fyers_callback_missing_state_rejected() -> None:
+    """F-AUTH-002: no persisted state (never started auth) → 400."""
+    app = _make_app()
+    client = TestClient(app, follow_redirects=False)
+
+    client.post(
+        "/auth/credentials",
+        json={"app_id": "APP123", "secret_id": "SECRET456"},
+    )
+    # Note: start-auth is deliberately NOT called — no state cookie exists.
+
+    resp = client.get(
+        "/auth/fyers/callback?auth_code=code_jwt&user_id=FY123&state=anything"
+    )
+    assert resp.status_code == 400
+    assert _get_store().access_token is None
+
+
+def test_fyers_callback_triggers_bootstrap(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _record_bootstrap() -> bool:
+        calls.append("boot")
+        return True
+
+    monkeypatch.setattr(_auth_router, "run_terminal_init", _record_bootstrap)
+    app = _make_app()
+    client = TestClient(app, follow_redirects=False)
+
+    client.post(
+        "/auth/credentials",
+        json={"app_id": "APP123", "secret_id": "SECRET456"},
+    )
+    state = client.post("/auth/start-auth").json()["state"]
+
+    resp = client.get(f"/auth/fyers/callback?auth_code=code_jwt&user_id=FY123&state={state}")
+    assert resp.status_code == 307
+    assert "connected=true" in resp.headers["location"]
+    assert calls == ["boot", "boot"]  # credentials save + callback
+
+
+def test_fyers_callback_bootstrap_raises_still_connects(monkeypatch) -> None:
+    async def _boom() -> bool:
+        raise RuntimeError("pipeline init exploded")
+
+    monkeypatch.setattr(_auth_router, "run_terminal_init", _boom)
+    app = _make_app()
+    client = TestClient(app, follow_redirects=False)
+
+    client.post(
+        "/auth/credentials",
+        json={"app_id": "APP123", "secret_id": "SECRET456"},
+    )
+    state = client.post("/auth/start-auth").json()["state"]
+
+    resp = client.get(f"/auth/fyers/callback?auth_code=code_jwt&user_id=FY123&state={state}")
+    assert resp.status_code == 307
+    assert "connected=true" in resp.headers["location"]
+
+
+def test_fyers_callback_failure_redirects_fixed_error() -> None:
+    raw_error = "Fyers API 500: some secret material must never leak"
+    _auth_router._oauth.exchange_auth_code = AsyncMock(
+        side_effect=FyersAuthError(raw_error)
+    )
+    app = _make_app()
+    client = TestClient(app, follow_redirects=False)
+
+    client.post(
+        "/auth/credentials",
+        json={"app_id": "APP123", "secret_id": "SECRET456"},
+    )
+    state = client.post("/auth/start-auth").json()["state"]
+
+    resp = client.get(f"/auth/fyers/callback?auth_code=bad_code&user_id=FY123&state={state}")
+    assert resp.status_code == 307
+    location = resp.headers["location"]
+    assert "error=Authentication+failed" in location
+    assert "secret material" not in location
+
+
+def test_fyers_callback_missing_auth_code_redirects_error() -> None:
+    app = _make_app()
+    client = TestClient(app, follow_redirects=False)
+    resp = client.get("/auth/fyers/callback?user_id=FY123")
+    assert resp.status_code == 307
+    assert "error=Authentication+failed" in resp.headers["location"]
 
 
 def test_auth_logout() -> None:
@@ -123,7 +269,7 @@ def test_auth_logout() -> None:
     client = TestClient(app)
     client.post(
         "/auth/credentials",
-        json={"api_key": "key1", "api_secret": "secret1"},
+        json={"app_id": "APP123", "secret_id": "SECRET456"},
     )
     resp = client.post("/auth/logout")
     assert resp.status_code == 200
@@ -138,7 +284,7 @@ def test_auth_status_with_creds() -> None:
     client = TestClient(app)
     client.post(
         "/auth/credentials",
-        json={"api_key": "my_trading_key", "api_secret": "my_secret"},
+        json={"app_id": "APP123", "secret_id": "SECRET456"},
     )
     resp = client.get("/auth/status")
     assert resp.status_code == 200
@@ -146,89 +292,89 @@ def test_auth_status_with_creds() -> None:
     assert data["has_api_key"] is True
 
 
-def test_post_direct_token() -> None:
-    import base64
-    import json as _json
-
-    payload = {"dhanClientId": "DHAN123", "exp": 1780000000}
-    body = base64.urlsafe_b64encode(_json.dumps(payload).encode()).decode().rstrip("=")
-    token = f"header.{body}.signature"
-    app = _make_app()
-    client = TestClient(app)
-    resp = client.post("/auth/token", json={"access_token": token})
-    assert resp.status_code == 200
-    assert resp.json()["success"] is True
-    assert _get_store().client_id == "DHAN123"
-    assert _get_store().access_token == token
-    assert _get_store().token_expiry.startswith("2026-")
-
-
-def test_post_direct_token_invalid() -> None:
-    app = _make_app()
-    client = TestClient(app)
-    resp = client.post("/auth/token", json={"access_token": "garbage"})
-    assert resp.status_code == 400
-
-
-def test_pin_totp_success() -> None:
-    _auth_router._oauth.generate_access_token = AsyncMock(
-        return_value=ConsumeResult(
-            consent=ConsentResult(
-                access_token="tok_pintotp",
-                expiry_time="2026-12-31T23:59:59",
-                client_id="DHAN123",
-                client_name="PIN User",
-                ddpi_status=True,
-            )
-        )
-    )
+def test_auth_test_validates_format_without_token() -> None:
     app = _make_app()
     client = TestClient(app)
     resp = client.post(
-        "/auth/token/pin-totp",
-        json={"client_id": "DHAN123", "pin": "1234", "totp": "567890"},
+        "/auth/test",
+        json={"app_id": "APP123", "secret_id": "SECRET456"},
     )
     assert resp.status_code == 200
-    assert resp.json()["success"] is True
-    assert _get_store().access_token == "tok_pintotp"
-    assert _get_store().client_id == "DHAN123"
-
-
-def test_pin_totp_bad_credentials() -> None:
-    _auth_router._oauth.generate_access_token = AsyncMock(
-        return_value=ConsumeResult(
-            error="Dhan API 401: Invalid client id. Re-enter credentials in Step 1."
-        )
-    )
-    app = _make_app()
-    client = TestClient(app)
-    resp = client.post(
-        "/auth/token/pin-totp",
-        json={"client_id": "X", "pin": "0", "totp": "0"},
-    )
-    assert resp.status_code == 400
-    assert "401" in resp.json()["detail"]
-
-
-def test_save_data_token() -> None:
-    app = _make_app()
-    client = TestClient(app)
-    resp = client.post(
-        "/auth/data-token",
-        json={"access_token": "data_tok_1", "expiry": "2026-12-31T23:59:59"},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["success"] is True
-    assert _get_store().data_access_token == "data_tok_1"
-    assert _get_store().data_access_token_expiry == "2026-12-31T23:59:59"
-
-
-def test_status_data_token_fields() -> None:
-    app = _make_app()
-    client = TestClient(app)
-    resp = client.get("/auth/status")
     data = resp.json()
-    assert "data_token_valid" in data
-    assert "data_token_expiry" in data
-    assert data["data_token_valid"] is False
-    assert data["data_token_expiry"] is None
+    assert data["valid"] is True
+    assert "Connect Fyers" in data["message"]
+
+
+def test_auth_test_probes_fyers_token() -> None:
+    """With a stored token, /auth/test runs the Fyers /profile probe."""
+    store = _get_store()
+    store.app_id = "APP123"
+    store.secret_id = "SECRET456"
+    store.access_token = "tok_probe"
+    store.token_expiry = "2099-12-31T23:59:59+00:00"
+
+    app = _make_app()
+    client = TestClient(app)
+    resp = client.post("/auth/test")  # no body — uses the stored credentials
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["valid"] is True
+    assert data["message"] == "Access token valid"
+    _auth_router._validator.validate_access_token.assert_awaited_once_with(
+        app_id="APP123", access_token="tok_probe"
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/auth/token",
+        "/auth/token/pin-totp",
+        "/auth/data-token",
+        "/auth/start-consent",
+        "/auth/dhan/callback",
+    ],
+)
+def test_dhan_only_endpoints_removed(path: str) -> None:
+    """Fyers has a single-token model — Dhan-only endpoints are gone."""
+    app = _make_app()
+    client = TestClient(app)
+    resp = client.get(path, follow_redirects=False)
+    assert resp.status_code == 404
+
+
+def test_save_credentials_trigger_bootstrap(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _record_bootstrap() -> bool:
+        calls.append("boot")
+        return True
+
+    monkeypatch.setattr(_auth_router, "run_terminal_init", _record_bootstrap)
+    app = _make_app()
+    client = TestClient(app)
+
+    resp = client.post(
+        "/auth/credentials",
+        json={"app_id": "APP123", "secret_id": "SECRET456"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"success": True, "message": "Credentials saved"}
+    assert calls == ["boot"]
+
+
+def test_save_credentials_bootstrap_raises_still_saves(monkeypatch) -> None:
+    async def _boom() -> bool:
+        raise RuntimeError("pipeline init exploded")
+
+    monkeypatch.setattr(_auth_router, "run_terminal_init", _boom)
+    app = _make_app()
+    client = TestClient(app)
+
+    resp = client.post(
+        "/auth/credentials",
+        json={"app_id": "APP123", "secret_id": "SECRET456"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"success": True, "message": "Credentials saved"}
+    assert _get_store().app_id == "APP123"

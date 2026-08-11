@@ -3,46 +3,24 @@
   import {
     authStatus,
     saveCredentials,
-    saveDirectToken,
-    saveDataToken,
-    savePinTotp,
-    startConsent,
+    startAuth,
     testCredentials,
     type AuthStatus,
     type ValidationResult,
   } from "../lib/api";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
-  import {
-    Tabs,
-    TabsContent,
-    TabsList,
-    TabsTrigger,
-  } from "$lib/components/ui/tabs";
 
   let { query = null }: { query?: URLSearchParams | null } = $props();
 
   let status: AuthStatus | null = $state(null);
-  let tab = $state("creds");
   let error = $state("");
   let busy = $state(false);
 
-  // Method 1: app credentials
-  let clientId = $state("");
-  let apiKey = $state("");
-  let apiSecret = $state("");
+  // Fyers app credentials
+  let appId = $state("");
+  let secretId = $state("");
   let testResult: ValidationResult | null = $state(null);
-
-  // Method 2: direct token
-  let directToken = $state("");
-
-  // Method 3: PIN + TOTP
-  let ptClientId = $state("");
-  let pin = $state("");
-  let totp = $state("");
-
-  // Data token (advanced)
-  let dataToken = $state("");
 
   onMount(load);
 
@@ -69,28 +47,16 @@
 
   function onTest(): void {
     void run(async () => {
-      testResult = await testCredentials(clientId ? `${clientId}:::${apiKey}` : apiKey, apiSecret);
+      testResult = await testCredentials(appId.trim(), secretId.trim());
     });
   }
 
   function onConnect(): void {
     void run(async () => {
-      await saveCredentials(clientId ? `${clientId}:::${apiKey}` : apiKey, apiSecret);
-      const consent = await startConsent();
-      window.location.href = consent.login_url;
+      await saveCredentials(appId.trim(), secretId.trim());
+      const auth = await startAuth();
+      window.location.href = auth.login_url;
     });
-  }
-
-  function onSaveDirect(): void {
-    void run(async () => saveDirectToken(directToken.trim()));
-  }
-
-  function onSavePinTotp(): void {
-    void run(async () => savePinTotp(ptClientId.trim(), pin.trim(), totp.trim()));
-  }
-
-  function onSaveDataToken(): void {
-    void run(async () => saveDataToken(dataToken.trim()));
   }
 </script>
 
@@ -114,81 +80,27 @@
     <div class="banner banner-warn" role="alert">Saved token has expired — re-connect to refresh it.</div>
   {/if}
 
-  <Tabs value={tab} onValueChange={(v) => (tab = v)}>
-    <TabsList class="w-full">
-      <TabsTrigger value="creds">App credentials</TabsTrigger>
-      <TabsTrigger value="token">Direct token</TabsTrigger>
-      <TabsTrigger value="pintotp">PIN + TOTP</TabsTrigger>
-    </TabsList>
-
-    <TabsContent value="creds">
-      <div class="card">
-        <p class="caption">From the Dhan Developer Portal — one app with Trading + Market Data capabilities.</p>
-        <label class="field">
-          <span class="caption">Client ID</span>
-          <Input class="mono" bind:value={clientId} placeholder="DHANCLIENTID" />
-        </label>
-        <label class="field">
-          <span class="caption">API Key</span>
-          <Input class="mono" type="password" bind:value={apiKey} placeholder="api_key" />
-        </label>
-        <label class="field">
-          <span class="caption">API Secret</span>
-          <Input class="mono" type="password" bind:value={apiSecret} placeholder="api_secret" />
-        </label>
-        <div class="actions">
-          <Button variant="secondary" onclick={onTest} disabled={busy || !apiKey || !apiSecret}>Test</Button>
-          <Button onclick={onConnect} disabled={busy || !apiKey || !apiSecret}>Connect Dhan</Button>
-        </div>
-        {#if testResult}
-          <p class={testResult.valid ? "ok-text" : "err-text"}>{testResult.message}</p>
-        {/if}
-      </div>
-    </TabsContent>
-
-    <TabsContent value="token">
-      <div class="card">
-        <p class="caption">Paste an existing Dhan access token (JWT). Client ID and expiry are read from it automatically.</p>
-        <label class="field">
-          <span class="caption">Access Token</span>
-          <Input class="mono" type="password" bind:value={directToken} placeholder="eyJhbGciOi…" />
-        </label>
-        <div class="actions">
-          <Button onclick={onSaveDirect} disabled={busy || !directToken.trim()}>Save token</Button>
-        </div>
-      </div>
-    </TabsContent>
-
-    <TabsContent value="pintotp">
-      <div class="card">
-        <p class="caption">Generate an access token from your Dhan client ID + trading PIN + TOTP.</p>
-        <label class="field">
-          <span class="caption">Client ID</span>
-          <Input class="mono" bind:value={ptClientId} placeholder="DHANCLIENTID" />
-        </label>
-        <label class="field">
-          <span class="caption">PIN</span>
-          <Input class="mono" type="password" bind:value={pin} placeholder="4-digit trading PIN" />
-        </label>
-        <label class="field">
-          <span class="caption">TOTP</span>
-          <Input class="mono" bind:value={totp} placeholder="6-digit authenticator code" />
-        </label>
-        <div class="actions">
-          <Button onclick={onSavePinTotp} disabled={busy || !ptClientId || !pin || !totp}>Generate & save</Button>
-        </div>
-      </div>
-    </TabsContent>
-  </Tabs>
-
-  <details class="advanced">
-    <summary class="caption">Data token (optional — only if your app lacks Market Data entitlement)</summary>
+  <div class="card">
+    <p class="caption">
+      From the Fyers Developer Portal — create an app with Trading API enabled and set the
+      redirect URL to <code>{location.origin}/auth/fyers/callback</code>.
+    </p>
     <label class="field">
-      <span class="caption">Data Access Token</span>
-      <Input class="mono" type="password" bind:value={dataToken} placeholder="separate data-entitlement token" />
+      <span class="caption">App ID</span>
+      <Input class="mono" bind:value={appId} placeholder="APP_ID" />
     </label>
-    <Button variant="secondary" onclick={onSaveDataToken} disabled={busy || !dataToken.trim()}>Save data token</Button>
-  </details>
+    <label class="field">
+      <span class="caption">Secret ID</span>
+      <Input class="mono" type="password" bind:value={secretId} placeholder="secret_id" />
+    </label>
+    <div class="actions">
+      <Button variant="secondary" onclick={onTest} disabled={busy || !appId.trim() || !secretId.trim()}>Test</Button>
+      <Button onclick={onConnect} disabled={busy || !appId.trim() || !secretId.trim()}>Connect Fyers</Button>
+    </div>
+    {#if testResult}
+      <p class={testResult.valid ? "ok-text" : "err-text"}>{testResult.message}</p>
+    {/if}
+  </div>
 
   {#if error}
     <p class="err-text">{error}</p>
@@ -227,16 +139,6 @@
     display: flex;
     gap: 8px;
   }
-  .advanced {
-    margin-top: 12px;
-  }
-  .advanced summary {
-    cursor: pointer;
-    color: var(--muted);
-  }
-  .advanced .field {
-    margin: 8px 0;
-  }
   .banner {
     padding: 8px 12px;
     border-radius: 4px;
@@ -269,5 +171,8 @@
     color: var(--muted);
     font-size: 12px;
     margin: 0;
+  }
+  .caption code {
+    font-size: 11px;
   }
 </style>

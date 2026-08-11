@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -60,3 +61,39 @@ class TestBarBuilder:
         await bb.stop()
         await task
         assert True
+
+    @pytest.mark.asyncio
+    async def test_bar_boundary_tick_not_double_counted(self):
+        """F-INTEL-002: a tick that crosses a bar boundary must be applied
+        exactly once — to the finalized bar it closes and to the new bar it
+        opens, never twice to either."""
+        eb = EventBus()
+        ts_store = MagicMock()
+        bb = BarBuilder(event_bus=eb, ts_store=ts_store)
+        bars: list[Bar] = []
+
+        async def _capture(event: Event) -> None:
+            bars.append(event.data)
+
+        eb.subscribe(Topic.MARKET_DATA_BAR, _capture)
+        bus_task = asyncio.create_task(eb.start())
+
+        # Tick inside the 10:30 bar, then a tick exactly at the 10:31 boundary.
+        t0 = datetime(2026, 7, 12, 10, 30, 30, tzinfo=timezone.utc)
+        t1 = datetime(2026, 7, 12, 10, 31, 0, tzinfo=timezone.utc)
+        await bb._on_tick(_make_event(_make_tick(ltp=100.0, volume=10, timestamp=t0)))
+        await bb._on_tick(_make_event(_make_tick(ltp=101.0, volume=5, timestamp=t1)))
+
+        await asyncio.sleep(0.05)
+        await eb.stop()
+        await bus_task
+
+        # The 10:30 bar must carry only the pre-boundary tick (volume 10),
+        # not the boundary tick added on top (10 + 5) or doubled (20).
+        assert len(bars) == 1
+        assert bars[0].volume == 10
+        assert bars[0].timestamp == floor_timestamp(t0, 1)
+        # The in-progress 10:31 bar holds the boundary tick exactly once.
+        state = bb._state["NIFTY"][1]
+        assert state.volume == 5
+        assert state.tick_count == 1

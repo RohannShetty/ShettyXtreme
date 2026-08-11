@@ -63,3 +63,18 @@ async def test_save_persists(tmp_path: Path):
         assert mode_file.read_text().strip() == "PAPER"
     finally:
         patch.stop()
+
+
+def test_session_guard_leaves_mode_file_at_observer() -> None:
+    """The session-scoped conftest guard must leave the persisted mode at
+    OBSERVER so a stale LIVE/PAPER file can never leak into a test run.
+
+    This is a permanent regression guard for the conftest autouse fixture: if
+    the guard is removed, a stale ~/.shettyxtreme_mode resurfaces and tests
+    that assume the OBSERVER default start failing again.
+    """
+    mode_file = Path.home() / ".shettyxtreme_mode"
+    assert mode_file.exists(), "conftest guard did not create the mode file"
+    assert mode_file.read_text().strip() == "OBSERVER"
+    # The live module state must also be OBSERVER, not just the file.
+    assert execution_router._current_mode == "OBSERVER"

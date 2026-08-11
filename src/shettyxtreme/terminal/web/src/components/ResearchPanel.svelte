@@ -5,8 +5,9 @@
   import ResearchBriefDetail from "./ResearchBriefDetail.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Badge } from "$lib/components/ui/badge";
-  import { Checkbox } from "$lib/components/ui/checkbox";
+  import { ScrollArea } from "$lib/components/ui/scroll-area";
   import { Textarea } from "$lib/components/ui/textarea";
+  import { Select, SelectContent, SelectItem, SelectTrigger } from "$lib/components/ui/select";
   import { RotateCw } from "@lucide/svelte";
   import type {
     ResearchBrief,
@@ -31,8 +32,24 @@
   let lensFilter = $state("All");
   let error = $state("");
   let deciding = $state(false);
+  let listEl: HTMLUListElement | undefined;
+  let activeIndex = $state(-1);
 
   const statuses = ["All", "Proposed", "Approved", "Rejected"];
+
+  // Staleness marker (DESIGN.md §4): a brief whose generation time is older
+  // than one hour is flagged STALE in the row corner.
+  const STALE_MS = 60 * 60 * 1000;
+
+  function isStale(asOf: string): boolean {
+    const t = Date.parse(asOf);
+    return !Number.isNaN(t) && Date.now() - t > STALE_MS;
+  }
+
+  function fmtTime(asOf: string): string {
+    const d = new Date(asOf);
+    return Number.isNaN(d.getTime()) ? "—" : d.toLocaleTimeString("en-IN", { hour12: false });
+  }
 
   onMount(() => {
     loadAll();
@@ -160,6 +177,40 @@
         (lensFilter === "All" || b.lens === lensFilter),
     ),
   );
+
+  // Keyboard list navigation: arrows move the highlight, Enter opens the
+  // highlighted brief in the detail pane, Home/End jump to the ends.
+  function onListKeydown(event: KeyboardEvent): void {
+    if (filtered.length === 0) return;
+    let idx = activeIndex;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      idx = idx < 0 ? 0 : (idx + 1) % filtered.length;
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      idx = idx < 0 ? filtered.length - 1 : (idx - 1 + filtered.length) % filtered.length;
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      idx = 0;
+    } else if (event.key === "End") {
+      event.preventDefault();
+      idx = filtered.length - 1;
+    } else if (event.key === "Enter") {
+      if (idx >= 0 && idx < filtered.length) {
+        event.preventDefault();
+        select(filtered[idx].brief_id);
+      }
+      return;
+    } else {
+      return;
+    }
+    activeIndex = idx;
+    const target = filtered[idx];
+    if (target) {
+      select(target.brief_id);
+      listEl?.querySelector(".sel")?.scrollIntoView({ block: "nearest" });
+    }
+  }
 </script>
 
 <section class="panel research">
@@ -178,8 +229,19 @@
     <h3>Run briefers</h3>
     <div class="lens-row">
       {#each lenses as l (l.name)}
-        <label class="check">
-          <Checkbox checked={selectedLenses.includes(l.name)} onCheckedChange={(c) => toggleLens(l.name, c)} disabled={running} />
+        <label class="check" class:disabled={running}>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={selectedLenses.includes(l.name)}
+            aria-label={`Enable ${l.name} lens`}
+            class:on={selectedLenses.includes(l.name)}
+            class="switch"
+            disabled={running}
+            onclick={() => toggleLens(l.name, !selectedLenses.includes(l.name))}
+          >
+            <span class="knob"></span>
+          </button>
           <span>{l.name}</span>
         </label>
       {/each}
@@ -187,8 +249,19 @@
     <div class="tool-row">
       <span class="tool-label">Tools</span>
       {#each tools as t (t.name)}
-        <label class="check">
-          <Checkbox checked={selectedTools.includes(t.name)} onCheckedChange={(c) => toggleToolState(t.name, c)} disabled={running} />
+        <label class="check" class:disabled={running}>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={selectedTools.includes(t.name)}
+            aria-label={`Enable ${t.name} tool`}
+            class:on={selectedTools.includes(t.name)}
+            class="switch"
+            disabled={running}
+            onclick={() => toggleToolState(t.name, !selectedTools.includes(t.name))}
+          >
+            <span class="knob"></span>
+          </button>
           <span>{t.name}</span>
         </label>
       {/each}
@@ -213,47 +286,70 @@
 
   <div class="cols">
     <div class="col list-col">
-      <div class="filters">
-        <select bind:value={statusFilter} aria-label="Status filter">
-          {#each statuses as s}
-            <option value={s}>{s}</option>
+      <ScrollArea class="h-full">
+        <div class="filters">
+          <Select type="single" value={statusFilter} onValueChange={(v) => (statusFilter = v)}>
+            <SelectTrigger class="h-7 w-[110px] text-[11px]" aria-label="Status filter">
+              <span>{statusFilter}</span>
+            </SelectTrigger>
+            <SelectContent>
+              {#each statuses as s (s)}
+                <SelectItem value={s} label={s}>{s}</SelectItem>
+              {/each}
+            </SelectContent>
+          </Select>
+          <Select type="single" value={lensFilter} onValueChange={(v) => (lensFilter = v)}>
+            <SelectTrigger class="h-7 w-[130px] text-[11px]" aria-label="Lens filter">
+              <span>{lensFilter === "All" ? "All lenses" : lensFilter}</span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="All" label="All">All lenses</SelectItem>
+              {#each lenses as l (l.name)}
+                <SelectItem value={l.name} label={l.name}>{l.name}</SelectItem>
+              {/each}
+            </SelectContent>
+          </Select>
+        </div>
+        <ul class="brief-list" role="listbox" tabindex="0" aria-label="Research briefs" bind:this={listEl} onkeydown={onListKeydown}>
+          {#each filtered as b (b.brief_id)}
+            <li>
+              <button
+                type="button"
+                role="option"
+                aria-selected={b.brief_id === selectedId}
+                class:sel={b.brief_id === selectedId}
+                class="brief-card"
+                onclick={() => select(b.brief_id)}
+              >
+                <span class="thesis ticker">{b.thesis}</span>
+                <span class="meta">
+                  <span class="caption">{b.lens}</span>
+                  <span class="dir num {dirBadgeClass(b.direction)}">{dirLabel(b.direction)}</span>
+                  <span class="conf num">{(b.confidence * 100).toFixed(0)}%</span>
+                  {#if isStale(b.as_of)}
+                    <span class="stale">STALE</span>
+                  {/if}
+                  <span class="time num">{fmtTime(b.as_of)}</span>
+                  <Badge variant={statusVariant(b.status)}>{b.status}{b.expired ? " · expired" : ""}</Badge>
+                </span>
+              </button>
+            </li>
           {/each}
-        </select>
-        <select bind:value={lensFilter} aria-label="Lens filter">
-          <option value="All">All lenses</option>
-          {#each lenses as l (l.name)}
-            <option value={l.name}>{l.name}</option>
-          {/each}
-        </select>
-      </div>
-      <ul>
-        {#each filtered as b (b.brief_id)}
-          <li class="brief-row">
-            <button
-              type="button"
-              class={b.brief_id === selectedId ? "brief-btn sel" : "brief-btn"}
-              onclick={() => select(b.brief_id)}
-            >
-              <Badge variant="outline">{b.lens}</Badge>
-              <span class="num {dirBadgeClass(b.direction)}">{dirLabel(b.direction)}</span>
-              <span class="conf mono">{(b.confidence * 100).toFixed(0)}%</span>
-              <span class="thesis">{b.thesis}</span>
-              <Badge variant={statusVariant(b.status)}>{b.status}{b.expired ? " · expired" : ""}</Badge>
-            </button>
-          </li>
-        {/each}
-        {#if filtered.length === 0}
-          <li class="empty">No briefs.</li>
-        {/if}
-      </ul>
+          {#if filtered.length === 0}
+            <li class="empty">No briefs.</li>
+          {/if}
+        </ul>
+      </ScrollArea>
     </div>
 
     <div class="col detail-col">
-      {#if selected}
-        <ResearchBriefDetail brief={selected} busy={deciding} onDecide={onDecide} />
-      {:else}
-        <p class="empty">Select a brief to see details.</p>
-      {/if}
+      <ScrollArea class="h-full">
+        {#if selected}
+          <ResearchBriefDetail brief={selected} busy={deciding} onDecide={onDecide} />
+        {:else}
+          <p class="empty">Select a brief to see details.</p>
+        {/if}
+      </ScrollArea>
     </div>
   </div>
 </section>
@@ -262,12 +358,15 @@
   .research {
     display: flex;
     flex-direction: column;
-    min-width: 320px;
+    min-width: 0;
     min-height: 0;
     flex: 1 1 0;
     border-radius: 6px;
     background: var(--surface-card);
     border: 1px solid var(--hairline);
+    /* Container-query breakpoint for the dock: stack list over detail when
+       narrow (DESIGN.md §8 — breakpoints follow container queries). */
+    container-type: inline-size;
   }
   .panel-head {
     display: flex;
@@ -312,12 +411,55 @@
     font-size: 10px;
     text-transform: uppercase;
   }
+  /* Toggle / switch — DESIGN.md §4: off = hairline-strong track + muted knob,
+     on = accent track + white knob. 26×14px, 120ms color/position transition. */
   .check {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 5px;
     color: var(--body);
     cursor: pointer;
+  }
+  .check.disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+  .switch {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    width: 26px;
+    height: 14px;
+    padding: 0;
+    border: 1px solid var(--hairline-strong);
+    border-radius: 7px;
+    background: var(--hairline-strong);
+    cursor: pointer;
+    flex: none;
+    transition: background-color 120ms ease-out, border-color 120ms ease-out;
+  }
+  .switch .knob {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--muted);
+    transform: translateX(1px);
+    transition: transform 120ms ease-out, background-color 120ms ease-out;
+  }
+  .switch.on {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .switch.on .knob {
+    background: #fff;
+    transform: translateX(13px);
+  }
+  .switch:disabled {
+    cursor: default;
+  }
+  .switch:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--canvas), 0 0 0 4px var(--focus-ring);
   }
   .run-row {
     display: flex;
@@ -334,11 +476,20 @@
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(220px, 2fr) minmax(280px, 3fr);
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
     overflow: hidden;
   }
+  @container (max-width: 460px) {
+    .cols {
+      grid-template-columns: 1fr;
+      grid-template-rows: minmax(96px, 2fr) minmax(120px, 3fr);
+    }
+    .list-col {
+      border-right: none;
+      border-bottom: 1px solid var(--hairline);
+    }
+  }
   .col {
-    overflow-y: auto;
     padding: 8px 10px;
   }
   .list-col {
@@ -347,62 +498,96 @@
   .filters {
     display: flex;
     gap: 6px;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
   }
-  .filters select {
-    background: var(--surface-elevated);
-    border: 1px solid var(--hairline);
-    border-radius: 4px;
-    color: var(--body);
-    font-size: 10px;
-    padding: 2px 4px;
-  }
-  ul {
+  ul.brief-list {
     list-style: none;
     margin: 0;
     padding: 0;
-  }
-  .brief-row {
-    border-bottom: 1px solid var(--hairline);
-  }
-  .brief-btn {
     display: flex;
-    align-items: center;
+    flex-direction: column;
     gap: 6px;
-    width: 100%;
-    padding: 4px 2px;
-    font-size: 11px;
-    cursor: pointer;
-    background: none;
-    border: none;
-    text-align: left;
-    min-height: 28px;
-    color: inherit;
   }
-  .brief-btn:hover {
+  ul.brief-list:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  /* Brief rows — surface-card cards, thesis in ticker face, meta in caption. */
+  .brief-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+    padding: 6px 8px;
+    background: var(--surface-card);
+    border: 1px solid var(--hairline);
+    border-radius: 4px;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 120ms ease-out, border-color 120ms ease-out;
+  }
+  .brief-card:hover {
     background: var(--row-hover);
   }
-  .brief-btn.sel {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-  }
-  .dir-flat {
-    color: var(--muted);
-  }
-  .conf {
-    color: var(--faint);
-    min-width: 34px;
-    text-align: right;
+  .brief-card.sel {
+    background: var(--row-selected);
+    box-shadow: inset 2px 0 0 var(--accent);
   }
   .thesis {
-    color: var(--body);
-    flex: 1;
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    line-height: 16px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  .meta .caption {
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .dir {
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .conf {
+    color: var(--faint);
+    font-size: 11px;
+  }
+  .time {
+    color: var(--faint);
+    font-size: 10px;
+  }
+  .dir-flat {
+    color: var(--muted);
+  }
+  /* Staleness marker — DESIGN.md §4: warning micro "STALE" chip. */
+  .stale {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--warning);
+    border: 1px solid var(--warning);
+    border-radius: 2px;
+    padding: 0 4px;
+    line-height: 14px;
+    white-space: nowrap;
+  }
   .empty {
     color: var(--faint);
-    border-bottom: none;
+    font-size: 11px;
+    padding: 4px 0;
   }
   .error {
     color: var(--danger);

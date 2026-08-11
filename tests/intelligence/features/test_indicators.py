@@ -1,3 +1,4 @@
+import math
 import pytest
 import time
 from datetime import datetime, timezone
@@ -30,6 +31,31 @@ def test_ema_convergence():
     # tick 3: EMA = 30.0 * 0.5 + 15.0 * 0.5 = 22.5
     assert ema.update(_make_tick(10.0)) == 10.0
     assert ema.update(_make_tick(20.0)) == 15.0
+    assert ema.update(_make_tick(30.0)) == 22.5
+
+def test_ema_skips_nan_and_none_ltp():
+    """F-INTEL-007: NaN/None LTP must not crash or corrupt the running EMA.
+
+    A bad tick is skipped entirely: the previous EMA value is returned (or
+    None before any valid tick) and internal state stays untouched, so the
+    stream resumes correctly with the next valid tick.
+    """
+    ema = EMA(period=3)
+    # Cold start with bad ticks: no crash, no state mutation.
+    assert ema.update(_make_tick(float("nan"))) is None
+    assert ema.update(_make_tick(None)) is None
+    assert ema.value is None
+
+    # Warm up normally.
+    assert ema.update(_make_tick(10.0)) == 10.0
+    assert ema.update(_make_tick(20.0)) == 15.0
+
+    # Bad ticks between valid ones: previous EMA returned, state unchanged.
+    assert ema.update(_make_tick(float("nan"))) == 15.0
+    assert ema.update(_make_tick(None)) == 15.0
+    assert ema.value == 15.0
+
+    # Stream continues correctly after the bad ticks.
     assert ema.update(_make_tick(30.0)) == 22.5
 
 def test_atr_known_ohlc():

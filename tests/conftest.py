@@ -19,6 +19,36 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "duckdb: skip test when duckdb is not available")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _reset_execution_mode_to_observer() -> None:
+    """Guard: never let a stale ~/.shettyxtreme_mode leak into the run.
+
+    execution_router reads Path.home()/".shettyxtreme_mode" at import time to
+    restore the last execution mode (`_current_mode = _load_mode()`); only
+    OBSERVER/PAPER are restored, LIVE never auto-restores (D10). A stale value
+    left by a manual session or a prior app run (e.g. "PAPER") silently makes
+    the module start non-OBSERVER and changes the behavior of tests that assume
+    the OBSERVER default.
+
+    Two-pronged reset: (1) overwrite the persisted file once per session so any
+    runtime read (including subprocesses / fresh imports) sees OBSERVER; (2)
+    re-pin the already-imported module's `_current_mode` — test modules are
+    imported during collection, before any fixture runs, so the file fix alone
+    cannot undo a stale value captured at import time.
+    """
+    mode_file = Path.home() / ".shettyxtreme_mode"
+    try:
+        mode_file.write_text("OBSERVER")
+    except Exception:
+        pass
+    try:
+        from shettyxtreme.terminal.api import execution_router
+        if execution_router._current_mode != "OBSERVER":
+            execution_router._current_mode = "OBSERVER"
+    except Exception:
+        pass
+
+
 
 _src = str(Path(__file__).resolve().parent.parent / "src")
 if _src not in sys.path:
@@ -60,12 +90,10 @@ def config_manager(tmp_data_dir: str):
     import yaml
     cfg = {
         "mode": "paper",
-        "broker": "dhan",
-        "data_provider": "openalgo",
+        "broker": "fyers",
         "log_level": "DEBUG",
         "dry_run": True,
-        "dhan_client_id": "test_client",
-        "openalgo_base_url": "http://test.openalgo:5000",
+        "fyers_app_id": "test_app",
     }
     cfg_path = os.path.join(tmp_data_dir, "config.yaml")
     with open(cfg_path, "w") as f:
@@ -76,7 +104,7 @@ def config_manager(tmp_data_dir: str):
 
 @pytest.fixture
 def clean_env():
-    keys = [k for k in os.environ if k.startswith(("SHETTY_", "DHAN_", "OPENALGO_"))]
+    keys = [k for k in os.environ if k.startswith(("SHETTY_", "FYERS_", "OPENALGO_"))]
     stash = {k: os.environ.pop(k) for k in keys if k in os.environ}
     for k in keys:
         os.environ.pop(k, None)

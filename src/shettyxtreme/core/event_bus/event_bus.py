@@ -2,8 +2,16 @@
 
 Decouples data producers from consumers. All market data, signals,
 orders, and risk events flow through this bus.
+
+Ordering guarantee: events are delivered strictly in FIFO order as
+enqueued. With multiple concurrent publishers the global interleaving is
+nondeterministic, but each publisher's own events are delivered in the
+order they were published (per-publisher FIFO) — the single consumer loop
+drains the queue one event at a time, so a publisher can never overtake
+itself.
 """
 import asyncio
+import inspect
 import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
@@ -72,10 +80,30 @@ class EventBus:
         while self._running:
             event = await self._queue.get()
             handlers = self._subscribers.get(event.topic, [])
-            results = [h(event) for h in handlers]
-            if results:
-                gathered = await asyncio.gather(*results, return_exceptions=True)
-                for i, result in enumerate(gathered):
+            coroutines = []
+            for handler in handlers:
+                try:
+                    result = handler(event)
+                except Exception:
+                    # A handler raised synchronously — log it and keep the
+                    # loop alive; one bad subscriber must not kill the bus.
+                    logger.exception(
+                        "EventBus handler raised synchronously on topic %s",
+                        event.topic.value,
+                    )
+                    continue
+                if inspect.isawaitable(result):
+                    coroutines.append(result)
+                else:
+                    # Sync handler — already invoked. Its result is not
+                    # awaitable, so there is nothing to gather; discard it.
+                    logger.debug(
+                        "EventBus handler %r returned a non-awaitable result; discarded",
+                        handler,
+                    )
+            if coroutines:
+                gathered = await asyncio.gather(*coroutines, return_exceptions=True)
+                for result in gathered:
                     if isinstance(result, Exception):
                         logger.exception(
                             "EventBus handler error on topic %s",

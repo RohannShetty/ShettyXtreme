@@ -1,29 +1,31 @@
-"""Auth router for onboarding wizard and Dhan OAuth callback."""
+"""Auth router for the setup wizard and Fyers OAuth2 callback."""
 from __future__ import annotations
 
+import asyncio
 import logging
-from urllib.parse import quote
+import secrets
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from shettyxtreme.auth.credential_store import CredentialStore
-from shettyxtreme.auth.dhan_oauth import DhanOAuthHelper
+from shettyxtreme.auth.fyers_oauth import FyersAuthError, FyersOAuthHelper
 from shettyxtreme.auth.validator import CredentialValidator
+from shettyxtreme.terminal.api.terminal_init import run_terminal_init
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 _store: CredentialStore | None = None
-_oauth: DhanOAuthHelper | None = None
+_oauth: FyersOAuthHelper | None = None
 _validator: CredentialValidator | None = None
 
 
 def init_auth(
     store: CredentialStore,
-    oauth: DhanOAuthHelper,
+    oauth: FyersOAuthHelper,
     validator: CredentialValidator,
 ) -> None:
     global _store, _oauth, _validator
@@ -33,6 +35,7 @@ def init_auth(
 
 
 class CredentialStatusResponse(BaseModel):
+    broker: str = "fyers"
     has_api_key: bool = False
     has_token: bool = False
     token_valid: bool = False
@@ -41,13 +44,11 @@ class CredentialStatusResponse(BaseModel):
     setup_complete: bool = False
     client_name: str | None = None
     client_id: str | None = None
-    data_token_valid: bool = False
-    data_token_expiry: str | None = None
 
 
-class ConsentStartResponse(BaseModel):
-    consent_app_id: str
+class AuthStartResponse(BaseModel):
     login_url: str
+    state: str
 
 
 class SaveResult(BaseModel):
@@ -56,35 +57,8 @@ class SaveResult(BaseModel):
 
 
 class CredentialBody(BaseModel):
-    api_key: str
-    api_secret: str
-
-
-class TokenBody(BaseModel):
-    access_token: str
-
-
-class PinTotpBody(BaseModel):
-    client_id: str
-    pin: str
-    totp: str
-
-
-class DataTokenBody(BaseModel):
-    access_token: str
-    expiry: str | None = None
-
-
-def _split_combined_key(api_key: str) -> tuple[str, str]:
-    """Split the combined `client_id:::api_key` format used by the setup UI.
-
-    Returns (client_id, api_key). If no `:::` separator is present the whole
-    value is treated as the api_key with an empty client_id.
-    """
-    if ":::" in api_key:
-        client_id, _, key = api_key.partition(":::")
-        return client_id.strip(), key.strip()
-    return "", api_key.strip()
+    app_id: str
+    secret_id: str
 
 
 class ValidationResultResponse(BaseModel):
@@ -98,14 +72,31 @@ def _get_store() -> CredentialStore:
     return _store
 
 
+_bootstrap_lock = asyncio.Lock()
+
+
+async def _safe_bootstrap() -> None:
+    """Trigger the terminal adapter bootstrap after a credential save.
+
+    Failures are logged and swallowed — a bootstrap problem must never
+    break the save response the caller is about to return. Serialized so
+    concurrent saves cannot double-initialize the adapters.
+    """
+    try:
+        async with _bootstrap_lock:
+            await run_terminal_init()
+    except Exception:
+        logger.error("terminal adapter bootstrap after credential save failed", exc_info=True)
+
+
 @router.get("/status", response_model=CredentialStatusResponse)
 async def get_status() -> CredentialStatusResponse:
     store = _get_store()
     token_valid = store.is_token_valid() if store.access_token else False
-    data_token_valid = store.is_data_token_valid() if store.data_access_token else False
     connected = token_valid and bool(store.access_token)
     return CredentialStatusResponse(
-        has_api_key=bool(store.api_key),
+        broker=store.broker,
+        has_api_key=bool(store.app_id),
         has_token=bool(store.access_token),
         token_valid=token_valid,
         token_expiry=store.token_expiry,
@@ -113,121 +104,107 @@ async def get_status() -> CredentialStatusResponse:
         setup_complete=connected,
         client_name=store.client_name,
         client_id=store.client_id,
-        data_token_valid=data_token_valid,
-        data_token_expiry=store.data_access_token_expiry,
     )
 
 
 @router.post("/credentials", response_model=SaveResult)
 async def save_credentials(body: CredentialBody) -> SaveResult:
     store = _get_store()
-    client_id, api_key = _split_combined_key(body.api_key)
-    store.api_key = api_key
-    store.api_secret = body.api_secret
-    if client_id:
-        store.client_id = client_id
+    store.broker = "fyers"
+    store.app_id = body.app_id.strip()
+    store.secret_id = body.secret_id.strip()
     store.save()
+    await _safe_bootstrap()
     return SaveResult(success=True, message="Credentials saved")
 
 
-@router.post("/token", response_model=SaveResult)
-async def save_direct_token(body: TokenBody) -> SaveResult:
+@router.post("/start-auth", response_model=AuthStartResponse)
+async def start_auth(request: Request, response: Response) -> AuthStartResponse:
     store = _get_store()
-    client_id = CredentialStore._extract_client_id_from_token(body.access_token)
-    expiry = CredentialStore._extract_exp_from_token(body.access_token)
-    if not client_id:
+    if not store.app_id:
         raise HTTPException(
             status_code=400,
-            detail="Invalid access token: could not extract client ID (expected a Dhan JWT).",
+            detail="Fyers App ID not configured. Save your app credentials first.",
         )
-    store.update_token(
-        access_token=body.access_token,
-        expiry=expiry,
-        client_id=client_id,
+    if _oauth is None:
+        raise HTTPException(status_code=503, detail="Auth helper not initialised")
+    redirect_uri = str(request.base_url).rstrip("/") + "/auth/fyers/callback"
+    state = secrets.token_urlsafe(16)
+    # Persist the OAuth state so the callback can verify the redirect really
+    # came from the login we started (F-AUTH-002 — login CSRF). HttpOnly so
+    # page JS can't read it; Lax samesite so the cross-site redirect from the
+    # broker carries it; scoped to the callback path only.
+    response.set_cookie(
+        key="_fyers_oauth_state",
+        value=state,
+        httponly=True,
+        samesite="lax",
+        max_age=600,
+        path="/auth/fyers/callback",
     )
-    store.save()
-    return SaveResult(success=True, message="Access token saved")
-
-
-@router.post("/token/pin-totp", response_model=SaveResult)
-async def save_pin_totp(body: PinTotpBody) -> SaveResult:
-    store = _get_store()
-    assert _oauth is not None
-    result = await _oauth.generate_access_token(
-        client_id=body.client_id,
-        pin=body.pin,
-        totp=body.totp,
+    login_url = _oauth.generate_auth_url(
+        app_id=store.app_id,
+        redirect_uri=redirect_uri,
+        state=state,
     )
-    if not result.ok:
-        error = result.error or "Failed to generate access token"
-        if "Connection error" in error:
-            raise HTTPException(status_code=502, detail=error)
-        raise HTTPException(status_code=400, detail=error)
-    consent = result.consent
-    assert consent is not None
-    store.update_token(
-        access_token=consent.access_token,
-        expiry=consent.expiry_time,
-        client_id=consent.client_id,
-    )
-    store.save()
-    return SaveResult(success=True, message="Access token generated and saved")
+    return AuthStartResponse(login_url=login_url, state=state)
 
 
-@router.post("/data-token", response_model=SaveResult)
-async def save_data_token(body: DataTokenBody) -> SaveResult:
-    store = _get_store()
-    store.update_data_token(token=body.access_token, expiry=body.expiry)
-    store.save()
-    return SaveResult(success=True, message="Data access token saved")
-
-
-@router.post("/start-consent", response_model=ConsentStartResponse)
-async def start_consent() -> ConsentStartResponse:
-    store = _get_store()
-    assert _oauth is not None
-    consent_app_id = await _oauth.generate_consent(
-        api_key=store.api_key,
-        api_secret=store.api_secret,
-        client_id=store.client_id or "",
-    )
-    if not consent_app_id:
-        raise HTTPException(
-            status_code=502,
-            detail="Failed to generate consent. Check your API credentials and ensure the OAuth redirect URL is set correctly in the Dhan Developer Portal.",
+@router.get("/fyers/callback", response_model=None)
+async def fyers_callback(
+    request: Request,
+    auth_code: str | None = None,
+    user_id: str | None = None,
+    state: str | None = None,
+) -> RedirectResponse:
+    if not auth_code:
+        logger.debug("Fyers callback missing auth_code (state=%s)", state)
+        return RedirectResponse(url="/static/?error=Authentication+failed#/setup")
+    expected_state = request.cookies.get("_fyers_oauth_state")
+    if (
+        not expected_state
+        or not state
+        or not secrets.compare_digest(state, expected_state)
+    ):
+        # F-AUTH-002: the callback is only legitimate when the redirect echoes
+        # the state we persisted at start-auth. Missing or mismatched → 400
+        # (raised before the try block so the HTTPException is not swallowed
+        # by the broad exchange-failure handler below).
+        logger.warning(
+            "Fyers callback state check failed (received=%s, has_cookie=%s)",
+            bool(state), bool(expected_state),
         )
-    login_url = _oauth.get_login_url(consent_app_id)
-    return ConsentStartResponse(
-        consent_app_id=consent_app_id,
-        login_url=login_url,
-    )
-
-
-@router.get("/dhan/callback", response_model=None)
-async def dhan_callback(tokenId: str) -> RedirectResponse:
+        raise HTTPException(status_code=400, detail="OAuth state mismatch")
     try:
         store = _get_store()
-        result = await _oauth.consume_consent(
-            api_key=store.api_key,
-            api_secret=store.api_secret,
-            token_id=tokenId,
+        if _oauth is None:
+            return RedirectResponse(url="/static/?error=Authentication+failed#/setup")
+        result = await _oauth.exchange_auth_code(
+            app_id=store.app_id,
+            secret_id=store.secret_id,
+            auth_code=auth_code,
+            user_id=user_id,
         )
-        if result.ok:
-            consent = result.consent
-            store.update_token(
-                access_token=consent.access_token,
-                expiry=consent.expiry_time,
-                client_id=consent.client_id,
-            )
-            store.client_name = consent.client_name
-            store.save()
-            return RedirectResponse(url="/static/?connected=true#/setup")
-        error_msg = result.error or "Unknown error during consent exchange"
-        logger.error("OAuth callback failed: %s", error_msg)
-        return RedirectResponse(url=f"/static/?error={quote(error_msg)}#/setup")
+        store.update_token(
+            access_token=result.access_token,
+            expiry=result.token_expiry,
+            client_id=result.client_id or user_id or store.client_id or "",
+        )
+        store.save()
+        try:
+            await run_terminal_init()
+        except Exception:
+            logger.exception("terminal data pipeline init after login failed")
+        response = RedirectResponse(url="/static/?connected=true#/setup")
+        # The state is single-use — clear it once the exchange succeeded.
+        response.delete_cookie("_fyers_oauth_state", path="/auth/fyers/callback")
+        return response
 
+    except FyersAuthError as exc:
+        logger.debug("Fyers OAuth exchange failed: %s", exc)
+        return RedirectResponse(url="/static/?error=Authentication+failed#/setup")
     except Exception:
-        logger.exception("OAuth callback failed")
+        logger.exception("Fyers OAuth callback failed")
         return RedirectResponse(url="/static/?error=Server+error+during+OAuth+callback#/setup")
 
 
@@ -236,23 +213,30 @@ async def test_credentials(body: CredentialBody | None = None) -> ValidationResu
     store = _get_store()
     assert _validator is not None
     if body:
-        client_id, api_key = _split_combined_key(body.api_key)
-        api_secret = body.api_secret
+        app_id = body.app_id.strip()
+        secret_id = body.secret_id.strip()
     else:
-        client_id = store.client_id or ""
-        api_key = store.api_key
-        api_secret = store.api_secret
-    result = await _validator.validate_credentials(
-        api_key=api_key,
-        api_secret=api_secret,
-        client_id=client_id,
+        app_id = store.app_id
+        secret_id = store.secret_id
+    result = await _validator.validate_credentials(app_id=app_id, secret_id=secret_id)
+    if not result.valid:
+        return ValidationResultResponse(valid=False, message=result.message)
+    # Live Fyers probe when we already hold an access token.
+    if store.access_token:
+        probe = await _validator.validate_access_token(
+            app_id=store.app_id, access_token=store.access_token
+        )
+        return ValidationResultResponse(valid=probe.valid, message=probe.message)
+    return ValidationResultResponse(
+        valid=True,
+        message="Credentials valid. Connect Fyers to obtain an access token.",
     )
-    return ValidationResultResponse(valid=result.valid, message=result.message)
 
 
 @router.post("/logout", response_model=SaveResult)
 async def logout() -> SaveResult:
     store = _get_store()
     store.access_token = None
+    store.token_expiry = None
     store.save()
     return SaveResult(success=True, message="Access tokens cleared")

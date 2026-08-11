@@ -1,1 +1,1 @@
-"""Credential management, OAuth, and token health for Dhan API."""
+"""Credential management, OAuth, and token health for the Fyers API."""

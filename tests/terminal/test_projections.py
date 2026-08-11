@@ -33,6 +33,9 @@ async def test_watchlist_broadcast_on_tick_dict(mock_broadcast):
         "ltp": 24000.0,
         "change_pct": 1.2,
         "volume": 1000,
+        "oi": None,
+        "strike": None,
+        "option_type": None,
     })
 
 
@@ -61,6 +64,54 @@ async def test_watchlist_broadcast_on_tick_dataclass(mock_broadcast):
 
 @pytest.mark.asyncio
 @patch("shettyxtreme.terminal.projections.ws_bridge.broadcast", new_callable=AsyncMock)
+async def test_watchlist_broadcast_carries_chain_fields(mock_broadcast):
+    """P6-W2: oi/strike/option_type ride the tick wire so ChainGrid updates live."""
+    proj = WatchlistProjection()
+    tick = Tick(symbol="NIFTY", exchange="NSE_FNO", ltp=245.5, volume=500,
+                timestamp=datetime.now(UTC), close=240.0, oi=123456,
+                strike=25000.0, option_type="CE")
+    event = Event(
+        topic=Topic.MARKET_DATA_TICK,
+        data=tick,
+        source="test",
+    )
+
+    await proj.on_market_data(event)
+
+    mock_broadcast.assert_awaited_once()
+    args = mock_broadcast.call_args
+    assert args[0][0] == "tick"
+    payload = args[0][1]
+    assert payload["oi"] == 123456
+    assert payload["strike"] == 25000.0
+    assert payload["option_type"] == "CE"
+    assert payload["ltp"] == 245.5
+
+
+@pytest.mark.asyncio
+@patch("shettyxtreme.terminal.projections.ws_bridge.broadcast", new_callable=AsyncMock)
+async def test_watchlist_broadcast_null_chain_fields_for_index(mock_broadcast):
+    """P6-W2: index ticks broadcast honest nulls for chain fields."""
+    proj = WatchlistProjection()
+    tick = Tick(symbol="NIFTY", exchange="NSE", ltp=24000.0, volume=100,
+                timestamp=datetime.now(UTC), close=23900.0)
+    event = Event(
+        topic=Topic.MARKET_DATA_TICK,
+        data=tick,
+        source="test",
+    )
+
+    await proj.on_market_data(event)
+
+    mock_broadcast.assert_awaited_once()
+    payload = mock_broadcast.call_args[0][1]
+    assert payload["oi"] is None
+    assert payload["strike"] is None
+    assert payload["option_type"] is None
+
+
+@pytest.mark.asyncio
+@patch("shettyxtreme.terminal.projections.ws_bridge.broadcast", new_callable=AsyncMock)
 async def test_watchlist_broadcast_on_tick(mock_broadcast):
     proj = WatchlistProjection()
     event = Event(
@@ -76,6 +127,9 @@ async def test_watchlist_broadcast_on_tick(mock_broadcast):
         "ltp": 24000.0,
         "change_pct": 1.2,
         "volume": 1000,
+        "oi": None,
+        "strike": None,
+        "option_type": None,
     })
 
 
@@ -115,6 +169,13 @@ async def test_risk_broadcast_on_decision(mock_broadcast):
     args = mock_broadcast.call_args
     assert args[0][0] == "risk"
     assert args[0][1]["daily_pnl"] == -2000.0
+
+
+def test_risk_margin_unknown_initial_state() -> None:
+    """Margin starts UNKNOWN (None), never a fabricated 500000.0 (fix #2)."""
+    proj = RiskProjection()
+    state = proj.get()
+    assert state["margin_available"] is None
 
 
 @pytest.mark.asyncio
@@ -225,7 +286,7 @@ async def test_signal_v2_with_dpg_updates_projection() -> None:
 
 
 def test_health_reports_entitlement_down() -> None:
-    """dhan_data component goes down with the 806 entitlement message."""
+    """data_adapter component goes down with the Fyers 403/-373 entitlement message."""
     proj = HealthProjection()
     adapter = MagicMock()
     adapter.entitlement_error = True
@@ -233,10 +294,46 @@ def test_health_reports_entitlement_down() -> None:
 
     result = proj.get()
 
-    dhan = next(c for c in result["components"] if c["name"] == "dhan_data")
-    assert dhan["status"] == "down"
-    assert "entitlement" in dhan["message"]
-    assert "(806)" in dhan["message"]
+    comp = next(c for c in result["components"] if c["name"] == "data_adapter")
+    assert comp["status"] == "down"
+    assert "entitlement" in comp["message"]
+    assert "403" in comp["message"]
+
+
+def test_health_latency_not_fabricated() -> None:
+    """No component reports a non-zero latency that was never measured (fix #3)."""
+    proj = HealthProjection()
+    result = proj.get()
+
+    assert result["components"]
+    for c in result["components"]:
+        assert c["latency_ms"] is None
+
+
+def test_health_data_stale_when_no_ticks() -> None:
+    """Connected adapter with no fresh ticks reports stale, not healthy."""
+    proj = HealthProjection()
+    adapter = MagicMock()
+    adapter.entitlement_error = False
+    adapter._connected = True
+    adapter.is_stale.return_value = True
+    proj.configure(data_adapter=adapter)
+
+    result = proj.get()
+
+    comp = next(c for c in result["components"] if c["name"] == "data_adapter")
+    assert comp["status"] == "stale"
+
+
+def test_health_trading_token_expired() -> None:
+    """Trading adapter with an invalid token reports token_expired."""
+    proj = HealthProjection()
+    proj.configure(trading_adapter=MagicMock(), token_health_provider=lambda: False)
+
+    result = proj.get()
+
+    comp = next(c for c in result["components"] if c["name"] == "trading_adapter")
+    assert comp["status"] == "token_expired"
 
 
 @pytest.mark.asyncio

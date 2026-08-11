@@ -14,3 +14,15 @@ Sharpen: which of — (a) deeper walkforward parameters (more regimes, longer hi
 
 ## Answer
 DECIDED-DEFER: no new backtest surface in Phase 4; walkforward stays as-is (live edge = deterministic engine; backtest theater risk).
+
+## Re-evaluation — 2026-08-06 (Phase 7 Wave 4, roadmap #13)
+
+Status: DECIDED-DEFER — unchanged; trigger un-fired.
+
+Evidence (live codebase, read-only):
+- Walkforward stays as-is: `src/shettyxtreme/learning/walkforward.py` (`WalkforwardEvaluator`, `WalkforwardResult`) — honest premium-based backtest; consumed by `tests/wave4/test_walkforward.py`.
+- No strategy-comparison surface or separate backtest runner exists anywhere in `src/`; Phase 4-6 built none.
+
+Trigger ("comparison-surface need"): NOT met. Live edge remains the deterministic engine (per the answer above; backtest-theater risk).
+
+Verdict: **KEEP DEFERRED.** Re-open only if a strategy-comparison surface becomes a concrete requirement.
