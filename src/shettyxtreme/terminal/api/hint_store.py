@@ -62,12 +62,18 @@ class HintStore:
                         symbol TEXT,
                         direction TEXT,
                         strike REAL,
+                        regime TEXT,
                         suggested_at TEXT,
                         outcome TEXT,
                         actual_pnl REAL,
                         recorded_at TEXT
                     )"""
                 )
+                # Phase 3C.1 migration: regime column was added after initial deploy.
+                try:
+                    conn.execute("ALTER TABLE hint_outcomes ADD COLUMN regime TEXT")
+                except sqlite3.OperationalError:
+                    pass  # column already exists
                 conn.commit()
         except sqlite3.Error:
             logger.exception("failed to open hints db at %s", self._db_path)
@@ -89,21 +95,32 @@ class HintStore:
     # ------------------------------------------------------------------
     # Write paths
     # ------------------------------------------------------------------
-    def record_hint(self, hint_data: dict[str, Any]) -> str:
-        """Persist a hinted trade; returns the generated hint_id."""
+    def record_hint(
+        self,
+        hint_data: dict[str, Any],
+        regime: str | None = None,
+    ) -> str:
+        """Persist a hinted trade; returns the generated hint_id.
+
+        Args:
+            hint_data: Payload matching ProposeFromHintRequest fields.
+            regime: Market regime at the time the hint was generated
+                (Phase 3C.1 context for regime-aware accuracy stats).
+        """
         hint_id = uuid4().hex
         now = datetime.now(UTC).isoformat()
         try:
             with self._connect() as conn:
                 conn.execute(
                     "INSERT INTO hint_outcomes "
-                    "(hint_id, symbol, direction, strike, suggested_at) "
-                    "VALUES (?, ?, ?, ?, ?)",
+                    "(hint_id, symbol, direction, strike, regime, suggested_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         hint_id,
                         str(hint_data.get("symbol", "")),
                         self._normalize_direction(str(hint_data.get("direction", ""))),
                         _safe_float(hint_data.get("strike")),
+                        regime,
                         now,
                     ),
                 )
@@ -168,7 +185,7 @@ class HintStore:
         try:
             with self._connect() as conn:
                 row = conn.execute(
-                    "SELECT hint_id, symbol, direction, strike, suggested_at, "
+                    "SELECT hint_id, symbol, direction, strike, regime, suggested_at, "
                     "outcome, actual_pnl, recorded_at FROM hint_outcomes "
                     "WHERE hint_id = ?",
                     (hint_id,),
@@ -183,10 +200,11 @@ class HintStore:
             "symbol": row[1],
             "direction": row[2],
             "strike": row[3],
-            "suggested_at": row[4],
-            "outcome": row[5],
-            "actual_pnl": row[6],
-            "recorded_at": row[7],
+            "regime": row[4],
+            "suggested_at": row[5],
+            "outcome": row[6],
+            "actual_pnl": row[7],
+            "recorded_at": row[8],
         }
 
     def get_stats(self, days: int = 30) -> dict[str, Any]:
@@ -195,10 +213,13 @@ class HintStore:
         Returns::
 
             {"win_rate": float | None, "avg_pnl": float | None,
-             "sample_size": int, "total_hints": int, "days": int}
+             "sample_size": int, "total_hints": int, "days": int,
+             "regime_breakdown": dict[str, dict]}
 
         ``win_rate`` is wins / resolved hints; ``avg_pnl`` is the mean
         actual PnL across resolved hints; both are None with no sample.
+        ``regime_breakdown`` maps regime name to its own win_rate, avg_pnl,
+        and sample_size so the UI can show accuracy in context.
         """
         since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
         try:
@@ -208,7 +229,7 @@ class HintStore:
                     (since,),
                 ).fetchone()[0]
                 rows = conn.execute(
-                    "SELECT outcome, actual_pnl FROM hint_outcomes "
+                    "SELECT outcome, actual_pnl, regime FROM hint_outcomes "
                     "WHERE recorded_at >= ? AND outcome IS NOT NULL",
                     (since,),
                 ).fetchall()
@@ -220,14 +241,36 @@ class HintStore:
                 "sample_size": 0,
                 "total_hints": 0,
                 "days": days,
+                "regime_breakdown": {},
             }
         sample = [r for r in rows if r[0] is not None]
-        wins = sum(1 for outcome, _pnl in sample if outcome == "win")
-        pnls = [float(pnl) for _outcome, pnl in sample if pnl is not None]
+        wins = sum(1 for outcome, _pnl, _regime in sample if outcome == "win")
+        pnls = [float(pnl) for _outcome, pnl, _regime in sample if pnl is not None]
+
+        # Per-regime aggregation (Phase 3C.1).
+        by_regime: dict[str, list[tuple[str, float]]] = {}
+        for outcome, pnl, regime in sample:
+            if pnl is None:
+                continue
+            key = str(regime) if regime is not None else "unknown"
+            by_regime.setdefault(key, []).append((outcome, float(pnl)))
+
+        regime_breakdown = {
+            regime: {
+                "win_rate": round(
+                    sum(1 for o, _ in items if o == "win") / len(items), 4
+                ) if items else None,
+                "avg_pnl": round(sum(p for _, p in items) / len(items), 2) if items else None,
+                "sample_size": len(items),
+            }
+            for regime, items in sorted(by_regime.items())
+        }
+
         return {
             "win_rate": round(wins / len(sample), 4) if sample else None,
             "avg_pnl": round(sum(pnls) / len(pnls), 2) if pnls else None,
             "sample_size": len(sample),
             "total_hints": int(total),
             "days": days,
+            "regime_breakdown": regime_breakdown,
         }

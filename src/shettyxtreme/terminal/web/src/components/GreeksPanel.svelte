@@ -8,6 +8,7 @@
     type RiskHeatmapData,
   } from "../lib/api";
   import { lineChart } from "../lib/charts";
+  import { useDebounce } from "../lib/debounce.svelte";
   import { onMessage } from "../lib/ws";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
   import {
@@ -23,6 +24,7 @@
   import EmptyState from "./state/EmptyState.svelte";
   import ErrorState from "./state/ErrorState.svelte";
   import LoadingState from "./state/LoadingState.svelte";
+  import { Skeleton } from "$lib/components/ui/skeleton";
 
   type PositionGreek = {
     symbol: string;
@@ -67,6 +69,9 @@
   let historyDays = $state<1 | 7 | 30>(7);
   let loadingHistory = $state(true);
   let errorHistory = $state("");
+
+  // Debounce chart inputs so rapid updates (e.g. WS ticks) render at most once per 500ms.
+  const debouncedHistoryData = useDebounce(() => historyData, 500);
 
   // Risk heatmap state
   let riskData = $state<RiskHeatmapData | null>(null);
@@ -197,6 +202,13 @@
     }
   }
 
+  function onSortKeydown(e: KeyboardEvent, key: SortKey): void {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleSort(key);
+    }
+  }
+
   function sortValue(p: PositionGreek, key: SortKey): number | string {
     switch (key) {
       case "symbol":
@@ -239,7 +251,7 @@
   );
 
   function chartPoints(key: GreekKey): { x: Date; y: number }[] {
-    return historyData.map((h) => ({ x: new Date(h.timestamp), y: h[key] }));
+    return debouncedHistoryData.current.map((h) => ({ x: new Date(h.timestamp), y: h[key] }));
   }
 
   function greekChart(key: GreekKey, label: string): string {
@@ -280,9 +292,9 @@
   }
 </script>
 
-<section class="panel greeks-panel">
+<section class="panel greeks-panel" aria-label="Portfolio greeks panel">
   <header class="panel-head">
-    <h2>Portfolio Greeks</h2>
+    <h2 id="greeks-title">Portfolio Greeks</h2>
     <div class="head-actions">
       {#if lastUpdated}
         <span class="updated">
@@ -310,11 +322,11 @@
   {/if}
 
   {#if loadingGreeks && !greeksData}
-    <div class="tiles">
+    <div class="tiles" aria-busy="true" aria-label="Loading portfolio greeks">
       {#each ["NET Δ", "NET Γ", "NET Θ", "NET V"] as label (label)}
         <div class="tile">
           <span class="tile-label">{label}</span>
-          <span class="tile-value skeleton-block">—</span>
+          <Skeleton class="h-5 w-20" />
         </div>
       {/each}
     </div>
@@ -360,19 +372,19 @@
             <EmptyState message="No greeks history for the selected range." />
           {:else}
             <div class="chart-grid">
-              <div class="chart-cell">
+              <div class="chart-cell" role="region" aria-label="Net Delta chart">
                 <span class="chart-label">Net Delta</span>
                 {@html greekChart("net_delta", "Net Delta")}
               </div>
-              <div class="chart-cell">
+              <div class="chart-cell" role="region" aria-label="Net Gamma chart">
                 <span class="chart-label">Net Gamma</span>
                 {@html greekChart("net_gamma", "Net Gamma")}
               </div>
-              <div class="chart-cell">
+              <div class="chart-cell" role="region" aria-label="Net Theta chart">
                 <span class="chart-label">Net Theta</span>
                 {@html greekChart("net_theta", "Net Theta")}
               </div>
-              <div class="chart-cell">
+              <div class="chart-cell" role="region" aria-label="Net Vega chart">
                 <span class="chart-label">Net Vega</span>
                 {@html greekChart("net_vega", "Net Vega")}
               </div>
@@ -532,15 +544,78 @@
                   <Table class="text-[11px]">
                     <TableHeader>
                       <TableRow class="hover:bg-transparent">
-                        <TableHead class="cursor-pointer {sortClass('symbol')}" onclick={() => toggleSort('symbol')}>Symbol</TableHead>
-                        <TableHead class="text-right cursor-pointer {sortClass('strike')}" onclick={() => toggleSort('strike')}>Strike</TableHead>
-                        <TableHead class="text-right cursor-pointer {sortClass('option_type')}" onclick={() => toggleSort('option_type')}>Type</TableHead>
-                        <TableHead class="text-right cursor-pointer {sortClass('expiry')}" onclick={() => toggleSort('expiry')}>Exp</TableHead>
-                        <TableHead class="text-right cursor-pointer {sortClass('net_quantity')}" onclick={() => toggleSort('net_quantity')}>Qty</TableHead>
-                        <TableHead class="text-right cursor-pointer {sortClass('delta')}" onclick={() => toggleSort('delta')}>Δ</TableHead>
-                        <TableHead class="text-right cursor-pointer {sortClass('gamma')}" onclick={() => toggleSort('gamma')}>Γ</TableHead>
-                        <TableHead class="text-right cursor-pointer {sortClass('theta')}" onclick={() => toggleSort('theta')}>Θ</TableHead>
-                        <TableHead class="text-right cursor-pointer {sortClass('vega')}" onclick={() => toggleSort('vega')}>V</TableHead>
+                        <TableHead
+                          class="cursor-pointer {sortClass('symbol')}"
+                          tabindex={0}
+                          role="columnheader"
+                          aria-sort={sortKey === 'symbol' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          onclick={() => toggleSort('symbol')}
+                          onkeydown={(e) => onSortKeydown(e, 'symbol')}
+                        >Symbol</TableHead>
+                        <TableHead
+                          class="text-right cursor-pointer {sortClass('strike')}"
+                          tabindex={0}
+                          role="columnheader"
+                          aria-sort={sortKey === 'strike' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          onclick={() => toggleSort('strike')}
+                          onkeydown={(e) => onSortKeydown(e, 'strike')}
+                        >Strike</TableHead>
+                        <TableHead
+                          class="text-right cursor-pointer {sortClass('option_type')}"
+                          tabindex={0}
+                          role="columnheader"
+                          aria-sort={sortKey === 'option_type' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          onclick={() => toggleSort('option_type')}
+                          onkeydown={(e) => onSortKeydown(e, 'option_type')}
+                        >Type</TableHead>
+                        <TableHead
+                          class="text-right cursor-pointer {sortClass('expiry')}"
+                          tabindex={0}
+                          role="columnheader"
+                          aria-sort={sortKey === 'expiry' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          onclick={() => toggleSort('expiry')}
+                          onkeydown={(e) => onSortKeydown(e, 'expiry')}
+                        >Exp</TableHead>
+                        <TableHead
+                          class="text-right cursor-pointer {sortClass('net_quantity')}"
+                          tabindex={0}
+                          role="columnheader"
+                          aria-sort={sortKey === 'net_quantity' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          onclick={() => toggleSort('net_quantity')}
+                          onkeydown={(e) => onSortKeydown(e, 'net_quantity')}
+                        >Qty</TableHead>
+                        <TableHead
+                          class="text-right cursor-pointer {sortClass('delta')}"
+                          tabindex={0}
+                          role="columnheader"
+                          aria-sort={sortKey === 'delta' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          onclick={() => toggleSort('delta')}
+                          onkeydown={(e) => onSortKeydown(e, 'delta')}
+                        >Δ</TableHead>
+                        <TableHead
+                          class="text-right cursor-pointer {sortClass('gamma')}"
+                          tabindex={0}
+                          role="columnheader"
+                          aria-sort={sortKey === 'gamma' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          onclick={() => toggleSort('gamma')}
+                          onkeydown={(e) => onSortKeydown(e, 'gamma')}
+                        >Γ</TableHead>
+                        <TableHead
+                          class="text-right cursor-pointer {sortClass('theta')}"
+                          tabindex={0}
+                          role="columnheader"
+                          aria-sort={sortKey === 'theta' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          onclick={() => toggleSort('theta')}
+                          onkeydown={(e) => onSortKeydown(e, 'theta')}
+                        >Θ</TableHead>
+                        <TableHead
+                          class="text-right cursor-pointer {sortClass('vega')}"
+                          tabindex={0}
+                          role="columnheader"
+                          aria-sort={sortKey === 'vega' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          onclick={() => toggleSort('vega')}
+                          onkeydown={(e) => onSortKeydown(e, 'vega')}
+                        >V</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -945,6 +1020,10 @@
     border-top: 4px solid var(--accent);
     border-bottom: none;
   }
+  .positions-table :global(th:focus-visible) {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: -2px;
+  }
 
   /* Utility */
   .mono {
@@ -983,6 +1062,50 @@
     .head-actions {
       flex-wrap: wrap;
       justify-content: flex-end;
+    }
+  }
+  /* Responsive: panels work in narrow right dock. */
+  @media (max-width: 460px) {
+    .greeks-panel {
+      min-width: 0;
+    }
+    .panel-head {
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .head-actions {
+      width: 100%;
+      justify-content: space-between;
+    }
+    .tiles {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .chart-grid {
+      grid-template-columns: 1fr;
+    }
+    .risk-grid {
+      grid-template-columns: 1fr;
+    }
+    .sector-row {
+      grid-template-columns: 70px 1fr 44px 64px;
+    }
+    .margin-values {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  /* Coarse pointers: floor tap targets at 44px. */
+  @media (pointer: coarse) {
+    .head-actions :global(button),
+    .range-group :global(button) {
+      min-height: 44px;
+      min-width: 44px;
+    }
+    .positions-table :global(th),
+    .positions-table :global(td) {
+      min-height: 44px;
+    }
+    .tile {
+      min-height: 44px;
     }
   }
 </style>

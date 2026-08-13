@@ -21,6 +21,7 @@
   } from "../lib/api";
   import { selectedSymbol } from "../lib/selection.svelte.ts";
   import { lineChart, multiLineChart, regimeTimeline, type LineBand } from "../lib/charts";
+  import { useDebounce } from "../lib/debounce.svelte";
   import { Button } from "$lib/components/ui/button";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -77,6 +78,12 @@
   let regimeHistory: RegimeHistoryPoint[] = $state([]);
   let historiesLoading = $state(false);
   let historiesError = $state("");
+
+  // Debounce chart inputs so rapid updates (e.g. WS ticks) render at most once per 500ms.
+  const debouncedIVRank = useDebounce(() => ivRank, 500);
+  const debouncedPCR = useDebounce(() => pcr, 500);
+  const debouncedMaxPain = useDebounce(() => maxPain, 500);
+  const debouncedRegimeHistory = useDebounce(() => regimeHistory, 500);
 
   let exportOpen = $state(false);
   let exportFormat: ExportFormat = $state("csv");
@@ -172,19 +179,21 @@
   let stale = $derived(fetchedAt !== null && now - fetchedAt > STALE_MS);
 
   let ivRankPoints = $derived(
-    ivRank.map((r) => ({ x: new Date(r.timestamp), y: r.iv_rank_percent })),
+    debouncedIVRank.current.map((r) => ({ x: new Date(r.timestamp), y: r.iv_rank_percent })),
   );
-  let pcrPoints = $derived(pcr.map((r) => ({ x: new Date(r.timestamp), y: r.pcr })));
+  let pcrPoints = $derived(
+    debouncedPCR.current.map((r) => ({ x: new Date(r.timestamp), y: r.pcr })),
+  );
   let maxPainSeries = $derived([
     {
       key: "max pain",
-      points: maxPain.map((r) => ({ x: new Date(r.timestamp), y: r.max_pain })),
+      points: debouncedMaxPain.current.map((r) => ({ x: new Date(r.timestamp), y: r.max_pain })),
       color: "var(--muted)",
       dashed: true,
     },
     {
       key: "spot",
-      points: maxPain
+      points: debouncedMaxPain.current
         .filter((r) => r.spot_price != null)
         .map((r) => ({ x: new Date(r.timestamp), y: r.spot_price! })),
       color: "var(--accent)",
@@ -249,7 +258,7 @@
   }
 
   function lastRegime(): string {
-    const last = regimeHistory.at(-1);
+    const last = debouncedRegimeHistory.current.at(-1) ?? regimeHistory.at(-1);
     return last ? last.regime.replace(/_/g, " ").toUpperCase() : "—";
   }
 
@@ -290,10 +299,10 @@
   }
 </script>
 
-<section class="panel analytics">
+<section class="panel analytics" aria-label="Analytics panel">
   <header class="panel-head">
     <div class="head-group">
-      <h2>Analytics</h2>
+      <h2 id="analytics-title">Analytics</h2>
       {#if stale}
         <span class="stale-chip" role="status">STALE</span>
       {/if}
@@ -388,14 +397,11 @@
 
   {#if !error}
     <ScrollArea class="flex-1 min-h-0">
-      <div class="cards" role="listbox" aria-label="Scorecard metrics">
+      <div class="cards" aria-label="Scorecard metrics">
         {#each metrics as m (m.key)}
           <div
             class="card"
             class:na={!m.available}
-            role="option"
-            aria-selected={false}
-            tabindex="0"
             title={m.available ? "" : m.note ?? undefined}
           >
             <span class="card-label">{m.label}</span>
@@ -524,8 +530,8 @@
             </div>
             {#if historiesLoading}
               <Skeleton class="h-[80px] w-full" />
-            {:else if regimeHistory.length > 0}
-              {@html regimeTimeline(regimeHistory, {
+            {:else if debouncedRegimeHistory.current.length > 0}
+              {@html regimeTimeline(debouncedRegimeHistory.current, {
                 ariaLabel: "Regime history timeline",
                 title: "Regime changes over time",
               })}
@@ -784,5 +790,47 @@
   .field {
     display: grid;
     gap: 4px;
+  }
+  /* Responsive: panels work in narrow right dock. */
+  @media (max-width: 460px) {
+    .analytics {
+      min-width: 0;
+    }
+    .panel-head {
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .head-actions {
+      width: 100%;
+      justify-content: space-between;
+    }
+    .cards {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .chart-grid {
+      grid-template-columns: 1fr;
+    }
+    .regimes li {
+      flex-wrap: wrap;
+      gap: 4px 8px;
+    }
+    .regime-label {
+      min-width: auto;
+      flex: 1 1 100%;
+    }
+    .bar-track {
+      flex: 1 1 100%;
+    }
+  }
+  /* Coarse pointers: floor tap targets at 44px. */
+  @media (pointer: coarse) {
+    .head-actions :global(button),
+    .head-actions :global([role="combobox"]) {
+      min-height: 44px;
+      min-width: 44px;
+    }
+    .card {
+      min-height: 44px;
+    }
   }
 </style>

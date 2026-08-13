@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { toast } from "svelte-sonner";
-  import { get } from "$lib/api";
+  import { get, proposeFromHint, type ProposeFromHintRequest } from "$lib/api";
   import {
     getScannerThresholds,
     updateScannerThresholds,
@@ -9,6 +9,7 @@
     type ScannerFinding,
   } from "$lib/api";
   import { onMessage } from "$lib/ws";
+  import { rightDockTab } from "$lib/rightDockTab.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import { Badge, type BadgeVariant } from "$lib/components/ui/badge";
@@ -137,6 +138,7 @@
   // Keyboard navigation cursor over the flat item list (findings → gaps → clusters → alerts).
   let active = $state(0);
   let navActive = $state(false);
+  let expandedIdx = $state<number | null>(null);
   let panelEl: HTMLElement | undefined = $state();
   let activeListEl: HTMLElement | undefined = $state();
 
@@ -341,6 +343,7 @@
   function select(idx: number): void {
     navActive = true;
     active = idx;
+    expandedIdx = null;
   }
 
   /** Roving-tabindex pattern: only the active item is in the Tab order, and
@@ -368,6 +371,16 @@
         if (prv) next = prv.start;
         break;
       }
+      case "Enter": {
+        e.preventDefault();
+        if (active === idx && navActive) {
+          expandedIdx = expandedIdx === idx ? null : idx;
+        } else {
+          select(idx);
+          expandedIdx = idx;
+        }
+        return;
+      }
       case "Home":
         next = 0;
         break;
@@ -379,6 +392,15 @@
     }
     e.preventDefault();
     if (next !== idx) select(next);
+  }
+
+  function onPanelKeydown(e: KeyboardEvent): void {
+    if (e.key === "Escape") {
+      if (thresholdsOpen) {
+        e.preventDefault();
+        thresholdsOpen = false;
+      }
+    }
   }
 
   // Keep the cursor inside the list when data shrinks.
@@ -465,22 +487,77 @@
     );
   }
 
-  function onCreateProposal(_f: ScannerFinding): void {
-    // Phase 3B.2 integration point: emit a window event so the workspace can
-    // switch to the Proposals tab and pre-fill a proposal from this finding.
-    window.dispatchEvent(
-      new CustomEvent("sx:create-proposal-from-finding", { detail: _f }),
-    );
-    toast.info("Create proposal request sent", {
-      description: `${_f.symbol} · ${_f.scanner_type}`,
-    });
+  let creatingId = $state<string | null>(null);
+
+  function normalizeDirection(value: unknown): string {
+    const v = String(value ?? "").toLowerCase();
+    if (["up", "bullish", "buy", "long"].includes(v)) return "bullish";
+    if (["down", "bearish", "sell", "short"].includes(v)) return "bearish";
+    return v;
+  }
+
+  function parseNumber(value: unknown): number | null {
+    if (typeof value === "number" && isFinite(value)) return value;
+    if (typeof value === "string") {
+      const n = Number(value);
+      return isFinite(n) ? n : null;
+    }
+    return null;
+  }
+
+  async function onCreateProposal(f: ScannerFinding): Promise<void> {
+    if (creatingId) return;
+    creatingId = f.symbol + (f.timestamp ?? "");
+    try {
+      const d = f.detail ?? {};
+      const direction = normalizeDirection(d.direction);
+      if (direction !== "bullish" && direction !== "bearish") {
+        toast.error("Cannot create proposal", {
+          description: "Finding direction is not actionable.",
+        });
+        return;
+      }
+      const strike = parseNumber(d.strike ?? d.suggested_strike);
+      const payload: ProposeFromHintRequest = {
+        symbol: f.symbol,
+        direction,
+        strike,
+        premium: parseNumber(d.premium ?? d.entry_premium),
+        expiry: d.expiry ? String(d.expiry) : null,
+        option_type: d.option_type ? String(d.option_type).toUpperCase() : null,
+        lot_size: parseNumber(d.lot_size),
+        lots: parseNumber(d.lots),
+        stop_loss: parseNumber(d.stop_loss),
+        target: parseNumber(d.target),
+        rationale: `${SCANNER_LABELS[f.scanner_type] ?? f.scanner_type} scanner alert`,
+        confidence: parseNumber(d.confidence) ?? 0.5,
+        conviction: parseNumber(d.confidence) ?? 0.5,
+        quantity: null,
+      };
+      const proposal = await proposeFromHint(payload);
+      toast.success("Proposal created", {
+        description: `${proposal.symbol} ${proposal.option_type ?? ""} ${proposal.strike != null ? proposal.strike.toLocaleString("en-IN") : ""}`.trim(),
+      });
+      rightDockTab.value = "proposals";
+    } catch (err) {
+      toast.error("Failed to create proposal", {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      creatingId = null;
+    }
   }
 </script>
 
-<section class="panel scanner" bind:this={panelEl}>
+<section
+  class="panel scanner"
+  bind:this={panelEl}
+  aria-label="Scanner panel"
+  onkeydown={onPanelKeydown}
+>
   <header class="panel-head">
     <div class="head-group">
-      <h2>Scanner</h2>
+      <h2 id="scanner-title">Scanner</h2>
       {#if stale}
         <span class="stale-chip" role="status">STALE</span>
       {/if}
@@ -506,6 +583,8 @@
   <Collapsible bind:open={thresholdsOpen} class="threshold-section">
     <CollapsibleTrigger
       class="flex w-full h-8 items-center justify-between gap-2 px-3 text-[11px] font-semibold tracking-[0.06em] uppercase text-muted-foreground hover:text-ink hover:bg-canvas-raised border-b border-hairline outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      aria-expanded={thresholdsOpen}
+      aria-controls="threshold-content"
     >
       <span class="inline-flex items-center gap-2">
         <Settings2 class="size-3.5" />
@@ -513,7 +592,7 @@
       </span>
       <ChevronDown class="size-3.5 transition-transform {thresholdsOpen ? 'rotate-180' : ''}" />
     </CollapsibleTrigger>
-    <CollapsibleContent>
+    <CollapsibleContent id="threshold-content">
       <div class="threshold-content">
         {#if thresholdsLoading}
           <div class="threshold-grid">
@@ -585,7 +664,21 @@
       <ScrollArea class="flex-1 min-h-0">
         <div class="cards" bind:this={activeListEl}>
           <!-- ── Findings (11 scanner types) ────────────────────────────── -->
-          {#if findings.length > 0}
+          {#if loading && findings.length === 0}
+            <div class="card">
+              <span class="eyebrow">Findings</span>
+              <span class="stat">—</span>
+              <ul role="list" aria-busy="true" aria-label="Loading scanner findings">
+                {#each Array.from({ length: 6 }) as _, i (i)}
+                  <li class="item">
+                    <Skeleton class="h-3.5 w-16" />
+                    <Skeleton class="h-3.5 w-14" />
+                    <Skeleton class="h-3.5 w-12 ml-auto" />
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {:else if findings.length > 0}
             {#each findingTypes as typeKey, ti (typeKey)}
               <div class="card">
                 <span class="eyebrow">{SCANNER_LABELS[typeKey] ?? typeKey}</span>
@@ -593,7 +686,7 @@
                 <ul role="list">
                   {#each findingsByType[typeKey] as f, fi (f.symbol + (f.timestamp ?? "") + fi)}
                     {@const idx = findingIdx(ti, fi)}
-                    {@const expanded = active === idx && navActive}
+                    {@const expanded = expandedIdx === idx}
                     {@const entries = detailEntries(f.detail)}
                     <li
                       class="item {cardBorderClass(f.severity)} {f.isNew ? 'pulse-new' : ''}"
@@ -601,7 +694,14 @@
                       aria-selected={idx === active}
                       tabindex={idx === active ? 0 : -1}
                       data-scanner-idx={idx}
-                      onclick={() => select(idx)}
+                      onclick={() => {
+                        if (active === idx && navActive) {
+                          expandedIdx = expandedIdx === idx ? null : idx;
+                        } else {
+                          select(idx);
+                          expandedIdx = idx;
+                        }
+                      }}
                       onkeydown={(e) => onItemKeydown(e, idx)}
                     >
                       <div class="item-row">
@@ -613,11 +713,16 @@
                             variant="ghost"
                             size="icon"
                             class="size-6 ml-auto text-muted-foreground hover:text-accent"
-                            onclick={(e) => { e.stopPropagation(); onCreateProposal(f); }}
+                            onclick={(e) => { e.stopPropagation(); void onCreateProposal(f); }}
+                            disabled={creatingId !== null}
                             aria-label="Create proposal"
                             title="Create proposal"
                           >
-                            <Plus class="size-3.5" />
+                            {#if creatingId === f.symbol + (f.timestamp ?? "")}
+                              <RotateCw class="size-3.5 animate-spin" />
+                            {:else}
+                              <Plus class="size-3.5" />
+                            {/if}
                           </Button>
                         {/if}
                       </div>
@@ -1176,6 +1281,13 @@
   }
   /* Responsive: panels work in narrow right dock. */
   @media (max-width: 460px) {
+    .scanner {
+      min-width: 0;
+    }
+    .panel-head {
+      flex-wrap: wrap;
+      gap: 8px;
+    }
     .threshold-grid {
       grid-template-columns: 1fr;
     }
@@ -1184,6 +1296,29 @@
     }
     .history-filters > :global(*) {
       width: 100%;
+    }
+    .cards {
+      padding: 8px;
+    }
+    .card {
+      padding: 8px;
+    }
+  }
+  /* Coarse pointers: floor tap targets at 44px (WCAG 2.5.5). */
+  @media (pointer: coarse) {
+    .item {
+      min-height: 44px;
+      padding: 8px 6px 8px 4px;
+    }
+    .head-actions :global(button),
+    .threshold-actions :global(button),
+    .history-filters :global(button) {
+      min-height: 44px;
+      min-width: 44px;
+    }
+    .threshold-field :global(input),
+    .history-filters :global(input) {
+      min-height: 44px;
     }
   }
 </style>

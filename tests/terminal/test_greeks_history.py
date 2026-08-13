@@ -162,6 +162,59 @@ class TestGreeksHistoryEndpoint:
         assert resp.status_code == 200
         assert resp.json() == []
 
+    def test_filter_by_regime(self, store: GreeksStore, tmp_path) -> None:
+        """Phase 3C.1: greeks history can be filtered by active regime."""
+        from shettyxtreme.terminal.api.analytics_store import AnalyticsStore
+
+        analytics_store = AnalyticsStore(str(tmp_path / "analytics.db"))
+        app = _make_app(store)
+        app.state.analytics_store = analytics_store
+        client = TestClient(app)
+
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime.now(UTC)
+        # Two regime periods: trending_up yesterday, range_bound today.
+        # trending_up started 24h ago, range_bound started 12h ago.
+        trending_up_ts = (now - timedelta(hours=24)).isoformat()
+        range_bound_ts = (now - timedelta(hours=12)).isoformat()
+        
+        with sqlite3.connect(str(tmp_path / "analytics.db")) as conn:
+            conn.execute(
+                "INSERT INTO regime_history (regime, confidence, timestamp) VALUES (?, ?, ?)",
+                ("trending_up", 0.8, trending_up_ts),
+            )
+            conn.execute(
+                "INSERT INTO regime_history (regime, confidence, timestamp) VALUES (?, ?, ?)",
+                ("range_bound", 0.6, range_bound_ts),
+            )
+            conn.commit()
+
+        # Two greeks snapshots backdated to fall under each regime.
+        with sqlite3.connect(str(tmp_path / "greeks.db")) as conn:
+            for ts, delta in ((now - timedelta(hours=18), 10.0), (now - timedelta(hours=1), 99.0)):
+                conn.execute(
+                    "INSERT INTO greeks_history "
+                    "(net_delta, net_gamma, net_theta, net_vega, position_count, timestamp) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (delta, 0.0, 0.0, 0.0, 1, ts.isoformat()),
+                )
+            conn.commit()
+
+        try:
+            trending = client.get("/api/execution/greeks-history?days=7&regime=trending_up").json()
+            assert len(trending) == 1
+            assert trending[0]["net_delta"] == 10.0
+
+            ranging = client.get("/api/execution/greeks-history?days=7&regime=range_bound").json()
+            assert len(ranging) == 1
+            assert ranging[0]["net_delta"] == 99.0
+
+            all_rows = client.get("/api/execution/greeks-history?days=7").json()
+            assert len(all_rows) == 2
+        finally:
+            analytics_store.close()
+
 
 _OPTION_SYMBOL = "NSE:NIFTY26AUG25000CE"
 

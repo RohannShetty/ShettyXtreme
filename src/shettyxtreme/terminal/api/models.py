@@ -130,13 +130,21 @@ class ProposeFromHintRequest(BaseModel):
     quantity: int | None = None
 
 
+class RegimeHintStats(BaseModel):
+    """Per-regime hint accuracy breakdown (Phase 3C.1)."""
+    win_rate: float | None = None
+    avg_pnl: float | None = None
+    sample_size: int = 0
+
+
 class HintStatsResponse(BaseModel):
-    """Hint accuracy statistics over the trailing window (3A.2)."""
+    """Hint accuracy statistics over the trailing window (3A.2 + 3C.1)."""
     win_rate: float | None = None
     avg_pnl: float | None = None
     sample_size: int = 0
     total_hints: int = 0
     days: int = 30
+    regime_breakdown: dict[str, RegimeHintStats] = {}
 
 
 # ── Market data ────────────────────────────────────────────────────────────

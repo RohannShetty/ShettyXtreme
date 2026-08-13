@@ -395,21 +395,54 @@ async def get_portfolio_greeks(request: Request) -> PortfolioGreeksResponse:
 async def get_greeks_history(
     request: Request,
     days: int = Query(7, ge=1, le=365),
+    regime: str | None = Query(None),
 ) -> list[dict[str, Any]]:
     """Return recorded portfolio greeks snapshots for charting (3A.4).
 
     Entries: ``{timestamp, net_delta, net_gamma, net_theta, net_vega,
     position_count}``, oldest first, covering the last ``days`` days.
     Returns an empty list when the greeks store is not initialized.
+
+    Phase 3C.1: when ``regime`` is supplied, snapshots are filtered to
+    periods where that regime was active (joined against analytics store
+    regime history).
     """
     store = getattr(request.app.state, "greeks_store", None)
     if store is None:
         return []
     try:
-        return store.get_history(days=days)
+        rows = store.get_history(days=days)
     except Exception:
         logger.exception("greeks-history read failed")
         return []
+
+    if not regime:
+        return rows
+
+    analytics_store = getattr(request.app.state, "analytics_store", None)
+    if analytics_store is None or not hasattr(analytics_store, "get_regime_history"):
+        return []
+    try:
+        regime_history = analytics_store.get_regime_history(days=days)
+    except Exception:
+        logger.exception("regime history read failed for greeks filter")
+        return []
+
+    if not regime_history:
+        return []
+
+    # Map each greeks snapshot to the regime active at that timestamp.
+    def active_at(ts: str) -> str | None:
+        active: str | None = None
+        for r in regime_history:
+            if r["timestamp"] <= ts:
+                active = r["regime"]
+            else:
+                break
+        return active
+
+    filtered = [row for row in rows if active_at(row["timestamp"]) == regime]
+    return filtered
 
 
 @router.get("/risk/heatmap", response_model=RiskHeatmapResponse)

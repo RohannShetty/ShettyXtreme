@@ -54,7 +54,7 @@ class AnalyticsStore:
             db_path: SQLite database file path.
         """
         self._db_path = db_path
-        self._conn = sqlite3.connect(db_path, timeout=5.0)
+        self._conn = sqlite3.connect(db_path, timeout=5.0, check_same_thread=False)
         self._conn.execute(_MAX_PAIN_DDL)
         self._conn.execute(_REGIME_DDL)
         self._conn.commit()

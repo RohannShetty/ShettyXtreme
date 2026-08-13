@@ -89,6 +89,20 @@ const DEFAULT_REGIME_COLORS: RegimeColorMap = {
   volatile: "var(--accent)",
 };
 
+/** Color-blind-safe dash patterns for multi-series lines. */
+const LINE_DASH_PATTERNS = ["", "4 3", "2 2", "6 2 2 2", "3 3"];
+
+/** Color-blind-safe marker shapes for multi-series lines. */
+const MARKER_SHAPES = ["circle", "square", "diamond", "triangle"];
+
+/** Pattern fills for regime timeline segments (color-blind aid). */
+const REGIME_PATTERNS: Record<string, string> = {
+  trending_up: "url(#pattern-up)",
+  trending_down: "url(#pattern-down)",
+  range_bound: "url(#pattern-range)",
+  volatile: "url(#pattern-volatile)",
+};
+
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
@@ -264,7 +278,7 @@ export function lineChart(points: TimePoint[], options: LineChartOptions = {}): 
   const last = points[points.length - 1];
   const markerSvg = `<circle cx="${sx(toTime(last))}" cy="${sy(last.y)}" r="5" fill="none" stroke="${lineColor}" stroke-width="2" opacity="0.5" /><circle cx="${sx(toTime(last))}" cy="${sy(last.y)}" r="3" fill="${markerColor}" stroke="var(--canvas)" stroke-width="1.5" />`;
 
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${escapeXml(options.ariaLabel ?? "Line chart")}">
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" role="img" tabindex="0" aria-label="${escapeXml(options.ariaLabel ?? "Line chart")}">
     <title>${escapeXml(options.title ?? "Line chart")}</title>
     ${bandsSvg}
     ${gridSvg}
@@ -351,12 +365,13 @@ export function multiLineChart(options: MultiLineChartOptions): string {
     .join("");
 
   const seriesSvg = options.series
-    .map((s) => {
+    .map((s, i) => {
       const pathD = linePath(s.points, sx, sy);
-      const dash = s.dashed ? ' stroke-dasharray="4 3"' : "";
+      const dashPreset = s.dashed ? "4 3" : LINE_DASH_PATTERNS[i % LINE_DASH_PATTERNS.length];
+      const dash = dashPreset ? ` stroke-dasharray="${dashPreset}"` : "";
       const last = s.points[s.points.length - 1];
       const marker = last
-        ? `<circle cx="${sx(toTime(last))}" cy="${sy(last.y)}" r="3" fill="${s.color}" stroke="var(--canvas)" stroke-width="1.5" />`
+        ? markerShape(MARKER_SHAPES[i % MARKER_SHAPES.length], sx(toTime(last)), sy(last.y), s.color)
         : "";
       return `<path d="${pathD}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"${dash} />${marker}`;
     })
@@ -372,7 +387,7 @@ export function multiLineChart(options: MultiLineChartOptions): string {
     })
     .join("");
 
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${escapeXml(options.ariaLabel ?? "Multi-series line chart")}">
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" role="img" tabindex="0" aria-label="${escapeXml(options.ariaLabel ?? "Multi-series line chart")}">
     <title>${escapeXml(options.title ?? "Multi-series line chart")}</title>
     ${gridSvg}
     <line x1="${plotLeft}" x2="${plotRight}" y1="${plotBottom}" y2="${plotBottom}" stroke="var(--hairline-strong)" stroke-width="1" />
@@ -382,6 +397,20 @@ export function multiLineChart(options: MultiLineChartOptions): string {
     ${yLabelsSvg}
     ${xLabelsSvg}
   </svg>`;
+}
+
+function markerShape(shape: string, x: number, y: number, color: string, size = 3): string {
+  const half = size;
+  switch (shape) {
+    case "square":
+      return `<rect x="${x - half}" y="${y - half}" width="${size * 2}" height="${size * 2}" fill="${color}" stroke="var(--canvas)" stroke-width="1.5" />`;
+    case "diamond":
+      return `<polygon points="${x},${y - half} ${x + half},${y} ${x},${y + half} ${x - half},${y}" fill="${color}" stroke="var(--canvas)" stroke-width="1.5" />`;
+    case "triangle":
+      return `<polygon points="${x},${y - half} ${x + half},${y + half} ${x - half},${y + half}" fill="${color}" stroke="var(--canvas)" stroke-width="1.5" />`;
+    default:
+      return `<circle cx="${x}" cy="${y}" r="${size}" fill="${color}" stroke="var(--canvas)" stroke-width="1.5" />`;
+  }
 }
 
 function regimeLabel(regime: string): string {
@@ -410,6 +439,29 @@ export function regimeTimeline(entries: RegimeEntry[], options: RegimeTimelineOp
   const barY = 26;
   const barH = 18;
 
+  // Pattern definitions for color-blind accessibility.
+  const patternDefs = `
+    <defs>
+      <pattern id="pattern-up" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect width="6" height="6" fill="${colors.trending_up ?? "var(--success)"}" />
+        <line x1="0" y1="0" x2="0" y2="6" stroke="var(--canvas)" stroke-width="1.5" />
+      </pattern>
+      <pattern id="pattern-down" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+        <rect width="6" height="6" fill="${colors.trending_down ?? "var(--danger)"}" />
+        <line x1="0" y1="0" x2="0" y2="6" stroke="var(--canvas)" stroke-width="1.5" />
+      </pattern>
+      <pattern id="pattern-range" width="4" height="4" patternUnits="userSpaceOnUse">
+        <rect width="4" height="4" fill="${colors.range_bound ?? "var(--warning)"}" />
+        <circle cx="2" cy="2" r="0.75" fill="var(--canvas)" />
+      </pattern>
+      <pattern id="pattern-volatile" width="6" height="6" patternUnits="userSpaceOnUse">
+        <rect width="6" height="6" fill="${colors.volatile ?? "var(--accent)"}" />
+        <line x1="0" y1="3" x2="6" y2="3" stroke="var(--canvas)" stroke-width="1" />
+        <line x1="3" y1="0" x2="3" y2="6" stroke="var(--canvas)" stroke-width="1" />
+      </pattern>
+    </defs>
+  `;
+
   let segmentsSvg = "";
   sorted.forEach((entry, i) => {
     const t0 = new Date(entry.timestamp).getTime();
@@ -420,7 +472,9 @@ export function regimeTimeline(entries: RegimeEntry[], options: RegimeTimelineOp
     const isCurrent = i === sorted.length - 1;
     const color = colors[entry.regime] ?? "var(--faint)";
     const stroke = isCurrent ? ' stroke="var(--ink)" stroke-width="2"' : "";
-    segmentsSvg += `<rect x="${x}" y="${barY}" width="${width}" height="${barH}" fill="${color}"${stroke} />`;
+    const tsEnd = new Date(t1).toISOString();
+    const tsStart = new Date(t0).toISOString();
+    segmentsSvg += `<rect x="${x}" y="${barY}" width="${width}" height="${barH}" fill="${color}"${stroke} data-regime="${escapeXml(entry.regime)}" data-start="${escapeXml(tsStart)}" data-end="${escapeXml(tsEnd)}" role="button" tabindex="0" aria-label="${escapeXml(regimeLabel(entry.regime))} from ${tsStart} to ${tsEnd}" style="cursor:pointer" />`;
   });
 
   const current = sorted[sorted.length - 1];
@@ -440,8 +494,9 @@ export function regimeTimeline(entries: RegimeEntry[], options: RegimeTimelineOp
     })
     .join("");
 
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${escapeXml(options.ariaLabel ?? "Regime timeline")}">
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" role="img" tabindex="0" aria-label="${escapeXml(options.ariaLabel ?? "Regime timeline")}">
     <title>${escapeXml(options.title ?? "Regime timeline")}</title>
+    ${patternDefs}
     <text x="0" y="14" ${TEXT_STYLE} fill="var(--ink)">${escapeXml(currentLabel)}</text>
     ${segmentsSvg}
     ${legendSvg}

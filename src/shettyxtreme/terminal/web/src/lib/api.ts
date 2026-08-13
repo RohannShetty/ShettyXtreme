@@ -570,8 +570,10 @@ export type RiskHeatmapData = {
   enriched_count: number;
 };
 
-export async function getGreeksHistory(days = 7): Promise<GreeksHistoryPoint[]> {
-  return get<GreeksHistoryPoint[]>(`/api/execution/greeks-history?days=${days}`);
+export async function getGreeksHistory(days = 7, regime?: string): Promise<GreeksHistoryPoint[]> {
+  const params = new URLSearchParams({ days: String(days) });
+  if (regime) params.set("regime", regime);
+  return get<GreeksHistoryPoint[]>(`/api/execution/greeks-history?${params}`);
 }
 
 export async function getRiskHeatmap(): Promise<RiskHeatmapData> {
@@ -620,12 +622,19 @@ export type ProposeFromHintRequest = {
   quantity?: number | null;
 };
 
+export type RegimeHintStats = {
+  win_rate: number | null;
+  avg_pnl: number | null;
+  sample_size: number;
+};
+
 export type HintStatsResponse = {
   win_rate: number | null;
   avg_pnl: number | null;
   sample_size: number;
   total_hints: number;
   days: number;
+  regime_breakdown: Record<string, RegimeHintStats>;
 };
 
 export async function getStrategyHint(): Promise<StrategyHint> {

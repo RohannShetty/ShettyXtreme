@@ -4,8 +4,10 @@
     getStrategyHint,
     proposeFromHint,
     getHintStats,
+    getRegimeHistory,
     type StrategyHint,
     type HintStatsResponse,
+    type RegimeHistoryPoint,
   } from "$lib/api";
   import { Button } from "$lib/components/ui/button";
   import {
@@ -15,6 +17,7 @@
     CardTitle,
   } from "$lib/components/ui/card";
   import { Progress } from "$lib/components/ui/progress";
+  import { Skeleton } from "$lib/components/ui/skeleton";
   import { Badge, type BadgeVariant } from "$lib/components/ui/badge";
   import { RotateCw, ArrowRight, Loader2 } from "@lucide/svelte";
   import { toast } from "svelte-sonner";
@@ -26,8 +29,12 @@
 
   let hint = $state<StrategyHint | null>(null);
   let stats = $state<HintStatsResponse | null>(null);
+  let regimeHistory = $state<RegimeHistoryPoint[]>([]);
   let hintError = $state("");
   let statsError = $state("");
+  let regimeError = $state("");
+  let hintLoading = $state(true);
+  let statsLoading = $state(true);
   let fetchedAt = $state<number | null>(null);
   let now = $state(Date.now());
   let expanded = $state(false);
@@ -38,6 +45,7 @@
   onMount(() => {
     loadHint();
     loadStats();
+    loadRegimeHistory();
     timer = setInterval(() => (now = Date.now()), 30_000);
   });
 
@@ -46,6 +54,7 @@
   });
 
   async function loadHint(): Promise<void> {
+    hintLoading = true;
     hintError = "";
     try {
       hint = await getStrategyHint();
@@ -53,15 +62,29 @@
       expanded = false;
     } catch (err) {
       hintError = err instanceof Error ? err.message : String(err);
+    } finally {
+      hintLoading = false;
     }
   }
 
   async function loadStats(): Promise<void> {
+    statsLoading = true;
     statsError = "";
     try {
       stats = await getHintStats(30);
     } catch (err) {
       statsError = err instanceof Error ? err.message : String(err);
+    } finally {
+      statsLoading = false;
+    }
+  }
+
+  async function loadRegimeHistory(): Promise<void> {
+    regimeError = "";
+    try {
+      regimeHistory = await getRegimeHistory(30);
+    } catch (err) {
+      regimeError = err instanceof Error ? err.message : String(err);
     }
   }
 
@@ -128,6 +151,24 @@
 
   let actionable = $derived(dir !== "neutral" && hint?.strike != null && hint?.premium != null);
 
+  let currentRegime = $derived(
+    regimeHistory.length > 0 ? regimeHistory[regimeHistory.length - 1].regime : null,
+  );
+  let regimeAccuracy = $derived.by(() => {
+    if (!stats || !currentRegime) return null;
+    const breakdown = stats.regime_breakdown[currentRegime];
+    if (!breakdown || breakdown.sample_size === 0) return null;
+    return {
+      regime: currentRegime,
+      winRate: breakdown.win_rate,
+      sampleSize: breakdown.sample_size,
+    };
+  });
+
+  function fmtRegimeLabel(regime: string): string {
+    return regime.replace(/_/g, " ").toUpperCase();
+  }
+
   function computeSltp(
     h: StrategyHint | null,
   ): { sl: number; entry: number; tp: number } | null {
@@ -167,10 +208,10 @@
   }
 </script>
 
-<section class="panel hints">
+<section class="panel hints" aria-label="Strategy hint panel">
   <header class="panel-head">
     <div class="head-group">
-      <h2>Strategy Hint</h2>
+      <h2 id="hints-title">Strategy Hint</h2>
       {#if stale}
         <span class="stale-chip" role="status">STALE</span>
       {/if}
@@ -195,7 +236,22 @@
     <CardContent class="pt-0">
       {#if statsError}
         <p class="text-[11px] text-danger">{statsError}</p>
-      {:else if stats}
+      {:else if statsLoading || !stats}
+        <div class="stats-grid" aria-busy="true" aria-label="Loading hint accuracy stats">
+          <div class="stat">
+            <span class="stat-label">Win Rate</span>
+            <Skeleton class="h-5 w-16" />
+          </div>
+          <div class="stat">
+            <span class="stat-label">Avg P&L</span>
+            <Skeleton class="h-5 w-20" />
+          </div>
+          <div class="stat">
+            <span class="stat-label">Sample</span>
+            <Skeleton class="h-5 w-10" />
+          </div>
+        </div>
+      {:else}
         {@const muted = stats.sample_size < 10}
         <div class="stats-grid">
           <div class="stat">
@@ -227,12 +283,28 @@
           <p class="mt-2 text-[10px] text-muted-foreground">
             Not enough data ({stats.sample_size} hint{stats.sample_size === 1 ? "" : "s"}).
           </p>
+        {:else if regimeError}
+          <p class="mt-2 text-[10px] text-muted-foreground">{regimeError}</p>
+        {:else if currentRegime}
+          {@const regimeLabel = fmtRegimeLabel(currentRegime)}
+          {#if regimeAccuracy && regimeAccuracy.sampleSize >= 5}
+            <p class="mt-2 text-[10px] text-body">
+              Hints are
+              <span class="font-mono font-semibold text-ink">
+                {fmtPct(regimeAccuracy.winRate)}%
+              </span>
+              accurate in
+              <span class="font-mono uppercase">{regimeLabel}</span>
+              markets ({regimeAccuracy.sampleSize} resolved).
+            </p>
+          {:else}
+            <p class="mt-2 text-[10px] text-muted-foreground">
+              Current regime:
+              <span class="font-mono uppercase">{regimeLabel}</span>
+              — not enough resolved hints in this regime yet.
+            </p>
+          {/if}
         {/if}
-      {:else}
-        <div class="flex items-center gap-2 text-[11px] text-muted-foreground">
-          <Loader2 class="size-3 animate-spin" />
-          Loading stats…
-        </div>
       {/if}
     </CardContent>
   </Card>
@@ -247,11 +319,15 @@
       role="button"
       aria-expanded={expanded}
       aria-controls="hint-details"
+      aria-label="Strategy hint card. Press Enter to expand, Escape to collapse."
       onclick={() => (expanded = !expanded)}
       onkeydown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           expanded = !expanded;
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          expanded = false;
         }
       }}
     >
@@ -284,7 +360,11 @@
           </div>
 
           {#if sltp}
-            <div class="sltp-track">
+            <div
+              class="sltp-track"
+              role="img"
+              aria-label="Stop loss, entry and target levels for {strategyName}"
+            >
               <div class="sltp-row">
                 <span class="sltp-label">
                   <span class="sltp-dot bg-sl-level"></span>
@@ -331,8 +411,32 @@
         <p class="expand-hint">Press Enter to expand details</p>
       {/if}
     </div>
+  {:else if hintLoading}
+    <div class="hint-card" aria-busy="true" aria-label="Loading strategy hint">
+      <div class="summary">
+        <div class="summary-left">
+          <Skeleton class="h-5 w-16" />
+          <Skeleton class="h-4 w-28" />
+        </div>
+        <div class="summary-right">
+          <Skeleton class="h-5 w-12" />
+        </div>
+      </div>
+      <div class="details-skeleton">
+        <div class="ev-line">
+          {#each ["STRIKE", "PREM", "EV"] as label (label)}
+            <span class="ev-cell">
+              <span class="ev-label">{label}</span>
+              <Skeleton class="h-4 w-16" />
+            </span>
+          {/each}
+        </div>
+        <Skeleton class="h-2 w-full mt-2" />
+        <Skeleton class="h-8 w-full mt-2" />
+      </div>
+    </div>
   {:else}
-    <p class="empty">Loading…</p>
+    <p class="empty">No hint available.</p>
   {/if}
 </section>
 
@@ -557,5 +661,42 @@
     font-size: 11px;
     padding: 8px 10px;
     margin: 0;
+  }
+  .details-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+    border-top: 1px solid var(--hairline);
+    padding-top: 10px;
+  }
+  /* Responsive: panels work in narrow right dock. */
+  @media (max-width: 460px) {
+    .hints {
+      min-width: 0;
+    }
+    .stats-grid {
+      grid-template-columns: 1fr;
+    }
+    .ev-line {
+      gap: 8px;
+    }
+    .ev-cell {
+      min-width: 72px;
+    }
+    .sltp-row {
+      flex-direction: column;
+      gap: 2px;
+    }
+  }
+  /* Coarse pointers: floor tap targets at 44px. */
+  @media (pointer: coarse) {
+    .hint-card,
+    :global(.hints button) {
+      min-height: 44px;
+    }
+    .hint-card {
+      padding: 12px;
+    }
   }
 </style>

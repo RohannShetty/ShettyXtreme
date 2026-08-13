@@ -684,10 +684,18 @@ async def propose_from_hint(
 
     # Best-effort hint tracking (3A.2): record the hint so a closing
     # position can later resolve its outcome. Never fails the request.
+    # Phase 3C.1: capture the current regime for regime-aware accuracy stats.
     store = getattr(request.app.state, "hint_store", None)
     if store is not None:
         try:
-            hint["hint_id"] = store.record_hint(payload.model_dump())
+            proj = getattr(request.app.state, "intelligence_projection", None)
+            regime = None
+            if proj is not None:
+                try:
+                    regime = proj.get_regime().get("regime")
+                except Exception:
+                    pass
+            hint["hint_id"] = store.record_hint(payload.model_dump(), regime=regime)
         except Exception:
             logger.debug(
                 "hint record failed for %s/%s",

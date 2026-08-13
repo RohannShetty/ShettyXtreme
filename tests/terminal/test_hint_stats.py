@@ -51,7 +51,7 @@ class TestRecordHint:
         with sqlite3.connect(db_path) as conn:
             cols = {r[1] for r in conn.execute("PRAGMA table_info(hint_outcomes)")}
         assert {
-            "hint_id", "symbol", "direction", "strike", "suggested_at",
+            "hint_id", "symbol", "direction", "strike", "regime", "suggested_at",
             "outcome", "actual_pnl", "recorded_at",
         } <= cols
 
@@ -101,6 +101,7 @@ class TestGetStats:
         assert stats == {
             "win_rate": None, "avg_pnl": None,
             "sample_size": 0, "total_hints": 0, "days": 30,
+            "regime_breakdown": {},
         }
 
     def test_win_rate_and_avg_pnl(self, store) -> None:
@@ -139,6 +140,22 @@ class TestGetStats:
         assert stats_wide["total_hints"] == 1
         assert stats_wide["sample_size"] == 1
 
+    def test_regime_breakdown(self, store, tmp_path) -> None:
+        """Resolved hints are bucketed by regime for context-aware accuracy."""
+        trending_id = store.record_hint(_hint(), regime="trending_up")
+        store.record_outcome(trending_id, "win", 200.0)
+        range_id = store.record_hint(_hint(strike=25100.0), regime="range_bound")
+        store.record_outcome(range_id, "loss", -100.0)
+        stats = store.get_stats()
+        assert stats["sample_size"] == 2
+        breakdown = stats["regime_breakdown"]
+        assert "trending_up" in breakdown
+        assert "range_bound" in breakdown
+        assert breakdown["trending_up"]["win_rate"] == 1.0
+        assert breakdown["trending_up"]["sample_size"] == 1
+        assert breakdown["range_bound"]["win_rate"] == 0.0
+        assert breakdown["range_bound"]["sample_size"] == 1
+
 
 class TestHintStatsEndpoint:
     @pytest.fixture()
@@ -152,10 +169,14 @@ class TestHintStatsEndpoint:
         resp = client.get("/api/intelligence/hint-stats")
         assert resp.status_code == 200
         data = resp.json()
-        assert set(data) == {"win_rate", "avg_pnl", "sample_size", "total_hints", "days"}
+        assert set(data) == {
+            "win_rate", "avg_pnl", "sample_size", "total_hints", "days",
+            "regime_breakdown",
+        }
         assert data["sample_size"] == 0
         assert data["total_hints"] == 0
         assert data["days"] == 30
+        assert data["regime_breakdown"] == {}
 
     def test_days_query_param(self, client) -> None:
         resp = client.get("/api/intelligence/hint-stats?days=7")
