@@ -22,6 +22,7 @@ from shettyxtreme.auth.credential_store import CredentialStore
 from shettyxtreme.auth.fyers_oauth import FyersOAuthHelper
 from shettyxtreme.auth.health_monitor import TokenHealthMonitor
 from shettyxtreme.auth.validator import CredentialValidator
+from shettyxtreme.core.config.config_manager import ConfigManager
 from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
 from shettyxtreme.core.settings import init_settings_store
 from shettyxtreme.execution.execution_engine import ExecutionEngine
@@ -63,12 +64,16 @@ from shettyxtreme.terminal.api import ws_bridge
 from shettyxtreme.terminal.api.analytics_router import router as analytics_router
 from shettyxtreme.terminal.api.knowledge_router import init_knowledge
 from shettyxtreme.terminal.api.knowledge_router import router as knowledge_router
+from shettyxtreme.terminal.api.v2 import router as v2_router
 from shettyxtreme.terminal.api.scanner_data import GapDetector, LogCollector, ClusterDetector
 from shettyxtreme.terminal.api.scanner_router import init_scanner_data
 from shettyxtreme.terminal.api.scanner_router import router as scanner_router
+from shettyxtreme.intelligence.scanners import instantiate_scanners, SCANNER_REGISTRY
+from shettyxtreme.intelligence.scanners.base_scanner import BaseScanner
 from shettyxtreme.terminal.api.settings_router import init_settings
 from shettyxtreme.terminal.api.settings_router import router as settings_router
 from shettyxtreme.terminal.api.watchlist_router import router as watchlist_router
+from shettyxtreme.terminal.api.symbols_router import router as symbols_router
 from shettyxtreme.terminal.api.ws_manager import WebSocketManager
 from shettyxtreme.terminal.projections import (
     AlertProjection,
@@ -76,6 +81,7 @@ from shettyxtreme.terminal.projections import (
     IntelligenceProjection,
     PositionProjection,
     RiskProjection,
+    ScannerProjection,
     WatchlistProjection,
 )
 
@@ -110,12 +116,19 @@ def _scheduler_env_interval() -> float:
     return interval if interval > 0 else 60.0
 
 
+_MARGIN_UTILIZED_KEYS = ("utilized", "margin_used", "Margin Used", "usedMargin")
+_MARGIN_TOTAL_KEYS = ("total", "totalMargin", "Total")
+
+
 async def _margin_poll_loop(app: FastAPI) -> None:
-    """Poll trading_adapter.get_margin() and publish real available margin.
+    """Poll trading_adapter.get_margin() and publish real margin data.
 
     Margin starts UNKNOWN (None). We only publish a number once the broker
     reports one; on failure we publish nothing, so the risk projection keeps
     its previous honest value instead of a fabricated default.
+
+    Now also publishes margin_used (utilized) and margin_total (total)
+    to repair the existing UI bar and support the risk heat map.
     """
     while True:
         try:
@@ -123,22 +136,53 @@ async def _margin_poll_loop(app: FastAPI) -> None:
             if adapter is not None and hasattr(adapter, "get_margin"):
                 raw = await adapter.get_margin()
                 payload = raw.get("data", raw) if isinstance(raw, dict) else {}
+                if not isinstance(payload, dict):
+                    payload = {}
+                # Extract available margin
                 available: float | None = None
-                if isinstance(payload, dict):
-                    for key in _MARGIN_AVAILABLE_KEYS:
-                        value = payload.get(key)
-                        if value is not None:
-                            try:
-                                available = float(value)
-                                break
-                            except (TypeError, ValueError):
-                                continue
-                if available is not None and _event_bus is not None:
-                    await _event_bus.publish(Event(
-                        topic=Topic.RISK_DECISION,
-                        data={"margin_available": available},
-                        source="margin_poller",
-                    ))
+                for key in _MARGIN_AVAILABLE_KEYS:
+                    value = payload.get(key)
+                    if value is not None:
+                        try:
+                            available = float(value)
+                            break
+                        except (TypeError, ValueError):
+                            continue
+                # Extract utilized margin (margin_used)
+                utilized: float | None = None
+                for key in _MARGIN_UTILIZED_KEYS:
+                    value = payload.get(key)
+                    if value is not None:
+                        try:
+                            utilized = float(value)
+                            break
+                        except (TypeError, ValueError):
+                            continue
+                # Extract total margin
+                total: float | None = None
+                for key in _MARGIN_TOTAL_KEYS:
+                    value = payload.get(key)
+                    if value is not None:
+                        try:
+                            total = float(value)
+                            break
+                        except (TypeError, ValueError):
+                            continue
+
+                if _event_bus is not None:
+                    decision: dict[str, object] = {}
+                    if available is not None:
+                        decision["margin_available"] = available
+                    if utilized is not None:
+                        decision["margin_used"] = utilized
+                    if total is not None:
+                        decision["margin_total"] = total
+                    if decision:
+                        await _event_bus.publish(Event(
+                            topic=Topic.RISK_DECISION,
+                            data=decision,
+                            source="margin_poller",
+                        ))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -200,6 +244,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     cluster_det.subscribe(_event_bus)
     init_scanner_data(gap_det, log_col, cluster_det)
 
+    # ── Scanner projection (11-type opportunity findings) ───────────────────
+    scanner_proj = ScannerProjection()
+    scanner_proj.subscribe(_event_bus)
+    app.state.scanner_projection = scanner_proj
+
     # ── Regime & Risk EventBus bridges ──────────────────────────────────────
     regime_bridge = RegimeBusBridge(_event_bus)
     risk_bridge = RiskBusBridge(_event_bus)
@@ -241,6 +290,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.alert_projection = alert_proj
     app.state.intelligence_projection = intel_proj
     app.state.health_projection = health_proj
+
+    # ── Options analytics calculators (IV rank, OI tracker) ────────────────
+    from shettyxtreme.options.iv_rank import IVRankCalculator
+    from shettyxtreme.options.oi_tracker import OITracker
+
+    iv_rank_calc = IVRankCalculator()
+    oi_tracker = OITracker()
+    app.state.iv_rank_calculator = iv_rank_calc
+    app.state.oi_tracker = oi_tracker
+
+    # ── 11-type opportunity scanners ───────────────────────────────────────
+    _scanners: list[BaseScanner] = []
+    _scanner_poller_task: asyncio.Task | None = None
+    try:
+        _scanners = instantiate_scanners(
+            event_bus=_event_bus,
+            iv_rank_calculator=iv_rank_calc,
+            oi_tracker=oi_tracker,
+        )
+        for scanner in _scanners:
+            await scanner.start()
+        app.state.scanners = _scanners
+        logger.info("Opportunity scanners started: %d scanners", len(_scanners))
+    except Exception:
+        logger.exception("Scanner startup failed — scanners degraded")
+        app.state.scanners = []
 
     # ── Research: data source, WS broadcast, scheduler (3C) ────────────────
     set_data_source(ProjectionDataSource(app.state))
@@ -339,7 +414,41 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ── Execution wiring (P4b): proposal queue + mode-routed placement ───────
     # OBSERVER = proposals only; PAPER → PaperTradingEngine; LIVE → broker
     # adapter (Fyers; typed gate + session-validity gate, D10).
-    paper_engine = PaperTradingEngine(event_bus=_event_bus)
+    cfg = ConfigManager("configs/default.yaml").config
+    # P3-4.1: Build realism models from config
+    _pt_cfg = getattr(cfg, "paper_trading", None) or {}
+    if isinstance(_pt_cfg, dict):
+        _slippage_model = _pt_cfg.get("slippage_model", "none")
+        _fees_model = _pt_cfg.get("fees_model", "none")
+        _fill_prob = _pt_cfg.get("fill_probability", False)
+        _margin_check = _pt_cfg.get("margin_check", False)
+        _slip_bps_mkt = _pt_cfg.get("slippage_bps_market", 5)
+        _slip_bps_lim = _pt_cfg.get("slippage_bps_limit", 2)
+    else:
+        _slippage_model = getattr(_pt_cfg, "slippage_model", "none")
+        _fees_model = getattr(_pt_cfg, "fees_model", "none")
+        _fill_prob = getattr(_pt_cfg, "fill_probability", False)
+        _margin_check = getattr(_pt_cfg, "margin_check", False)
+        _slip_bps_mkt = getattr(_pt_cfg, "slippage_bps_market", 5)
+        _slip_bps_lim = getattr(_pt_cfg, "slippage_bps_limit", 2)
+
+    from shettyxtreme.execution.paper_realism import (
+        FeesModel, FillProbabilityModel, MarginPolicy, SlippageModel,
+    )
+    _slip_m = SlippageModel(bps_market=_slip_bps_mkt, bps_limit=_slip_bps_lim) if _slippage_model == "layered" else None
+    _fees_m = FeesModel() if _fees_model == "india" else None
+    _margin_m = MarginPolicy() if _margin_check else None
+    _fill_prob_m = FillProbabilityModel() if _fill_prob else None
+
+    paper_engine = PaperTradingEngine(
+        event_bus=_event_bus,
+        initial_capital=cfg.paper_trading_margin or 1_000_000.0,
+        slippage_model=_slip_m,
+        fees_model=_fees_m,
+        margin_policy=_margin_m,
+        fill_probability_model=_fill_prob_m,
+        enable_margin_check=bool(_margin_check),
+    )
     app.state.paper_engine = paper_engine
 
     def _live_adapter_provider():
@@ -377,12 +486,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         risk = risk_proj.get() if risk_proj is not None else {}
         # Unknown margin (None) → 0.0: the risk engine then rejects proposals
         # it cannot verify rather than admitting them on phantom capital.
+        # PAPER-mode fallback: use paper engine's portfolio for margin source.
         margin_available = risk.get("margin_available")
+        margin_used = risk.get("margin_used", 0.0)
+        equity: float | None = None
+        if margin_available is None and get_mode_value().upper() == "PAPER":
+            paper = getattr(app.state, "paper_engine", None)
+            if paper:
+                paper_port = paper.get_portfolio()
+                margin_available = paper_port.available_margin
+                margin_used = getattr(paper_port, "total_margin_used", 0.0)
+                equity = margin_available + margin_used
+        elif margin_available is not None:
+            # LIVE mode: compute equity from margin data when both available
+            total = risk.get("margin_total")
+            if total is not None:
+                equity = float(total)
+            elif margin_used > 0:
+                equity = float(margin_used) + float(margin_available)
         return Portfolio(
             positions=positions,
             daily_pnl=risk.get("daily_pnl", 0.0),
-            total_margin_used=risk.get("margin_used", 0.0),
+            total_margin_used=margin_used if margin_used is not None else 0.0,
             available_margin=margin_available if margin_available is not None else 0.0,
+            equity=equity,
         )
 
     execution_engine = ExecutionEngine(
@@ -390,16 +517,50 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         risk_engine=RiskEngine(),
         portfolio_provider=_portfolio_provider,
         db_path="data/proposals.db",
+        event_bus=_event_bus,
     )
     app.state.execution_engine = execution_engine
+
+    # P3-4.3: wire the chain hint builder so proposals carry full leg detail
+    # (strike, expiry, CE/PE, lot size, premium, SL, target, rationale, EV).
+    # The chain/spot providers pull from app.state.options_chain (populated by
+    # prime_options_chain after login) and the watchlist LTP cache.
+    from shettyxtreme.execution.signal_bridge import make_chain_hint_builder
+
+    def _chain_provider(symbol: str) -> list[dict[str, object]]:
+        """Return cached option chain rows for *symbol* (sync callable)."""
+        cached = getattr(app.state, "options_chain", {})
+        entry = cached.get(symbol, {})
+        contracts = entry.get("contracts", [])
+        return contracts if isinstance(contracts, list) else []
+
+    def _spot_provider(symbol: str) -> float | None:
+        """Return the last-known spot price from the watchlist cache."""
+        wl = getattr(app.state, "watchlist_projection", None)
+        if wl is None:
+            return None
+        item = wl.get_item(symbol)
+        if item is None:
+            return None
+        ltp = item.get("ltp", 0.0)
+        return float(ltp) if ltp and ltp > 0 else None
+
+    instrument_master = getattr(app.state, "instrument_master", None)
+    chain_hint_builder = make_chain_hint_builder(
+        instrument_master=instrument_master,
+        chain_provider=_chain_provider,
+        spot_provider=_spot_provider,
+    )
 
     execution_bridge = ExecutionSignalBridge(
         engine=execution_engine,
         event_bus=_event_bus,
+        hint_builder=chain_hint_builder,
+        instrument_master=instrument_master,
     )
     await execution_bridge.start()
     app.state.execution_bridge = execution_bridge
-    logger.info("Execution layer wired: proposals + mode-routed placement")
+    logger.info("Execution layer wired: proposals + chain hint builder (P3-4.3)")
 
     # ── Seed watchlist from YAML FIRST (before pipeline needs it) ───────────
     watchlist_path = Path(__file__).resolve().parent.parent.parent.parent.parent / "configs" / "default_watchlist.yaml"
@@ -420,6 +581,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     else:
         logger.warning("Default watchlist not found at %s", watchlist_path)
+
+    # ── Merge persisted watchlist (user-added symbols survive restarts) ─────
+    from shettyxtreme.terminal.api.watchlist_router import _load_persisted_watchlist
+    persisted = _load_persisted_watchlist()
+    for sym, entry in persisted.items():
+        if sym not in watchlist_proj.get():
+            exchange = entry.get("exchange", "NSE")
+            security_id = entry.get("security_id", sym)
+            expiry = entry.get("expiry")
+            lot_size = entry.get("lot_size")
+            watchlist_proj.add(sym, exchange, security_id=security_id, expiry=expiry, lot_size=lot_size)
+            symbol_map[security_id or sym] = sym
+    if persisted:
+        logger.info("Merged %d persisted watchlist entries", len(persisted))
 
     # ── Initialize Fyers adapters + market-data bridge (lifespan & post-login) ──
     wire_terminal_init(lambda: init_terminal_adapters(app, store, symbol_map))
@@ -446,6 +621,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
     logger.info("ShettyXtreme Terminal shutting down...")
     try:
+        # ── Stop opportunity scanners ───────────────────────────────────────
+        scanners = getattr(app.state, "scanners", [])
+        for scanner in scanners:
+            try:
+                await scanner.stop()
+            except Exception:
+                logger.exception("Scanner stop failed: %s", type(scanner).__name__)
         if _intelligence_pipeline is not None:
             _intelligence_pipeline.unsubscribe()
         try:
@@ -533,6 +715,7 @@ async def settings_redirect():
 
 # ── Include routers ────────────────────────────────────────────────────────
 app.include_router(watchlist_router)
+app.include_router(symbols_router)
 app.include_router(intelligence_router)
 app.include_router(execution_router)
 app.include_router(scanner_router)
@@ -545,6 +728,7 @@ app.include_router(research_router)
 app.include_router(knowledge_router)
 app.include_router(analytics_router)
 app.include_router(market_router)
+app.include_router(v2_router)
 
 
 # ── Root: redirect to the Svelte SPA ────────────────────────────────────────

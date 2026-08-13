@@ -1,6 +1,7 @@
 /** Typed fetch helpers for the ShettyXtreme Terminal API. */
 
 import type { Theme } from "./theme";
+import type { ColorConvention } from "./color-convention";
 
 type JsonError = { detail?: unknown; message?: string };
 
@@ -220,6 +221,26 @@ export type KnowledgeSyncResponse = {
   error: string | null;
 };
 
+// --- Symbol Search (P1-2.3) ---
+
+export type SymbolSearchHit = {
+  internal_symbol: string;
+  fyers_symbol: string;
+  exchange: string;
+  instrument_type: string;
+  expiry: string | null;
+  strike: number | null;
+  option_type: string | null;
+  lot_size: number | null;
+  tick_size: number | null;
+};
+
+export type SymbolSearchResponse = {
+  query: string;
+  canonical: string;
+  hits: SymbolSearchHit[];
+};
+
 // --- Analytics (Phase 4) ---
 
 export type CalibrationPoint = {
@@ -326,6 +347,45 @@ export type Proposal = {
   status: string; // PENDING / APPROVED / REJECTED / EXPIRED
   reason: string;
   timestamp: string | null;
+  strike: number | null;
+  expiry: string | null;
+  option_type: string | null; // CE / PE
+  lot_size: number | null;
+  lots: number | null;
+  entry_premium: number | null;
+  stop_loss: number | null;
+  target: number | null;
+  rationale: string | null;
+  // Enriched fields (P3-4.3): strategy context from chain hint builder.
+  confidence: number | null;
+  ev_after_cost: number | null;
+  strategy: string | null;
+  underlying: string | null;
+};
+
+// P3-4.3: order history type for the Orders tab.
+export type OrderRecord = {
+  order_id: string;
+  symbol: string;
+  exchange: string;
+  side: string;
+  order_type: string;
+  quantity: number;
+  price: number;
+  status: string; // FILLED / REJECTED / CANCELLED / OPEN / PARTIALLY_FILLED
+  filled_quantity: number;
+  average_price: number;
+  tag: string | null;
+  created_at: string | null;
+  // Option identity + trade context (P3-4.3).
+  strike: number | null;
+  expiry: string | null;
+  option_type: string | null;
+  lot_size: number | null;
+  stop_loss: number | null;
+  target: number | null;
+  rationale: string | null;
+  confidence: number | null;
 };
 
 export type ExecutionMode = { mode: string; csrf_token: string | null };
@@ -369,6 +429,12 @@ export async function executionMode(): Promise<ExecutionMode> {
 
 export async function riskSummary(): Promise<RiskSummary> {
   return get<RiskSummary>("/api/execution/risk");
+}
+
+// P3-4.3: order history from the paper trading engine.
+export async function getOrders(status?: string): Promise<OrderRecord[]> {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  return get<OrderRecord[]>(`/api/execution/orders${qs}`);
 }
 
 // --- Market: intraday bars (T2) ---
@@ -416,6 +482,7 @@ export type SettingsResponse = {
   loss_limit: number;
   max_positions: number;
   theme: Theme;
+  color_convention: ColorConvention;
   scheduler: SettingsScheduler;
 };
 
@@ -423,6 +490,7 @@ export type SettingsUpdate = {
   loss_limit?: number;
   max_positions?: number;
   theme?: Theme;
+  color_convention?: ColorConvention;
 };
 
 export type SchedulerUpdate = {
@@ -433,6 +501,8 @@ export type SchedulerUpdate = {
 };
 
 export type ThemeResponse = { theme: Theme };
+
+export type ColorConventionResponse = { color_convention: ColorConvention };
 
 export async function getSettings(): Promise<SettingsResponse> {
   return get<SettingsResponse>("/api/settings");
@@ -446,10 +516,93 @@ export async function setTheme(theme: Theme): Promise<ThemeResponse> {
   return putBody<ThemeResponse>("/api/settings/theme", { theme });
 }
 
+export async function setColorConvention(convention: ColorConvention): Promise<ColorConventionResponse> {
+  return putBody<ColorConventionResponse>("/api/settings/color-convention", { color_convention: convention });
+}
+
 export async function getScheduler(): Promise<SettingsScheduler> {
   return get<SettingsScheduler>("/api/settings/scheduler");
 }
 
 export async function updateScheduler(update: SchedulerUpdate): Promise<SettingsScheduler> {
   return putBody<SettingsScheduler>("/api/settings/scheduler", update);
+}
+
+// ── V2 API types and functions ────────────────────────────────────────────
+// These provide access to the new v2 endpoints with enriched metadata.
+// v1 functions remain unchanged for backward compatibility.
+
+export type APIVersionInfo = {
+  version: string;
+  release_date: string;
+  deprecated: string[];
+  migration_guide: string;
+};
+
+export type WatchlistItemV2 = {
+  symbol: string;
+  exchange: string;
+  ltp: number;
+  change_pct: number;
+  volume: number;
+  timestamp: string | null;
+  security_id: string | null;
+  expiry: string | null;
+  lot_size: number | null;
+  // V2 additions
+  instrument_type: string | null;
+  bid: number | null;
+  ask: number | null;
+  oi: number | null;
+  is_tradable: boolean;
+};
+
+export type OptionsChainItemV2 = {
+  strike: number;
+  option_type: "CE" | "PE";
+  ltp: number;
+  iv: number;
+  delta: number;
+  gamma: number;
+  theta: number;
+  vega: number;
+  oi: number;
+  volume: number;
+  bid: number;
+  ask: number;
+  // V2 additions
+  spot_distance_pct: number | null;
+  open_interest_change: number | null;
+};
+
+export type OptionsChainResponseV2 = {
+  underlying: string;
+  expiry: string;
+  timestamp: string | null;
+  spot: number | null;
+  contracts: OptionsChainItemV2[];
+  // V2 additions: aggregate analytics
+  max_pain: number | null;
+  pcr: number | null;
+  iv_rank_percent: number | null;
+};
+
+/** Get API version info and migration metadata. */
+export async function getAPIVersion(): Promise<APIVersionInfo> {
+  return get<APIVersionInfo>("/api/v2/version");
+}
+
+/** Get watchlist with v2 enriched metadata. */
+export async function getWatchlistV2(): Promise<WatchlistItemV2[]> {
+  return get<WatchlistItemV2[]>("/api/v2/watchlist");
+}
+
+/** Get options chain with v2 aggregate analytics. */
+export async function getOptionsChainV2(
+  symbol: string = "NIFTY",
+  expiry?: string,
+): Promise<OptionsChainResponseV2> {
+  const params = new URLSearchParams({ symbol });
+  if (expiry) params.set("expiry", expiry);
+  return get<OptionsChainResponseV2>(`/api/v2/options/chain?${params}`);
 }
