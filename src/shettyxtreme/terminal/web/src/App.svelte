@@ -17,6 +17,11 @@
   import { connect, onMessage, stop } from "./lib/ws";
 
   let drawerOpen = $state(false);
+  // Task 2.3: bumped each time the header "logs drawer" button OPENS the dock,
+  // so RightDockTabs can land on the Logs tab. Ctrl+R / Esc / the command
+  // palette's sx:open-dock event set `drawerOpen` directly and must NOT touch
+  // the right-dock tab — only the logs button means "show me the logs".
+  let dockLogsTick = $state(0);
 
   function onKeydown(event: KeyboardEvent): void {
     if (
@@ -72,6 +77,13 @@
   function onOpenDock(): void {
     drawerOpen = true;
   }
+
+  // Header "logs drawer" button → toggle the dock; when opening, bump the tick
+  // so the right dock lands on the Logs tab (task 2.3).
+  function onDrawerToggle(e: { open: boolean }): void {
+    drawerOpen = e.open;
+    if (e.open) dockLogsTick++;
+  }
 </script>
 
 <Toaster />
@@ -82,7 +94,7 @@
 
 {#if route.value === "/"}
   <div class="app-grid">
-    <Header bind:drawerOpen={drawerOpen} onDrawer={(e) => (drawerOpen = e.open)} />
+    <Header bind:drawerOpen={drawerOpen} onDrawer={onDrawerToggle} />
     <!-- Ticker strip row — regime / IV / PCR / max pain chrome directly below
          the header (wave-2 strip report §3). Self-contained: fetches its own
          data and polls on a 30s interval. Wrapped so the grid-row placement is
@@ -98,7 +110,7 @@
         <CenterTabs />
       {/snippet}
       {#snippet rightDock()}
-        <RightDockTabs bind:open={drawerOpen} />
+        <RightDockTabs bind:open={drawerOpen} dockLogsTick={dockLogsTick} />
       {/snippet}
     </Workspace>
     <div class="positions-row">

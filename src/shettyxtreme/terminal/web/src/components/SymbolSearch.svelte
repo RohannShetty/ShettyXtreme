@@ -1,5 +1,6 @@
 <script lang="ts">
   import { get } from "../lib/api";
+  import { Popover, PopoverContent } from "$lib/components/ui/popover";
 
   type SymbolHit = {
     internal_symbol: string;
@@ -42,6 +43,8 @@
   let debounceTimer: number | undefined;
   let wrapEl: HTMLDivElement | undefined;
   let listEl: HTMLUListElement | undefined;
+  // Unique per instance — ChainGrid and Watchlist both render this component.
+  let listboxId = $state(`symbol-search-listbox-${Math.random().toString(36).slice(2, 9)}`);
 
   async function search(): Promise<void> {
     const q = value.trim();
@@ -116,13 +119,6 @@
     onSelect?.(hit);
   }
 
-  function onBlur(): void {
-    // Delay close so click events on the dropdown can fire first
-    setTimeout(() => {
-      open = false;
-    }, 200);
-  }
-
   function formatMeta(hit: SymbolHit): string {
     const parts = [hit.exchange, hit.instrument_type];
     if (hit.lot_size) parts.push(`lot:${hit.lot_size}`);
@@ -131,35 +127,54 @@
 </script>
 
 <div class="symbol-search {className}" bind:this={wrapEl}>
-  <input
-    type="text"
-    class="search-input mono"
-    {placeholder}
-    bind:value
-    oninput={onInputHandler}
-    onkeydown={onKeydown}
-    onfocus={() => { if (hits.length > 0) open = true; }}
-    onblur={onBlur}
-    autocomplete="off"
-    spellcheck="false"
-  />
-  {#if open && hits.length > 0}
-    <ul class="dropdown" bind:this={listEl}>
-      {#each hits as hit, i (hit.fyers_symbol)}
-        <li
-          class="hit"
-          class:active={i === activeIndex}
-          onmousedown={(e) => { e.preventDefault(); selectHit(hit); }}
-          onmouseenter={() => (activeIndex = i)}
-          role="option"
-          aria-selected={i === activeIndex}
-        >
-          <span class="sym">{hit.internal_symbol}</span>
-          <span class="meta">{formatMeta(hit)}</span>
-        </li>
-      {/each}
-    </ul>
-  {/if}
+  <Popover open={open} onOpenChange={(o) => (open = o)}>
+    <!-- No PopoverTrigger: open is driven by typing/focus; the popover is
+         anchored to the wrapper via customAnchor. trapFocus=false +
+         autofocus preventDefault keep keyboard focus in the input so
+         ArrowDown/Up/Enter typeahead navigation keeps working. -->
+    <input
+      type="text"
+      class="search-input mono"
+      {placeholder}
+      bind:value
+      oninput={onInputHandler}
+      onkeydown={onKeydown}
+      onfocus={() => { if (hits.length > 0) open = true; }}
+      onblur={() => (open = false)}
+      role="combobox"
+      aria-expanded={open}
+      aria-controls={listboxId}
+      aria-autocomplete="list"
+      autocomplete="off"
+      spellcheck="false"
+    />
+    {#if open && hits.length > 0}
+      <PopoverContent
+        align="start"
+        sideOffset={2}
+        customAnchor={wrapEl ?? null}
+        trapFocus={false}
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        class="serp-popover"
+      >
+        <ul class="dropdown" role="listbox" id={listboxId} bind:this={listEl}>
+          {#each hits as hit, i (hit.fyers_symbol)}
+            <li
+              class="hit"
+              class:active={i === activeIndex}
+              onmousedown={(e) => { e.preventDefault(); selectHit(hit); }}
+              onmouseenter={() => (activeIndex = i)}
+              role="option"
+              aria-selected={i === activeIndex}
+            >
+              <span class="sym">{hit.internal_symbol}</span>
+              <span class="meta">{formatMeta(hit)}</span>
+            </li>
+          {/each}
+        </ul>
+      </PopoverContent>
+    {/if}
+  </Popover>
 </div>
 
 <style>
@@ -173,7 +188,7 @@
     height: 28px;
     padding: 0 6px;
     font-size: 12px;
-    background: var(--surface);
+    background: var(--canvas-raised);
     border: 1px solid var(--hairline);
     border-radius: 3px;
     color: var(--ink);
@@ -186,21 +201,20 @@
   .search-input::placeholder {
     color: var(--faint);
   }
+  /* Portaled via shadcn Popover (z-50 at body level) — no absolute
+     positioning/z-index needed here. Sizing comes from the wrapper class:
+     width = trigger-anchor width, bg per DESIGN.md dropdown contract. */
+  .serp-popover {
+    width: var(--bits-floating-anchor-width);
+    min-width: 0;
+  }
   .dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    z-index: 50;
-    margin: 2px 0 0;
-    padding: 2px 0;
     list-style: none;
-    background: var(--surface);
-    border: 1px solid var(--hairline);
-    border-radius: 3px;
+    margin: 0;
+    padding: 2px 0;
     max-height: 200px;
     overflow-y: auto;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    overflow-x: hidden;
   }
   .hit {
     display: flex;

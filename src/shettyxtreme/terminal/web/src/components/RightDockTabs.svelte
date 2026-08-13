@@ -9,9 +9,17 @@
 
   type TabId = "proposals" | "orders" | "research" | "logs";
 
-  let { open = $bindable(false) }: { open?: boolean } = $props();
+  let { open = $bindable(false), dockLogsTick = 0 }: { open?: boolean; dockLogsTick?: number } = $props();
 
   let activeTab = $state<TabId>("proposals");
+
+  // Task 2.3: the header "logs drawer" button bumps dockLogsTick each time it
+  // OPENS the dock — land on the Logs tab so the button actually reveals the
+  // log panel. Ctrl+R and the palette's sx:open-dock set `open` without
+  // bumping the tick, so they keep whatever tab is active.
+  $effect(() => {
+    if (dockLogsTick > 0) activeTab = "logs";
+  });
 
   const tabs: { id: TabId; label: string }[] = [
     { id: "proposals", label: "Proposals" },
