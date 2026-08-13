@@ -74,7 +74,7 @@ def _make_engine(
     )
 
     def _portfolio() -> Portfolio:
-        return Portfolio(positions=[], daily_pnl=0.0, total_margin_used=0.0, available_margin=1_000_000.0)
+        return Portfolio(positions=[], daily_pnl=0.0, total_margin_used=0.0, available_margin=1_000_000.0, equity=1_000_000.0)
 
     engine = ExecutionEngine(
         executor=executor,
@@ -86,6 +86,13 @@ def _make_engine(
 
 def _signal_event(data: dict) -> Event:
     return Event(topic=Topic.SIGNAL_V2, data=data, source="test")
+
+
+class _MockMaster:
+    """Minimal lot-size provider for tests."""
+    def get_lot_size(self, internal_symbol: str, exchange: str = "NSE",
+                     instrument_type: str = "INDEX") -> int | None:
+        return 65  # NIFTY lot size (Jan 2026+)
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -123,7 +130,7 @@ async def _proposals(client: AsyncClient, status: str | None = None) -> list[dic
 
 def test_signal_v2_creates_proposal() -> None:
     engine, _ = _make_engine()
-    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus(), instrument_master=_MockMaster())
     asyncio.run(bridge._on_signal_v2(_signal_event(_SIGNAL_UP)))
 
     approvals = engine.get_all_approvals()
@@ -134,7 +141,7 @@ def test_signal_v2_creates_proposal() -> None:
     assert approval.signal_id
     hint = approval.strategy_hint
     assert hint["symbol"] == "NIFTY"
-    assert hint["quantity"] == 75
+    assert hint["quantity"] == 65  # 1 lot × 65 (NIFTY lot size)
     assert hint["hint_kind"] == "default"
 
 
@@ -142,11 +149,13 @@ def test_default_hint_builder_marks_hint_kind_default() -> None:
     hint = default_hint_builder({})
     assert hint["hint_kind"] == "default"
     assert hint["symbol"] == "NIFTY"
+    # Without instrument_master, quantity is None (no lot size lookup).
+    assert hint["quantity"] is None
 
 
 def test_signal_v2_down_side_is_sell() -> None:
     engine, _ = _make_engine()
-    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus(), instrument_master=_MockMaster())
     asyncio.run(bridge._on_signal_v2(_signal_event(_SIGNAL_DOWN)))
     approvals = engine.get_all_approvals()
     assert len(approvals) == 1
@@ -155,14 +164,14 @@ def test_signal_v2_down_side_is_sell() -> None:
 
 def test_neutral_signal_ignored() -> None:
     engine, _ = _make_engine()
-    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus(), instrument_master=_MockMaster())
     asyncio.run(bridge._on_signal_v2(_signal_event(_SIGNAL_NEUTRAL)))
     assert engine.get_all_approvals() == []
 
 
 def test_duplicate_signal_deduped_while_pending() -> None:
     engine, _ = _make_engine()
-    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus(), instrument_master=_MockMaster())
     for _ in range(3):
         asyncio.run(bridge._on_signal_v2(_signal_event(_SIGNAL_UP)))
     assert len(engine.get_all_approvals()) == 1
@@ -182,7 +191,7 @@ async def test_approve_paper_routes_to_paper_engine(client: AsyncClient) -> None
     app.state.paper_engine = paper
 
     assert await _proposals(client) == []
-    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus(), instrument_master=_MockMaster())
     await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
     proposal = (await _proposals(client))[0]
     assert proposal["side"] == "BUY"
@@ -225,7 +234,7 @@ async def test_approve_live_routes_to_adapter_with_csrf(client: AsyncClient) -> 
     )
     engine, _ = _make_engine(mode="LIVE", live_adapter=fake)
     app.state.execution_engine = engine
-    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus(), instrument_master=_MockMaster())
     await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
     proposal = (await _proposals(client))[0]
 
@@ -239,7 +248,7 @@ async def test_approve_live_routes_to_adapter_with_csrf(client: AsyncClient) -> 
     placed = fake.place_order.call_args.args[0]
     assert placed.symbol == "NIFTY"
     assert placed.side.value == "BUY"
-    assert placed.quantity == 75
+    assert placed.quantity == 65  # 1 lot × 65
 
 
 @pytest.mark.asyncio
@@ -251,7 +260,7 @@ async def test_approve_live_full_flow_via_typed_mode_switch(client: AsyncClient)
     )
     engine, _ = _make_engine(mode="LIVE", live_adapter=fake)
     app.state.execution_engine = engine
-    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus(), instrument_master=_MockMaster())
     await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
     proposal = (await _proposals(client))[0]
 
@@ -275,7 +284,7 @@ async def test_approve_live_requires_csrf_token(client: AsyncClient) -> None:
     fake = AsyncMock()
     engine, _ = _make_engine(mode="LIVE", live_adapter=fake)
     app.state.execution_engine = engine
-    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus(), instrument_master=_MockMaster())
     await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
     proposal = (await _proposals(client))[0]
 
@@ -293,7 +302,7 @@ async def test_approve_live_rejects_wrong_csrf_token(client: AsyncClient) -> Non
     fake = AsyncMock()
     engine, _ = _make_engine(mode="LIVE", live_adapter=fake)
     app.state.execution_engine = engine
-    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus(), instrument_master=_MockMaster())
     await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
     proposal = (await _proposals(client))[0]
 
@@ -311,7 +320,7 @@ async def test_approve_live_requires_confirm(client: AsyncClient) -> None:
     fake = AsyncMock()
     engine, _ = _make_engine(mode="LIVE", live_adapter=fake)
     app.state.execution_engine = engine
-    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus(), instrument_master=_MockMaster())
     await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
     proposal = (await _proposals(client))[0]
 
@@ -332,7 +341,7 @@ async def test_approve_observer_blocked(client: AsyncClient) -> None:
     execution_router._current_mode = "OBSERVER"
     engine, paper = _make_engine(mode="OBSERVER")
     app.state.execution_engine = engine
-    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus(), instrument_master=_MockMaster())
     await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
     proposal = (await _proposals(client))[0]
 
@@ -350,7 +359,7 @@ async def test_reject_marks_rejected_no_order(client: AsyncClient) -> None:
     execution_router._current_mode = "PAPER"
     engine, paper = _make_engine(mode="PAPER")
     app.state.execution_engine = engine
-    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus(), instrument_master=_MockMaster())
     await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
     proposal = (await _proposals(client))[0]
 
@@ -371,12 +380,12 @@ async def test_reject_marks_rejected_no_order(client: AsyncClient) -> None:
 async def test_risk_fail_returns_400_no_order(client: AsyncClient) -> None:
     execution_router._current_mode = "PAPER"
     risk = RiskEngine()
-    risk.check_entry = lambda signal, portfolio: RiskDecision.reject(  # type: ignore[assignment]
+    risk.check_entry = lambda signal, portfolio, proposal=None: RiskDecision.reject(  # type: ignore[assignment]
         "daily loss limit reached", filter_name="loss_limit"
     )
     engine, paper = _make_engine(mode="PAPER", risk_engine=risk)
     app.state.execution_engine = engine
-    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus(), instrument_master=_MockMaster())
     await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
     proposal = (await _proposals(client))[0]
 
@@ -397,7 +406,7 @@ async def test_kill_switch_blocks_approve(client: AsyncClient, tmp_path) -> None
     kill_file.touch()
     engine, paper = _make_engine(mode="PAPER", kill_path=str(kill_file))
     app.state.execution_engine = engine
-    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus(), instrument_master=_MockMaster())
     await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
     proposal = (await _proposals(client))[0]
 
@@ -426,7 +435,7 @@ async def test_stale_kill_switch_file_armed_across_restart(
     execution_router._current_mode = "PAPER"
     engine, paper = _make_engine(mode="PAPER", kill_path=str(kill_file))
     app.state.execution_engine = engine
-    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus(), instrument_master=_MockMaster())
     await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
     proposal = (await _proposals(client))[0]
 
@@ -466,7 +475,7 @@ async def test_stale_proposal_expires_on_list(client: AsyncClient) -> None:
     execution_router._current_mode = "PAPER"
     engine, _ = _make_engine(mode="PAPER")
     app.state.execution_engine = engine
-    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus())
+    bridge = ExecutionSignalBridge(engine=engine, event_bus=EventBus(), instrument_master=_MockMaster())
     await bridge._on_signal_v2(_signal_event(_SIGNAL_UP))
     proposal = (await _proposals(client))[0]
     approval = engine.get_approval(proposal["id"])

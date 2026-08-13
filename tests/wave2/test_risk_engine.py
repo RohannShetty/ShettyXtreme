@@ -103,6 +103,17 @@ class TestMarginFilter:
         assert not decision.allowed
         assert "margin" in decision.reason.lower()
 
+    def test_margin_filter_allows_paper_funded_portfolio(self) -> None:
+        """With Portfolio(available_margin=1_000_000) from paper engine, entry is allowed."""
+        engine = RiskEngine(filters=[MarginFilter(margin_threshold_ratio=0.1)])
+        signal = _make_signal()
+        portfolio = _make_portfolio(
+            available_margin=1_000_000.0,
+            total_margin_used=0.0,
+        )
+        decision = engine.check_entry(signal, portfolio)
+        assert decision.allowed
+
 
 # ---------------------------------------------------------------------------
 # Max Positions

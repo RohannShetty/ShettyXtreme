@@ -253,6 +253,8 @@ def _current_regime(request: Request) -> str | None:
     proj = getattr(request.app.state, "intelligence_projection", None)
     if proj is None:
         return None
+    if not proj.has_data():
+        return None
     try:
         regime = proj.get_regime() or {}
     except Exception:

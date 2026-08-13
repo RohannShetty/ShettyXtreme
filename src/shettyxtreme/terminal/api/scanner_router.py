@@ -1,4 +1,4 @@
-"""Scanner router — gap detection, clusters, alerts, logs."""
+"""Scanner router — gap detection, clusters, alerts, logs, findings."""
 from __future__ import annotations
 
 from typing import Any
@@ -10,6 +10,7 @@ from shettyxtreme.terminal.api.models import (
     ClusterResponse,
     GapResponse,
     LogResponse,
+    ScannerFindingResponse,
 )
 from shettyxtreme.terminal.api.scanner_data import GapDetector, LogCollector, ClusterDetector
 
@@ -87,4 +88,30 @@ async def get_logs(limit: int = Query(50, ge=1, le=500)) -> list[LogResponse]:
             timestamp=entry.get("timestamp"),
         )
         for entry in recent
+    ]
+
+
+@router.get("/findings", response_model=list[ScannerFindingResponse])
+async def get_findings(
+    request: Request,
+    scanner_type: str | None = Query(None, description="Filter by scanner type (e.g. gamma_spike, gap_fill)"),
+    limit: int = Query(50, ge=1, le=500),
+) -> list[ScannerFindingResponse]:
+    """Return scanner opportunity findings (11 scanner types).
+
+    Optional ``?type=`` filter returns only findings from a specific scanner.
+    """
+    proj = getattr(request.app.state, "scanner_projection", None)
+    if proj is None:
+        return []
+    raw = proj.get(scanner_type)[:limit]
+    return [
+        ScannerFindingResponse(
+            scanner_type=f.get("scanner_type", "unknown"),
+            symbol=f.get("symbol", ""),
+            severity=f.get("severity", "MEDIUM"),
+            detail=f.get("detail", {}),
+            timestamp=f.get("timestamp"),
+        )
+        for f in raw
     ]

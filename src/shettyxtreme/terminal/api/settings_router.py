@@ -50,6 +50,7 @@ class SettingsUpdate(BaseModel):
     loss_limit: float | None = None
     max_positions: int | None = None
     theme: str | None = None
+    color_convention: str | None = None
 
 
 class SchedulerUpdate(BaseModel):
@@ -77,6 +78,7 @@ class SettingsResponse(BaseModel):
     loss_limit: float
     max_positions: int
     theme: str
+    color_convention: str
     scheduler: SchedulerResponse
 
 
@@ -86,6 +88,14 @@ class ThemeResponse(BaseModel):
 
 class ThemeUpdate(BaseModel):
     theme: str
+
+
+class ColorConventionResponse(BaseModel):
+    color_convention: str
+
+
+class ColorConventionUpdate(BaseModel):
+    color_convention: str
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -106,6 +116,7 @@ def _settings_response(store: SettingsStore) -> SettingsResponse:
         loss_limit=store.loss_limit(),
         max_positions=store.max_positions(),
         theme=store.theme(),
+        color_convention=store.color_convention(),
         scheduler=_scheduler_snapshot(store),
     )
 
@@ -238,6 +249,26 @@ async def update_theme(payload: ThemeUpdate) -> ThemeResponse:
     theme = store.theme()
     await ws_bridge.broadcast("theme", {"theme": theme})
     return ThemeResponse(theme=theme)
+
+
+# ── Color convention ──────────────────────────────────────────────────────
+@router.get("/color-convention", response_model=ColorConventionResponse)
+async def get_color_convention() -> ColorConventionResponse:
+    """Return the current color convention (indian / international)."""
+    return ColorConventionResponse(color_convention=get_settings_store().color_convention())
+
+
+@router.put("/color-convention", response_model=ColorConventionResponse)
+async def update_color_convention(payload: ColorConventionUpdate) -> ColorConventionResponse:
+    """Set the color convention and broadcast it to connected WS clients."""
+    store = get_settings_store()
+    try:
+        store.update({"color_convention": payload.color_convention})
+    except SettingsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    conv = store.color_convention()
+    await ws_bridge.broadcast("color-convention", {"color_convention": conv})
+    return ColorConventionResponse(color_convention=conv)
 
 
 # ── Research scheduler ─────────────────────────────────────────────────────

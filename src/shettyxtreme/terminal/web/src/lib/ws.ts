@@ -9,6 +9,13 @@
 
 export type WsMessageHandler = (data: unknown) => void;
 
+/** P1-2.4: browser-WS connection state (local to this tab). */
+export type ConnectionState = "open" | "closed" | "reconnecting";
+
+/** Callbacks for browser-WS open/close/error events. */
+type ConnectionChangeHandler = (state: ConnectionState) => void;
+const connectionHandlers = new Set<ConnectionChangeHandler>();
+
 /** Live market-data tick broadcast by the backend (WatchlistProjection).
  *
  * Chain fields (oi/strike/option_type) ride the wire so ChainGrid can update
@@ -111,6 +118,10 @@ export function connect(): void {
       if (ws.readyState === WebSocket.OPEN) ws.send("ping");
     }, PING_MS);
     sendSubscribe();
+    // P1-2.4: notify connection listeners.
+    for (const cb of connectionHandlers) {
+      try { cb("open"); } catch { /* never break the socket */ }
+    }
   };
 
   ws.onmessage = (ev: MessageEvent) => {
@@ -126,6 +137,10 @@ export function connect(): void {
   };
 
   ws.onerror = () => {
+    // P1-2.4: notify connection listeners before closing.
+    for (const cb of connectionHandlers) {
+      try { cb("closed"); } catch { /* never break the socket */ }
+    }
     try {
       ws.close();
     } catch {
@@ -136,6 +151,10 @@ export function connect(): void {
   ws.onclose = () => {
     if (socket === ws) socket = null;
     clearTimers();
+    // P1-2.4: notify connection listeners.
+    for (const cb of connectionHandlers) {
+      try { cb("reconnecting"); } catch { /* never break the socket */ }
+    }
     scheduleReconnect();
   };
 }
@@ -157,6 +176,17 @@ export function stop(): void {
       /* already closed */
     }
   }
+}
+
+/** P1-2.4: register a callback for browser-WS open/close events. */
+export function onConnectionChange(handler: ConnectionChangeHandler): () => void {
+  connectionHandlers.add(handler);
+  return () => { connectionHandlers.delete(handler); };
+}
+
+/** P1-2.4: true when the browser WS socket is open. */
+export function isWsConnected(): boolean {
+  return socket !== null && socket.readyState === WebSocket.OPEN;
 }
 
 export function onMessage(topic: string, handler: WsMessageHandler): () => void {

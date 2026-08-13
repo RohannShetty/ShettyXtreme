@@ -106,17 +106,32 @@ class IntelligencePipeline:
         except Exception:
             logger.exception("signal computation failed")
             return
+        signal_data = {
+            "direction": signal.direction.name,
+            "conviction": signal.conviction,
+            "D": signal.D,
+            "P": signal.P,
+            "G": signal.G,
+            "voters": [asdict(v) for v in signal.voters],
+            "timestamp": signal.timestamp,
+        }
         await self._bus.publish(
             Event(
                 topic=Topic.SIGNAL_V2,
+                data=signal_data,
+                source="signal_engine",
+            )
+        )
+        # Publish SIGNAL_GENERATED so scanner clusters + signal logs fire
+        await self._bus.publish(
+            Event(
+                topic=Topic.SIGNAL_GENERATED,
                 data={
+                    "symbol": _PIPELINE_SYMBOL,
                     "direction": signal.direction.name,
                     "conviction": signal.conviction,
-                    "D": signal.D,
-                    "P": signal.P,
-                    "G": signal.G,
-                    "voters": [asdict(v) for v in signal.voters],
-                    "timestamp": signal.timestamp,
+                    "confidence": signal.conviction,
+                    "signal_id": f"{_PIPELINE_SYMBOL}_{signal.timestamp}",
                 },
                 source="signal_engine",
             )

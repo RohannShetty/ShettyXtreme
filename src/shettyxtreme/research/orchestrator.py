@@ -5,6 +5,11 @@ validate (reject-retry once) -> persist. Lenses run concurrently; a
 failing lens surfaces partial results + error and never auto-advances or
 crashes the run. Tool calls are capped at MAX_TOOL_CALLS per lens; when
 the budget is exhausted without final content the lens errors out.
+
+P2-3.5: added run_agents() for deterministic agent execution alongside
+LLM lenses. Agents produce ResearchBrief-shaped signals without LLM calls.
+The funnel shape (analysts → risk → portfolio) mirrors the ai-hedge-fund
+pattern.
 """
 from __future__ import annotations
 
@@ -14,6 +19,7 @@ import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 from shettyxtreme.research.briefs import (
@@ -40,6 +46,15 @@ class LensRunResult:
     """Outcome of one lens run: a brief, or a surfaced error."""
 
     lens: str
+    brief: ResearchBrief | None = None
+    error: str | None = None
+
+
+@dataclass
+class AgentRunResult:
+    """Outcome of one agent run: a brief, or a surfaced error."""
+
+    agent: str
     brief: ResearchBrief | None = None
     error: str | None = None
 
@@ -151,6 +166,82 @@ class ResearchOrchestrator:
                 last_error = str(exc)
                 logger.warning("Lens %s attempt %d failed: %s", lens_name, attempt + 1, exc)
         return LensRunResult(lens=lens_name, error=last_error)
+
+    async def run_agents(
+        self,
+        agent_names: Sequence[str] | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> list[AgentRunResult]:
+        """Run deterministic agents and persist their signals.
+
+        Agents produce ResearchBrief-shaped signals without LLM calls.
+        The funnel shape: analysts run first, then risk annotates, then
+        portfolio aggregates. All agents run concurrently; a failing agent
+        surfaces partial results + error.
+
+        Args:
+            agent_names: Agent names to run (all deterministic by default).
+            data: Data dict passed to each agent's compute(). Keys vary by agent.
+
+        Returns:
+            List of AgentRunResult (one per agent).
+        """
+        # Lazy import to avoid circular dependency at module level
+        from shettyxtreme.research.agents import (
+            get_agent,
+            list_deterministic_agents,
+        )
+
+        agents = list_deterministic_agents()
+        if agent_names is not None:
+            valid = {a.name for a in agents}
+            unknown = [n for n in agent_names if n not in valid]
+            if unknown:
+                raise ValueError(f"unknown agent: {unknown}")
+            agents = [a for a in agents if a.name in agent_names]
+
+        if not agents:
+            return []
+
+        data = data or {}
+        results: list[AgentRunResult] = []
+
+        for agent in agents:
+            try:
+                # Stage 1: Run analyst agents (technical, options, sentiment)
+                # Stage 2: Run risk agent with analyst signals as context
+                # Stage 3: Run portfolio agent with all signals
+                if agent.agent_type == "risk":
+                    # Risk agent needs existing signals
+                    existing = [r.brief for r in results if r.brief is not None]
+                    brief = agent.compute(data, existing_signals=existing)
+                elif agent.agent_type == "portfolio":
+                    # Portfolio agent needs all existing signals
+                    existing = [r.brief for r in results if r.brief is not None]
+                    brief = agent.compute(data, existing_signals=existing)
+                else:
+                    brief = agent.compute(data)
+
+                try:
+                    self.store.insert(brief)
+                except Exception as exc:
+                    logger.warning("Agent %s persist failed: %s", agent.name, exc)
+                    results.append(AgentRunResult(
+                        agent=agent.name, error=f"persist failed: {exc}"
+                    ))
+                    continue
+
+                if self.on_brief is not None:
+                    self.on_brief(brief)
+
+                results.append(AgentRunResult(agent=agent.name, brief=brief))
+            except Exception as exc:
+                logger.warning("Agent %s failed: %s", agent.name, exc)
+                results.append(AgentRunResult(
+                    agent=agent.name, error=str(exc)
+                ))
+
+        return results
 
     @staticmethod
     def _assistant_tool_message(calls: Sequence[ToolCall]) -> dict:

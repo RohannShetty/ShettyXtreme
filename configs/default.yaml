@@ -5,3 +5,16 @@ dry_run: true
 log_dir: logs
 log_level: INFO
 mode: observer
+paper_trading_margin: 1000000
+# Use QuantLib for advanced options pricing (Black-76 fallback if unavailable).
+# Requires: pip install quantlib (QuantLib>=1.43)
+use_quantlib: false
+
+# P3-4.1: Paper trading realism
+paper_trading:
+  slippage_model: "layered"    # "layered" | "none" — layered uses spread + fixed bps fallback
+  fees_model: "india"          # "india" | "none" — India-correct brokerage/STT/GST/SEBI/stamp
+  fill_probability: true       # true | false — probabilistic limit fills
+  margin_check: true           # true | false — engine-side margin sizing
+  slippage_bps_market: 5       # fixed bps for MARKET orders when spread unavailable
+  slippage_bps_limit: 2        # fixed bps for LIMIT orders when spread unavailable

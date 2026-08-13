@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { get } from "../lib/api";
+  import { get } from "$lib/api";
   import { Button } from "$lib/components/ui/button";
   import { Badge, type BadgeVariant } from "$lib/components/ui/badge";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
@@ -10,19 +10,42 @@
   type Gap = { symbol: string; gap_type: string; gap_percent: number; direction: string };
   type Cluster = { symbol: string; cluster_type: string; strength: number; source_count: number };
   type Alert = { alert_type: string; severity: string; message: string; timestamp: string };
+  type Finding = {
+    scanner_type: string;
+    symbol: string;
+    severity: string;
+    detail: Record<string, unknown>;
+    timestamp: string;
+  };
 
   /** Data older than this is flagged STALE (warning chip in the panel head). */
   const STALE_MS = 60_000;
 
+  /** Human-readable labels for scanner types. */
+  const SCANNER_LABELS: Record<string, string> = {
+    gamma_spike: "Gamma Spike",
+    iv_crush: "IV Crush",
+    iv_expansion: "IV Expansion",
+    pcr_extremes: "PCR Extremes",
+    max_pain_drift: "Max Pain",
+    theta_harvest: "Theta Harvest",
+    calendar_spread: "Calendar",
+    vertical_skew: "Vert Skew",
+    gap_fill: "Gap Fill",
+    volume_anomaly: "Vol Anomaly",
+    oi_buildup: "OI Buildup",
+  };
+
   let gaps: Gap[] = $state([]);
   let clusters: Cluster[] = $state([]);
   let alerts: Alert[] = $state([]);
+  let findings: Finding[] = $state([]);
   let error = $state("");
   let loading = $state(true);
   let fetchedAt = $state<number | null>(null);
   let now = $state(Date.now());
 
-  // Keyboard navigation cursor over the flat item list (gaps → clusters → alerts).
+  // Keyboard navigation cursor over the flat item list (findings → gaps → clusters → alerts).
   let active = $state(0);
   let navActive = $state(false);
   let panelEl: HTMLElement | undefined = $state();
@@ -42,14 +65,16 @@
     error = "";
     loading = true;
     try {
-      const [g, c, a] = await Promise.all([
+      const [g, c, a, f] = await Promise.all([
         get<Gap[]>("/api/scanner/gaps"),
         get<Cluster[]>("/api/scanner/clusters"),
         get<Alert[]>("/api/scanner/alerts"),
+        get<Finding[]>("/api/scanner/findings?limit=50"),
       ]);
       gaps = g;
       clusters = c;
       alerts = a;
+      findings = f;
       fetchedAt = Date.now();
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -60,28 +85,39 @@
 
   let stale = $derived(fetchedAt !== null && now - fetchedAt > STALE_MS);
 
-  let total = $derived(gaps.length + clusters.length + alerts.length);
+  /** Group findings by scanner_type for the per-type column grid. */
+  let findingsByType = $derived.by(() => {
+    const groups: Record<string, Finding[]> = {};
+    for (const f of findings) {
+      const t = f.scanner_type;
+      if (!groups[t]) groups[t] = [];
+      groups[t].push(f);
+    }
+    return groups;
+  });
 
-  /** Flat index of the first item in each column (columns render in order). */
-  let colStarts = $derived.by(() => ({
-    gap: 0,
-    cluster: gaps.length,
-    alert: gaps.length + clusters.length,
-  }));
+  let findingTypes = $derived(Object.keys(findingsByType).sort());
+
+  let total = $derived(findings.length + gaps.length + clusters.length + alerts.length);
 
   /** Non-empty columns as [start, end] flat ranges — for ArrowLeft/Right hops. */
   let cols = $derived.by(() => {
     const ranges: { start: number; end: number }[] = [];
-    if (gaps.length > 0) ranges.push({ start: 0, end: gaps.length - 1 });
-    if (clusters.length > 0)
-      ranges.push({ start: gaps.length, end: gaps.length + clusters.length - 1 });
-    if (alerts.length > 0) ranges.push({ start: gaps.length + clusters.length, end: total - 1 });
+    let offset = 0;
+    // Findings (grouped by type)
+    for (const t of findingTypes) {
+      const count = findingsByType[t].length;
+      if (count > 0) ranges.push({ start: offset, end: offset + count - 1 });
+      offset += count;
+    }
+    // Legacy columns
+    if (gaps.length > 0) ranges.push({ start: offset, end: offset + gaps.length - 1 });
+    offset += gaps.length;
+    if (clusters.length > 0) ranges.push({ start: offset, end: offset + clusters.length - 1 });
+    offset += clusters.length;
+    if (alerts.length > 0) ranges.push({ start: offset, end: offset + alerts.length - 1 });
     return ranges;
   });
-
-  const gapIdx = (i: number) => colStarts.gap + i;
-  const clusterIdx = (i: number) => colStarts.cluster + i;
-  const alertIdx = (i: number) => colStarts.alert + i;
 
   function select(idx: number): void {
     navActive = true;
@@ -142,7 +178,7 @@
     }
   });
 
-  /** Conviction-badge level from an alert severity string (DESIGN §4 4-level scale). */
+  /** Conviction-badge level from a severity string (DESIGN §4 4-level scale). */
   function convictionLevel(severity: string): BadgeVariant {
     const s = String(severity).toUpperCase();
     if (s === "EXTREME") return "conviction-extreme";
@@ -153,6 +189,20 @@
 
   function dirClass(direction: string): string {
     return String(direction).toLowerCase().includes("down") ? "price-down" : "price-up";
+  }
+
+  /** Format a finding detail key for display. */
+  function fmtDetailKey(key: string): string {
+    return key.replace(/_/g, " ");
+  }
+
+  /** Compute a flat index offset for a finding within the findings block. */
+  function findingIdx(typeIdx: number, itemIdx: number): number {
+    let offset = 0;
+    for (let i = 0; i < typeIdx; i++) {
+      offset += findingsByType[findingTypes[i]].length;
+    }
+    return offset + itemIdx;
   }
 </script>
 
@@ -181,6 +231,40 @@
 
   <ScrollArea class="flex-1 min-h-0">
     <div class="cards">
+      <!-- ── Findings (11 scanner types) ────────────────────────────── -->
+      {#if findings.length > 0}
+        {#each findingTypes as typeKey, ti (typeKey)}
+          <div class="card">
+            <span class="eyebrow">{SCANNER_LABELS[typeKey] ?? typeKey}</span>
+            <span class="stat">{findingsByType[typeKey].length}</span>
+            <ul role="list">
+              {#each findingsByType[typeKey] as f, fi (f.symbol + f.timestamp + fi)}
+                {@const idx = findingIdx(ti, fi)}
+                <li
+                  class="item"
+                  role="option"
+                  aria-selected={idx === active}
+                  tabindex={idx === active ? 0 : -1}
+                  data-scanner-idx={idx}
+                  onclick={() => select(idx)}
+                  onkeydown={(e) => onItemKeydown(e, idx)}
+                >
+                  <span class="ticker">{f.symbol}</span>
+                  <Badge variant={convictionLevel(f.severity)}>{f.severity}</Badge>
+                  {#if f.detail}
+                    {@const detailEntries = Object.entries(f.detail).slice(0, 2)}
+                    {#each detailEntries as [key, val] (key)}
+                      <span class="badge-regime">{fmtDetailKey(key)}: {String(val)}</span>
+                    {/each}
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/each}
+      {/if}
+
+      <!-- ── Legacy: Gaps ───────────────────────────────────────────── -->
       <div class="card">
         <span class="eyebrow">Gaps</span>
         <span class="stat">{gaps.length}</span>
@@ -195,14 +279,15 @@
             {/each}
           {:else}
             {#each gaps as g, i (g.symbol + g.gap_type + g.gap_percent)}
+            {@const idx = findings.length + i}
             <li
               class="item"
               role="option"
-              aria-selected={gapIdx(i) === active}
-              tabindex={gapIdx(i) === active ? 0 : -1}
-              data-scanner-idx={gapIdx(i)}
-              onclick={() => select(gapIdx(i))}
-              onkeydown={(e) => onItemKeydown(e, gapIdx(i))}
+              aria-selected={idx === active}
+              tabindex={idx === active ? 0 : -1}
+              data-scanner-idx={idx}
+              onclick={() => select(idx)}
+              onkeydown={(e) => onItemKeydown(e, idx)}
             >
               <span class="ticker">{g.symbol}</span>
               <span class="badge-regime">{g.gap_type}</span>
@@ -216,6 +301,7 @@
         </ul>
       </div>
 
+      <!-- ── Legacy: Clusters ───────────────────────────────────────── -->
       <div class="card">
         <span class="eyebrow">Clusters</span>
         <span class="stat">{clusters.length}</span>
@@ -230,14 +316,15 @@
             {/each}
           {:else}
             {#each clusters as c, i (c.symbol + c.cluster_type)}
+            {@const idx = findings.length + gaps.length + i}
             <li
               class="item"
               role="option"
-              aria-selected={clusterIdx(i) === active}
-              tabindex={clusterIdx(i) === active ? 0 : -1}
-              data-scanner-idx={clusterIdx(i)}
-              onclick={() => select(clusterIdx(i))}
-              onkeydown={(e) => onItemKeydown(e, clusterIdx(i))}
+              aria-selected={idx === active}
+              tabindex={idx === active ? 0 : -1}
+              data-scanner-idx={idx}
+              onclick={() => select(idx)}
+              onkeydown={(e) => onItemKeydown(e, idx)}
             >
               <span class="ticker">{c.symbol}</span>
               <span class="badge-regime">{c.cluster_type}</span>
@@ -251,6 +338,7 @@
         </ul>
       </div>
 
+      <!-- ── Legacy: Alerts ─────────────────────────────────────────── -->
       <div class="card">
         <span class="eyebrow">Alerts</span>
         <span class="stat">{alerts.length}</span>
@@ -264,14 +352,15 @@
             {/each}
           {:else}
             {#each alerts as a, i (a.message + a.timestamp)}
+            {@const idx = findings.length + gaps.length + clusters.length + i}
             <li
               class="item"
               role="option"
-              aria-selected={alertIdx(i) === active}
-              tabindex={alertIdx(i) === active ? 0 : -1}
-              data-scanner-idx={alertIdx(i)}
-              onclick={() => select(alertIdx(i))}
-              onkeydown={(e) => onItemKeydown(e, alertIdx(i))}
+              aria-selected={idx === active}
+              tabindex={idx === active ? 0 : -1}
+              data-scanner-idx={idx}
+              onclick={() => select(idx)}
+              onkeydown={(e) => onItemKeydown(e, idx)}
             >
               <Badge variant={convictionLevel(a.severity)}>{a.severity}</Badge>
               <span class="msg">{a.message}</span>

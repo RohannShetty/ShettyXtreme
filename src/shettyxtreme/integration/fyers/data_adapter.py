@@ -89,6 +89,8 @@ class FyersDataAdapter:
         self._tick_callbacks: list[TickCallback] = []
         self._bar_callbacks: dict[tuple[str, str], BarCallback] = {}
         self._bar_agg: dict[tuple[str, str], _BarAggregator] = {}
+        # Last-tick timestamp for tick-based staleness detection (P1-2.4).
+        self._last_tick_ts: datetime | None = None
         # Route the socket's tick batches through the adapter's parser.
         self._data_socket.on_tick(self._on_ticks)
 
@@ -122,6 +124,19 @@ class FyersDataAdapter:
 
     async def is_connected(self) -> bool:
         return await self._data_socket.is_connected()
+
+    def is_stale(self, threshold: float = 60.0) -> bool:
+        """True when no tick has been received for *threshold* seconds.
+
+        Tick-based staleness (P1-2.4): the adapter tracks the timestamp of
+        the last received tick via :attr:`_last_tick_ts` (set in
+        ``_on_ticks``).  Returns ``False`` when no ticks have ever been
+        received (the adapter has not subscribed yet) to avoid a false
+        STALE alarm on cold start.
+        """
+        if self._last_tick_ts is None:
+            return False
+        return (datetime.now(UTC) - self._last_tick_ts).total_seconds() > threshold
 
     # ------------------------------------------------------------------ helpers
 
@@ -208,6 +223,8 @@ class FyersDataAdapter:
 
     async def _on_ticks(self, batch: list[Any]) -> None:
         """Socket tick-batch handler: fan out to callbacks and bar aggregation."""
+        # Track last-tick timestamp for tick-based staleness (P1-2.4).
+        self._last_tick_ts = datetime.now(UTC)
         for raw in batch:
             tick = self._parse_tick(raw)
             if tick is None:
@@ -439,6 +456,12 @@ class FyersDataAdapter:
                 f"&strikecount={int(strike_count)}"
                 f"{ts_param}&greeks=1"
             )
+        except FyersDataEntitlementError:
+            logger.error("Data-API entitlement missing for %s", ticker)
+            raise
+        except FyersTokenExpired:
+            logger.warning("Fyers token expired for %s", ticker)
+            raise
         except FyersError as exc:
             logger.warning("Fyers options chain failed for %s: %s", ticker, exc)
             return {}

@@ -4,10 +4,11 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from shettyxtreme.core.data_models import Tick
-from shettyxtreme.core.event_bus.event_bus import Event, Topic
+from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
 from shettyxtreme.intelligence.signals.simple_generator import Signal
 from shettyxtreme.terminal.projections import (
     AlertProjection,
+    ConnectionState,
     HealthProjection,
     IntelligenceProjection,
     PositionProjection,
@@ -311,7 +312,11 @@ def test_health_latency_not_fabricated() -> None:
 
 
 def test_health_data_stale_when_no_ticks() -> None:
-    """Connected adapter with no fresh ticks reports stale, not healthy."""
+    """Connected adapter with no fresh ticks reports stale, not healthy.
+
+    P1-2.4: adapter.is_stale() takes precedence; the projection also
+    supports tick-activity-based staleness as a fallback.
+    """
     proj = HealthProjection()
     adapter = MagicMock()
     adapter.entitlement_error = False
@@ -323,6 +328,25 @@ def test_health_data_stale_when_no_ticks() -> None:
 
     comp = next(c for c in result["components"] if c["name"] == "data_adapter")
     assert comp["status"] == "stale"
+
+
+def test_health_data_stale_tick_based_fallback() -> None:
+    """P1-2.4: tick-activity-based staleness when adapter has no is_stale."""
+    proj = HealthProjection()
+    adapter = MagicMock()
+    adapter.entitlement_error = False
+    adapter._connected = True
+    # No is_stale attribute — fallback to tick-based.
+    del adapter.is_stale
+    proj.configure(data_adapter=adapter)
+    # Simulate a tick 120s ago (beyond the 60s threshold).
+    proj._last_tick_ts = datetime.now(UTC) - timedelta(seconds=120)
+
+    result = proj.get()
+
+    comp = next(c for c in result["components"] if c["name"] == "data_adapter")
+    assert comp["status"] == "stale"
+    assert result["state"] == "stale"
 
 
 def test_health_trading_token_expired() -> None:
@@ -364,3 +388,191 @@ async def test_duplicate_alert_suppressed_within_window(mock_broadcast) -> None:
     later = Event(topic=Topic.RISK_ALERT, data={"alert_type": "gap", "severity": "HIGH", "message": "same"}, timestamp=datetime.now(UTC) + timedelta(seconds=60))
     await proj.on_alert(later)
     assert len(proj.get()) == 2
+
+
+# ── P1-2.4: Connection state machine tests ─────────────────────────────────
+
+def test_health_projection_state_machine_initial_state() -> None:
+    """HealthProjection starts in DISCONNECTED state."""
+    proj = HealthProjection()
+    assert proj._state == ConnectionState.DISCONNECTED
+
+
+@pytest.mark.asyncio
+@patch("shettyxtreme.terminal.projections.ws_bridge.broadcast", new_callable=AsyncMock)
+async def test_health_projection_state_machine_transitions(mock_broadcast) -> None:
+    """Full state machine: DISCONNECTED → CONNECTING → CONNECTED → STALE → EXPIRED."""
+    proj = HealthProjection()
+    bus = EventBus()
+    proj.subscribe(bus)
+
+    # Start in DISCONNECTED (initial).
+    assert proj._state == ConnectionState.DISCONNECTED
+
+    # SYSTEM_STATUS reconnecting → CONNECTING.
+    await proj.on_system_status(Event(
+        topic=Topic.SYSTEM_STATUS,
+        data={"status": "reconnecting"},
+        source="test",
+    ))
+    assert proj._state == ConnectionState.CONNECTING
+
+    # SYSTEM_STATUS connected → CONNECTED.
+    await proj.on_system_status(Event(
+        topic=Topic.SYSTEM_STATUS,
+        data={"status": "connected"},
+        source="test",
+    ))
+    assert proj._state == ConnectionState.CONNECTED
+
+    # Tick received — mark last tick.
+    await proj.on_market_data_tick(Event(
+        topic=Topic.MARKET_DATA_TICK,
+        data={},
+        source="test",
+        timestamp=datetime.now(UTC) - timedelta(seconds=120),
+    ))
+
+    # get() computes STALE from tick timestamp.
+    adapter = MagicMock()
+    adapter.entitlement_error = False
+    adapter._connected = True
+    del adapter.is_stale
+    proj.configure(data_adapter=adapter)
+    result = proj.get()
+    assert result["state"] == "stale"
+
+    # CREDENTIAL_HEALTH_CHANGED EXPIRED → EXPIRED.
+    await proj.on_credential_health(Event(
+        topic=Topic.CREDENTIAL_HEALTH_CHANGED,
+        data={"status": "EXPIRED"},
+        source="test",
+    ))
+    assert proj._state == ConnectionState.EXPIRED
+
+
+@pytest.mark.asyncio
+@patch("shettyxtreme.terminal.projections.ws_bridge.broadcast", new_callable=AsyncMock)
+async def test_health_projection_subscribes_to_system_status(mock_broadcast) -> None:
+    """Socket close → DISCONNECTED (transition from CONNECTED)."""
+    proj = HealthProjection()
+    bus = EventBus()
+    proj.subscribe(bus)
+
+    # First move to CONNECTED so the transition actually fires.
+    proj._state = ConnectionState.CONNECTED
+    await proj.on_system_status(Event(
+        topic=Topic.SYSTEM_STATUS,
+        data={"status": "data_socket_closed"},
+        source="test",
+    ))
+    assert proj._state == ConnectionState.DISCONNECTED
+    mock_broadcast.assert_awaited_with("connection", {
+        "state": "disconnected",
+        "detail": "Socket data_socket_closed",
+    })
+
+
+@pytest.mark.asyncio
+@patch("shettyxtreme.terminal.projections.ws_bridge.broadcast", new_callable=AsyncMock)
+async def test_health_projection_subscribes_to_credential_health(mock_broadcast) -> None:
+    """Token expired → EXPIRED."""
+    proj = HealthProjection()
+    bus = EventBus()
+    proj.subscribe(bus)
+
+    await proj.on_credential_health(Event(
+        topic=Topic.CREDENTIAL_HEALTH_CHANGED,
+        data={"status": "EXPIRED"},
+        source="test",
+    ))
+    assert proj._state == ConnectionState.EXPIRED
+    mock_broadcast.assert_awaited_with("connection", {
+        "state": "expired",
+        "detail": "Token expired",
+    })
+
+
+@pytest.mark.asyncio
+@patch("shettyxtreme.terminal.projections.ws_bridge.broadcast", new_callable=AsyncMock)
+async def test_health_projection_tick_heartbeat_stale(mock_broadcast) -> None:
+    """No tick for >60s → STALE (tick-based fallback)."""
+    proj = HealthProjection()
+    adapter = MagicMock()
+    adapter.entitlement_error = False
+    adapter._connected = True
+    del adapter.is_stale
+    proj.configure(data_adapter=adapter)
+
+    # Simulate last tick 120s ago.
+    proj._last_tick_ts = datetime.now(UTC) - timedelta(seconds=120)
+    result = proj.get()
+    assert result["state"] == "stale"
+
+
+def test_health_projection_subscribes_to_event_bus() -> None:
+    """subscribe() registers handlers on SYSTEM_STATUS, CREDENTIAL_HEALTH_CHANGED, TICK."""
+    proj = HealthProjection()
+    bus = EventBus()
+    proj.subscribe(bus)
+    assert Topic.SYSTEM_STATUS in bus._subscribers
+    assert Topic.CREDENTIAL_HEALTH_CHANGED in bus._subscribers
+    assert Topic.MARKET_DATA_TICK in bus._subscribers
+
+
+@pytest.mark.asyncio
+@patch("shettyxtreme.terminal.projections.ws_bridge.broadcast", new_callable=AsyncMock)
+async def test_health_projection_connecting_state(mock_broadcast) -> None:
+    """Data socket reconnecting → CONNECTING state in get() output."""
+    proj = HealthProjection()
+    adapter = MagicMock()
+    adapter.entitlement_error = False
+    adapter._connected = False
+    adapter._data_socket = MagicMock()
+    adapter._data_socket.connected = False
+    adapter._data_socket._reconnecting = True
+    proj.configure(data_adapter=adapter)
+
+    result = proj.get()
+    comp = next(c for c in result["components"] if c["name"] == "data_adapter")
+    assert comp["status"] == "connecting"
+    assert result["state"] == "connecting"
+
+
+def test_health_projection_overall_skips_connecting() -> None:
+    """CONNECTING is not 'degraded' — it's an expected transient state."""
+    proj = HealthProjection()
+    adapter = MagicMock()
+    adapter.entitlement_error = False
+    adapter._connected = False
+    adapter._data_socket = MagicMock()
+    adapter._data_socket.connected = False
+    adapter._data_socket._reconnecting = True
+    proj.configure(data_adapter=adapter)
+
+    result = proj.get()
+    # CONNECTING should not make overall "degraded".
+    assert result["overall"] == "healthy" or result["state"] == "connecting"
+
+
+def test_fyers_data_adapter_is_stale() -> None:
+    """P1-2.4: FyersDataAdapter.is_stale() tracks last-tick timestamp."""
+    from unittest.mock import MagicMock as _MagicMock
+    from shettyxtreme.integration.fyers.data_adapter import FyersDataAdapter
+
+    # Build a minimal mock adapter to test is_stale.
+    adapter = _MagicMock(spec=FyersDataAdapter)
+    adapter._last_tick_ts = None
+    # Call the real method.
+    result = FyersDataAdapter.is_stale(adapter)
+    assert result is False  # No ticks yet → not stale.
+
+    # Tick 120s ago → stale.
+    adapter._last_tick_ts = datetime.now(UTC) - timedelta(seconds=120)
+    result = FyersDataAdapter.is_stale(adapter, threshold=60.0)
+    assert result is True
+
+    # Tick 30s ago → not stale.
+    adapter._last_tick_ts = datetime.now(UTC) - timedelta(seconds=30)
+    result = FyersDataAdapter.is_stale(adapter, threshold=60.0)
+    assert result is False

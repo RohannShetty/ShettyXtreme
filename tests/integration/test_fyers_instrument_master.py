@@ -230,3 +230,59 @@ class TestInstrumentMasterStaleness:
             assert db.count_instruments() == 1
         finally:
             db.close()
+
+
+class TestListExpiries:
+    """list_expiries() returns distinct sorted future expiries."""
+
+    def test_list_expiries_distinct_sorted(self, master: FyersInstrumentMaster) -> None:
+        # The fixture has 2024-10-08, 2024-10-31, 2024-11-08, 2024-12-08
+        # but only future dates (>= today) are returned. Since these are
+        # in the past, the list will be empty in production. We test with
+        # a fresh DB containing future dates.
+        from datetime import UTC, datetime
+
+        db = FyersInstrumentMaster(
+            db_path=str(master._db_path).replace(".db", "_future.db"),
+            masters=("NSE_FO",),
+        )
+
+        # Create a fixture with future expiries
+        future1 = (datetime.now(UTC).date().replace(day=1) + __import__("datetime").timedelta(days=45)).isoformat()
+        future2 = (datetime.now(UTC).date().replace(day=1) + __import__("datetime").timedelta(days=75)).isoformat()
+
+        import json
+        from tests.integration.conftest import fyers_epoch, fyers_row
+
+        def fake_get(url: str) -> bytes:
+            d1 = date.fromisoformat(future1)
+            d2 = date.fromisoformat(future2)
+            return json.dumps({
+                f"NSE:NIFTY{d1.year % 100:02d}O{d1.month:01d}{d1.day:02d}25000CE": fyers_row(
+                    f"NSE:NIFTY{d1.year % 100:02d}O{d1.month:01d}{d1.day:02d}25000CE",
+                    expiry=fyers_epoch(d1.year, d1.month, d1.day),
+                    opt_type="CE", strike=25000.0, lot=75,
+                ),
+                f"NSE:NIFTY{d2.year % 100:02d}O{d2.month:01d}{d2.day:02d}25000CE": fyers_row(
+                    f"NSE:NIFTY{d2.year % 100:02d}O{d2.month:01d}{d2.day:02d}25000CE",
+                    expiry=fyers_epoch(d2.year, d2.month, d2.day),
+                    opt_type="CE", strike=25000.0, lot=75,
+                ),
+            }).encode()
+
+        db.refresh(http_get=fake_get)
+        result = db.list_expiries("NIFTY", exchange="NSE", instrument_type="OPTION")
+        assert len(result) == 2
+        assert result == sorted(result)  # sorted ascending
+        assert result[0] == future1
+        assert result[1] == future2
+        # Distinct check: adding same date again shouldn't duplicate
+        db.close()
+
+    def test_list_expiries_empty_for_unknown_symbol(self, master: FyersInstrumentMaster) -> None:
+        result = master.list_expiries("NONEXISTENT")
+        assert result == []
+
+    def test_list_expiries_empty_for_equity_type(self, master: FyersInstrumentMaster) -> None:
+        result = master.list_expiries("NIFTY", instrument_type="EQUITY")
+        assert result == []

@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import ProposalQueue from "./ProposalQueue.svelte";
+  import OrderHistory from "./OrderHistory.svelte";
   import ResearchPanel from "./ResearchPanel.svelte";
   import KnowledgePanel from "./KnowledgePanel.svelte";
   import LogDrawer from "./LogDrawer.svelte";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
 
-  type TabId = "proposals" | "research" | "logs";
+  type TabId = "proposals" | "orders" | "research" | "logs";
 
   let { open = $bindable(false) }: { open?: boolean } = $props();
 
@@ -14,6 +15,7 @@
 
   const tabs: { id: TabId; label: string }[] = [
     { id: "proposals", label: "Proposals" },
+    { id: "orders", label: "Orders" },
     { id: "research", label: "Research" },
     { id: "logs", label: "Logs" },
   ];
@@ -41,6 +43,10 @@
     {#if activeTab === "proposals"}
       <ScrollArea class="h-full" orientation="vertical">
         <ProposalQueue />
+      </ScrollArea>
+    {:else if activeTab === "orders"}
+      <ScrollArea class="h-full" orientation="vertical">
+        <OrderHistory />
       </ScrollArea>
     {:else if activeTab === "research"}
       <ScrollArea class="h-full" orientation="vertical">

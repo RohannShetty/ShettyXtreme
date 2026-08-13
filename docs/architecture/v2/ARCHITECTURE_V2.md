@@ -95,6 +95,7 @@ Fyers Data WS (HSM socket, supervised) → FyersDataAdapter → EventBus (Market
 - ADR-006 — options-first market focus (D6)
 - ADR-007 — Dhan single-primary + data-fallback credentials (D8) — **superseded by ADR-008**
 - ADR-008 — Fyers migration: replace Dhan as the primary broker (D8, 2026-08-05)
+- ADR-009 — IAF backtesting integration: event-driven backtest engine + strategy comparison (2026-08-12)
 
 ## Phase Map (detail in Section 17)
 

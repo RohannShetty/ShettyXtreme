@@ -18,6 +18,27 @@ from shettyxtreme.terminal.api import ws_bridge
 logger = logging.getLogger(__name__)
 
 
+# ── Connection State (P1-2.4) ──────────────────────────────────────────────
+
+# Tick-staleness threshold in seconds: if no market-data tick arrives within
+# this window the data-adapter component transitions to STALE.
+_TICK_STALE_SECONDS: float = 60.0
+
+
+class ConnectionState(str, Enum):
+    """Single source of truth for the connection pip in the header.
+
+    Transitions:
+        DISCONNECTED → CONNECTING → CONNECTED → STALE → EXPIRED
+        EXPIRED supersedes all; token re-auth returns to CONNECTING.
+    """
+    DISCONNECTED = "disconnected"
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    STALE = "stale"
+    EXPIRED = "expired"
+
+
 # ── Watchlist Projection ─────────────────────────────────────────────────────
 
 class WatchlistProjection:
@@ -59,6 +80,8 @@ class WatchlistProjection:
             "strike": d.get("strike", existing.get("strike")),
             "option_type": d.get("option_type", existing.get("option_type")),
             "security_id": d.get("security_id", existing.get("security_id")),
+            "expiry": existing.get("expiry"),
+            "lot_size": existing.get("lot_size"),
             "timestamp": d.get("timestamp", event.timestamp),
         }
         await ws_bridge.broadcast("tick", {
@@ -71,7 +94,14 @@ class WatchlistProjection:
             "option_type": self._data[symbol]["option_type"],
         })
 
-    def add(self, symbol: str, exchange: str = "NSE", security_id: str | None = None) -> dict[str, Any]:
+    def add(
+        self,
+        symbol: str,
+        exchange: str = "NSE",
+        security_id: str | None = None,
+        expiry: str | None = None,
+        lot_size: int | None = None,
+    ) -> dict[str, Any]:
         if symbol not in self._data:
             self._data[symbol] = {
                 "symbol": symbol,
@@ -83,8 +113,16 @@ class WatchlistProjection:
                 "strike": None,
                 "option_type": None,
                 "security_id": security_id,
+                "expiry": expiry,
+                "lot_size": lot_size,
                 "timestamp": None,
             }
+        else:
+            # Update metadata on re-add (e.g. persistence reload)
+            if expiry is not None:
+                self._data[symbol]["expiry"] = expiry
+            if lot_size is not None:
+                self._data[symbol]["lot_size"] = lot_size
         return self._data[symbol]
 
     def remove(self, symbol: str) -> None:
@@ -113,16 +151,27 @@ class PositionProjection:
         d = event.data
         symbol = d.get("symbol", "")
         idx = self._index.get(symbol)
+        # P3-4.3: merge trade context from fill event into the position
+        # projection so the API can surface SL/TGT/rationale/confidence.
+        existing = self._positions[idx] if idx is not None else {}
         pos = {
             "symbol": symbol,
-            "exchange": d.get("exchange", "NSE"),
+            "exchange": d.get("exchange", existing.get("exchange", "NSE")),
             "quantity": d.get("quantity", 0),
             "buy_avg": d.get("buy_avg", d.get("avg_price", 0.0)),
             "net_quantity": d.get("net_quantity", d.get("quantity", 0)),
             "m2m": d.get("m2m", 0.0),
             "pnl": d.get("pnl", 0.0),
-            "product": d.get("product", "NRML"),
+            "product": d.get("product", existing.get("product", "NRML")),
         }
+        # Carry trade context if present (from paper engine fill event).
+        for ctx_key in ("signal_id", "stop_loss", "target", "rationale",
+                        "confidence", "lot_size"):
+            val = d.get(ctx_key)
+            if val is not None:
+                pos[ctx_key] = val
+            elif ctx_key in existing:
+                pos[ctx_key] = existing[ctx_key]
         if idx is not None:
             self._positions[idx] = pos
         else:
@@ -312,6 +361,58 @@ class IntelligenceProjection:
         bus.subscribe(Topic.SIGNAL_GENERATED, self.on_signal_v2)
 
 
+# ── Scanner Projection ─────────────────────────────────────────────────────
+
+class ScannerProjection:
+    """Subscribes to SCANNER_FINDING, stores capped per-type finding lists.
+
+    Each finding carries ``scanner_type`` (a string matching ScannerType
+    values), ``symbol``, ``severity``, ``detail``, and ``timestamp``.
+    The projection groups findings by scanner_type so the REST endpoint
+    can filter by type.
+    """
+
+    MAX_PER_TYPE = 100
+
+    def __init__(self) -> None:
+        self._findings: dict[str, list[dict[str, Any]]] = {}
+
+    async def on_scanner_finding(self, event: Event) -> None:
+        d = event.data
+        if not isinstance(d, dict):
+            return
+        scanner_type = d.get("scanner_type", "unknown")
+        if scanner_type not in self._findings:
+            self._findings[scanner_type] = []
+        self._findings[scanner_type].append({
+            "scanner_type": scanner_type,
+            "symbol": d.get("symbol", ""),
+            "severity": d.get("severity", "MEDIUM"),
+            "detail": d.get("detail", {}),
+            "timestamp": d.get("timestamp", event.timestamp),
+        })
+        if len(self._findings[scanner_type]) > self.MAX_PER_TYPE:
+            self._findings[scanner_type] = self._findings[scanner_type][-self.MAX_PER_TYPE:]
+
+    def get(self, scanner_type: str | None = None) -> list[dict[str, Any]]:
+        """Return findings, optionally filtered by scanner_type."""
+        if scanner_type:
+            return list(self._findings.get(scanner_type, []))
+        result: list[dict[str, Any]] = []
+        for findings in self._findings.values():
+            result.extend(findings)
+        # Sort by timestamp descending (most recent first)
+        result.sort(key=lambda f: str(f.get("timestamp", "")), reverse=True)
+        return result
+
+    def count_by_type(self) -> dict[str, int]:
+        """Return count of findings per scanner type."""
+        return {k: len(v) for k, v in self._findings.items()}
+
+    def subscribe(self, bus: EventBus) -> None:
+        bus.subscribe(Topic.SCANNER_FINDING, self.on_scanner_finding)
+
+
 def _data_adapter_connected(adapter: Any) -> bool | None:
     """Sync connectivity view that works for both adapter shapes.
 
@@ -329,25 +430,56 @@ def _data_adapter_connected(adapter: Any) -> bool | None:
     return None
 
 
-def _data_adapter_stale(adapter: Any, threshold: float = 60.0) -> bool:
-    """True when the adapter reports no fresh ticks past the threshold.
+def _data_adapter_reconnecting(adapter: Any) -> bool:
+    """True when the data-socket supervisor is actively retrying.
 
-    The Fyers adapter aggregates bars client-side and does not track a
-    last-tick timestamp, so ``is_stale`` is absent — treated as not stale.
+    The Fyers data socket sets ``_reconnecting = True`` during backoff
+    (``data_socket.py:288``).  During reconnect the ``connected`` property
+    returns False, but the UI should show CONNECTING, not DISCONNECTED.
+    """
+    if getattr(adapter, "_reconnecting", False):
+        return True
+    socket = getattr(adapter, "_data_socket", None)
+    if socket is not None:
+        return bool(getattr(socket, "_reconnecting", False))
+    return False
+
+
+def _data_adapter_stale(
+    adapter: Any,
+    threshold: float = _TICK_STALE_SECONDS,
+    tick_timestamp: datetime | None = None,
+) -> bool:
+    """True when no fresh ticks have arrived past the threshold.
+
+    P1-2.4: now checks the adapter's own ``is_stale`` method first (for
+    adapters that implement it), then falls back to a tick-activity-based
+    check using the projection's ``tick_timestamp`` (set by the
+    ``MARKET_DATA_TICK`` subscriber).
     """
     is_stale = getattr(adapter, "is_stale", None)
-    if is_stale is None:
-        return False
-    try:
-        return bool(is_stale(threshold=threshold))
-    except (TypeError, AttributeError):
-        return False
+    if is_stale is not None:
+        try:
+            return bool(is_stale(threshold=threshold))
+        except (TypeError, AttributeError):
+            pass
+    # Fallback: tick-activity-based staleness (P1-2.4).
+    if tick_timestamp is not None:
+        return (datetime.now(UTC) - tick_timestamp).total_seconds() > threshold
+    return False
 
 
 # ── Health Projection ────────────────────────────────────────────────────────
 
 class HealthProjection:
-    """Checks actual service health instead of hardcoded values."""
+    """Stateful, event-driven health projection (P1-2.4).
+
+    Subscribes to ``SYSTEM_STATUS``, ``CREDENTIAL_HEALTH_CHANGED``, and
+    ``MARKET_DATA_TICK`` on the EventBus and maintains a single
+    :class:`ConnectionState` value as the canonical connection status.
+    Pushes state transitions to the browser via ``ws_bridge.broadcast()``
+    so the UI is event-driven, not purely polled.
+    """
 
     def __init__(self) -> None:
         self._event_bus: EventBus | None = None
@@ -356,9 +488,18 @@ class HealthProjection:
         self._feature_engine: Any = None
         self._signal_engine: Any = None
         self._token_health_provider: Any = None
+        # P1-2.4: stateful connection tracking.
+        self._state: ConnectionState = ConnectionState.DISCONNECTED
+        self._last_credential_status: str = "UNKNOWN"
+        self._last_tick_ts: datetime | None = None
+        self._last_transition_detail: str = ""
 
     def subscribe(self, event_bus: EventBus) -> None:
+        """Store the bus reference AND subscribe to health-relevant topics."""
         self._event_bus = event_bus
+        event_bus.subscribe(Topic.SYSTEM_STATUS, self.on_system_status)
+        event_bus.subscribe(Topic.CREDENTIAL_HEALTH_CHANGED, self.on_credential_health)
+        event_bus.subscribe(Topic.MARKET_DATA_TICK, self.on_market_data_tick)
 
     def configure(
         self,
@@ -377,6 +518,90 @@ class HealthProjection:
         self._feature_engine = feature_engine
         self._signal_engine = signal_engine
         self._token_health_provider = token_health_provider
+
+    # ── Event handlers (P1-2.4) ────────────────────────────────────────────
+
+    async def on_system_status(self, event: Event) -> None:
+        """SYSTEM_STATUS handler: socket connected / closed / error / reconnecting."""
+        status = event.data.get("status", "") if isinstance(event.data, dict) else ""
+        old = self._state
+        if status in ("connected", "data_socket_connected"):
+            self._state = ConnectionState.CONNECTED
+            self._last_transition_detail = "Data socket connected"
+        elif status in ("reconnecting", "data_socket_reconnecting"):
+            self._state = ConnectionState.CONNECTING
+            self._last_transition_detail = "Reconnecting…"
+        elif status in ("disconnected", "data_socket_closed", "error", "data_socket_error", "stopped"):
+            self._state = ConnectionState.DISCONNECTED
+            detail = str(event.data.get("error", "")) if isinstance(event.data, dict) else ""
+            self._last_transition_detail = detail or f"Socket {status}"
+        if self._state != old:
+            await self._broadcast_transition()
+
+    async def on_credential_health(self, event: Event) -> None:
+        """CREDENTIAL_HEALTH_CHANGED handler: EXPIRED / EXPIRING_SOON / HEALTHY."""
+        status = event.data.get("status", "UNKNOWN") if isinstance(event.data, dict) else "UNKNOWN"
+        self._last_credential_status = status
+        old = self._state
+        if status in ("EXPIRED", "EXPIRING_SOON"):
+            self._state = ConnectionState.EXPIRED
+            self._last_transition_detail = f"Token {status.lower()}"
+        elif status == "HEALTHY" and old == ConnectionState.EXPIRED:
+            # Token refreshed after EXPIRED — return to CONNECTING while the
+            # socket re-establishes.
+            self._state = ConnectionState.CONNECTING
+            self._last_transition_detail = "Token refreshed — reconnecting"
+        if self._state != old:
+            await self._broadcast_transition()
+
+    async def on_market_data_tick(self, event: Event) -> None:
+        """MARKET_DATA_TICK handler: track last-tick timestamp for STALE detection."""
+        self._last_tick_ts = event.timestamp
+
+    async def _broadcast_transition(self) -> None:
+        """Push the current state to all connected WS clients."""
+        await ws_bridge.broadcast("connection", {
+            "state": self._state.value,
+            "detail": self._last_transition_detail,
+        })
+
+    # ── State computation ──────────────────────────────────────────────────
+
+    def _compute_state(self) -> tuple[ConnectionState, str]:
+        """Derive the canonical connection state from all inputs.
+
+        Priority (highest first):
+          EXPIRED  — token is dead, nothing else matters
+          DISCONNECTED — data socket is down (not reconnecting)
+          CONNECTING — data socket is reconnecting
+          STALE — connected but no ticks for >60s
+          CONNECTED — all systems nominal
+        """
+        # Token expiry supersedes everything.
+        if self._last_credential_status in ("EXPIRED", "EXPIRING_SOON"):
+            return ConnectionState.EXPIRED, "Token expired — re-authentication required"
+        # Token health provider (callable) as fallback.
+        if (self._token_health_provider is not None
+                and not self._token_health_provider()):
+            return ConnectionState.EXPIRED, "Token expired — re-authentication required"
+
+        da = self._data_adapter
+        if da is None:
+            return ConnectionState.DISCONNECTED, "Data adapter not initialized"
+        if getattr(da, "entitlement_error", False):
+            return ConnectionState.DISCONNECTED, "Data API entitlement missing"
+
+        connected = _data_adapter_connected(da)
+        if connected is False:
+            if _data_adapter_reconnecting(da):
+                return ConnectionState.CONNECTING, "Reconnecting data socket…"
+            return ConnectionState.DISCONNECTED, "Data socket disconnected"
+        if _data_adapter_stale(da, tick_timestamp=self._last_tick_ts):
+            return ConnectionState.STALE, "No market data ticks for >60s"
+
+        return ConnectionState.CONNECTED, ""
+
+    # ── Public API ─────────────────────────────────────────────────────────
 
     def get(self) -> dict[str, Any]:
         now = datetime.now(UTC)
@@ -399,7 +624,7 @@ class HealthProjection:
             "message": eb_msg,
         })
 
-        # Data adapter
+        # Data adapter — now with CONNECTING and tick-based STALE.
         da_status = "healthy"
         da_msg = ""
         if self._data_adapter is None:
@@ -409,11 +634,15 @@ class HealthProjection:
             da_status = "down"
             da_msg = "Data API entitlement missing (Fyers 403/-373) — subscribe to Data APIs"
         elif _data_adapter_connected(self._data_adapter) is False:
-            da_status = "disconnected"
-            da_msg = "WebSocket not connected"
-        elif _data_adapter_stale(self._data_adapter):
+            if _data_adapter_reconnecting(self._data_adapter):
+                da_status = "connecting"
+                da_msg = "Reconnecting data socket…"
+            else:
+                da_status = "disconnected"
+                da_msg = "WebSocket not connected"
+        elif _data_adapter_stale(self._data_adapter, tick_timestamp=self._last_tick_ts):
             da_status = "stale"
-            da_msg = "No market data ticks for >60s"
+            da_msg = f"No market data ticks for >{int(_TICK_STALE_SECONDS)}s"
         components.append({
             "name": "data_adapter",
             "status": da_status,
@@ -422,7 +651,7 @@ class HealthProjection:
             "message": da_msg,
         })
 
-        # Trading adapter
+        # Trading adapter — now also checks is_connected() (P1-2.4).
         ta_status = "healthy"
         ta_msg = ""
         if self._trading_adapter is None:
@@ -431,6 +660,25 @@ class HealthProjection:
         elif self._token_health_provider is not None and not self._token_health_provider():
             ta_status = "token_expired"
             ta_msg = "Token expired — re-authentication required"
+        elif hasattr(self._trading_adapter, "is_connected"):
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Can't await in sync context — use is_session_valid as
+                    # a cheap proxy (FyersTradingAdapter.is_connected delegates
+                    # to session.is_valid anyway).
+                    if hasattr(self._trading_adapter, "is_session_valid"):
+                        if not self._trading_adapter.is_session_valid():
+                            ta_status = "disconnected"
+                            ta_msg = "Trading session invalid"
+                # If loop is not running, we could await, but get() is sync —
+                # fall through to is_session_valid as the safe proxy.
+            except RuntimeError:
+                if hasattr(self._trading_adapter, "is_session_valid"):
+                    if not self._trading_adapter.is_session_valid():
+                        ta_status = "disconnected"
+                        ta_msg = "Trading session invalid"
         components.append({
             "name": "trading_adapter",
             "status": ta_status,
@@ -467,7 +715,15 @@ class HealthProjection:
             if c["status"] == "down":
                 overall = "down"
                 break
-            if c["status"] != "healthy" and overall != "down":
+            if c["status"] not in ("healthy", "connecting") and overall != "down":
                 overall = "degraded"
 
-        return {"components": components, "overall": overall}
+        # P1-2.4: derive and store the canonical connection state.
+        self._state, self._last_transition_detail = self._compute_state()
+
+        return {
+            "components": components,
+            "overall": overall,
+            "state": self._state.value,
+            "detail": self._last_transition_detail,
+        }

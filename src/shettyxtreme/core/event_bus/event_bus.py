@@ -43,6 +43,7 @@ class Topic(Enum):
     SCANNER_GAP = "scanner.gap"
     SCANNER_CLUSTER = "scanner.cluster"
     SCANNER_LOG = "scanner.log"
+    SCANNER_FINDING = "scanner.finding"
 
 @dataclass
 class Event:

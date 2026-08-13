@@ -198,7 +198,7 @@ class FyersInstrumentMaster:
             os.makedirs(db_dir, exist_ok=True)
 
     def _init_db(self) -> None:
-        self._conn = sqlite3.connect(self._db_path)
+        self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._conn.execute(_SCHEMA)
         self._conn.execute(_SCHEMA_META)
         self._conn.execute(
@@ -482,6 +482,135 @@ class FyersInstrumentMaster:
             params,
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
+
+    def get_lot_size(
+        self,
+        internal_symbol: str,
+        exchange: str = "NSE",
+        instrument_type: str = "INDEX",
+    ) -> int | None:
+        """Lot size for an internal symbol (e.g. ``NIFTY``).
+
+        Prefers an INDEX row (uniform per underlying); callers with a
+        concrete contract ticker should use ``lookup(ticker)['lot_size']``
+        instead.  Returns ``None`` when the symbol is unknown or the
+        master mirror is empty.
+        """
+        rows = self.search(
+            internal_symbol, exchange=exchange, instrument_type=instrument_type,
+        )
+        if not rows:
+            rows = self.search(internal_symbol, exchange=exchange)
+        for r in rows:
+            lot = r.get("lot_size")
+            if lot is not None:
+                return int(lot)
+        return None
+
+    def search_prefix(
+        self,
+        query: str,
+        exchange: str | None = None,
+        instrument_type: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Prefix + substring search on ``internal_symbol``.
+
+        Applies alias resolution (``SYMBOL_ALIASES`` from ``core/knowledge/lexicons.py``)
+        before querying. Returns up to ``limit`` rows, deduped per
+        ``(internal_symbol, instrument_type)``, preferring INDEX/EQUITY rows.
+
+        Args:
+            query: User input (e.g. ``BNF``, ``RELI``, ``NIFTY``).
+            exchange: Optional exchange filter.
+            instrument_type: Optional instrument type filter.
+            limit: Max rows to return (default 20).
+
+        Returns:
+            Matching instrument rows ordered by prefix-match-first then ticker.
+        """
+        if self._conn is None or not query.strip():
+            return []
+
+        # Alias-map + uppercase
+        from shettyxtreme.core.knowledge.lexicons import SYMBOL_ALIASES
+
+        q = query.strip().upper()
+        q = SYMBOL_ALIASES.get(q, q)
+        if not q:
+            return []
+
+        # Build WHERE clauses — prefix match first, then substring fallback
+        # combined in one query with ORDER BY to prefer prefix matches.
+        clauses: list[str] = []
+        params: list[Any] = []
+
+        # Match: prefix OR substring (prefix ranked higher via CASE)
+        clauses.append("(internal_symbol LIKE ? OR internal_symbol LIKE ?)")
+        params.extend([f"{q}%", f"%{q}%"])
+
+        if exchange:
+            clauses.append("exchange = ?")
+            params.append(exchange.upper())
+        if instrument_type:
+            clauses.append("instrument_type = ?")
+            params.append(instrument_type.upper())
+
+        # Filter out UNKNOWN noise
+        clauses.append("instrument_type != 'UNKNOWN'")
+
+        where = " AND ".join(clauses)
+        # Prefer prefix matches (0) over substring (1), then INDEX > EQUITY > rest, then ticker
+        rows = self._conn.execute(
+            f"SELECT fyers_symbol, internal_symbol, exchange, instrument_type, "
+            f"expiry, strike, option_type, lot_size, tick_size, isin, raw_json "
+            f"FROM fyers_instruments WHERE {where} "
+            f"ORDER BY "
+            f"  CASE WHEN internal_symbol LIKE ? THEN 0 ELSE 1 END, "
+            f"  CASE instrument_type "
+            f"    WHEN 'INDEX' THEN 0 WHEN 'EQUITY' THEN 1 "
+            f"    WHEN 'FUTURES' THEN 2 WHEN 'OPTION' THEN 3 ELSE 4 END, "
+            f"  fyers_symbol "
+            f"LIMIT ?",
+            params + [f"{q}%", int(limit * 3)],  # fetch extra for dedup
+        ).fetchall()
+
+        # Dedup per (internal_symbol, instrument_type), preferring INDEX/EQUITY
+        seen: set[tuple[str, str]] = set()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            d = self._row_to_dict(row)
+            key = (d["internal_symbol"], d["instrument_type"])
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(d)
+            if len(result) >= limit:
+                break
+        return result
+
+    def list_expiries(
+        self,
+        internal_symbol: str,
+        exchange: str = "NSE",
+        instrument_type: str = "OPTION",
+    ) -> list[str]:
+        """Distinct sorted future expiry dates (ISO strings) for an underlying.
+
+        Only returns dates >= today (future or today). Returns an empty list
+        when no matching rows exist or the mirror is empty.
+        """
+        if self._conn is None:
+            return []
+        today = datetime.now(UTC).date().isoformat()
+        rows = self._conn.execute(
+            "SELECT DISTINCT expiry FROM fyers_instruments "
+            "WHERE internal_symbol = ? AND exchange = ? AND instrument_type = ? "
+            "AND expiry IS NOT NULL AND expiry >= ? "
+            "ORDER BY expiry ASC",
+            (internal_symbol, exchange.upper(), instrument_type.upper(), today),
+        ).fetchall()
+        return [str(row[0]) for row in rows]
 
     def _row_to_dict(self, row: tuple[Any, ...]) -> dict[str, Any]:
         return dict(zip(_COLUMNS, row))

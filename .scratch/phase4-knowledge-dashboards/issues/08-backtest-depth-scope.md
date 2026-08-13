@@ -26,3 +26,17 @@ Evidence (live codebase, read-only):
 Trigger ("comparison-surface need"): NOT met. Live edge remains the deterministic engine (per the answer above; backtest-theater risk).
 
 Verdict: **KEEP DEFERRED.** Re-open only if a strategy-comparison surface becomes a concrete requirement.
+
+## Re-evaluation — 2026-08-12 (P2-3.4 Backtesting Engine)
+
+Status: **RE-OPENED → IMPLEMENTING**
+
+Trigger ("comparison-surface need"): **MET.** IAF's `BacktestReport` provides exactly the strategy-comparison surface the deferral was waiting for. ADR-009 records the integration boundary.
+
+Evidence:
+- IAF (`coding-kitties/investing-algorithm-framework`, Apache-2.0) provides event-driven backtesting, `PositionSize`/`ScalingRule`, `StopLossRule`/`TakeProfitRule`, `CooldownRule`, 30+ metrics, and `BacktestReport` comparison dashboard.
+- IAF is vendored at `vendor/iaf/` via `scripts/sync_vendor.py` (ADR-002 precedent).
+- ACL at `integration/external/iaf_adapter.py` + `core/interfaces/backtest_engine.py` Protocol (FR-004/FR-005).
+- Grep gate: `grep -r "import investing_algorithm_framework" src/` = zero outside adapter.
+
+Verdict: **IMPLEMENTING.** ADR-009 accepted; adapter + tests in progress.

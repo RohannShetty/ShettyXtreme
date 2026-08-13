@@ -140,3 +140,35 @@ test("live tick also updates the OI column from the payload oi field", async () 
     expect(container.textContent).toMatch(/7[,\s\u00a0]?77[,\s\u00a0]?777/);
   });
 });
+
+test("greeks columns (Δ/Γ/Θ/V) render for CE and PE sides", async () => {
+  const container = await renderLoaded();
+
+  // Delta values from the fixture: CE 25000 delta=0.55, PE 25000 delta=-0.45
+  // fmtGreek uses en-IN locale with 2 decimal places for delta
+  await waitFor(() => {
+    const text = container.textContent ?? "";
+    // CE delta 0.55
+    expect(text).toContain("0.55");
+    // PE delta -0.45
+    expect(text).toContain("-0.45");
+    // Theta values: CE theta=-2.0, PE theta=-1.8
+    expect(text).toContain("-2.00");
+    expect(text).toContain("-1.80");
+    // Vega values: CE vega=1.5, PE vega=1.4
+    expect(text).toContain("1.50");
+    expect(text).toContain("1.40");
+  });
+});
+
+test("greeks column headers render Δ/Γ/Θ/V labels", async () => {
+  const container = await renderLoaded();
+
+  await waitFor(() => {
+    const text = container.textContent ?? "";
+    // Greek letter labels appear in the header
+    expect(text).toContain("Δ");
+    expect(text).toContain("Γ");
+    expect(text).toContain("Θ");
+  });
+});

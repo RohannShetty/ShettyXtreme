@@ -114,3 +114,34 @@ def test_sizing_hook_sets_quantity_with_strike() -> None:
 def test_no_sizing_no_quantity() -> None:
     hint = StrategyHints(signal=BULLISH_SIGNAL).generate()
     assert hint.quantity is None
+
+
+def test_hints_premium_from_ltp() -> None:
+    """Hints must work when chain rows use 'ltp' instead of 'premium' (Fyers v3)."""
+    chain_ltp = [
+        {"strike": 24000, "option_type": "CE", "ltp": 150.0, "lot_size": 25, "iv": 15.0},
+        {"strike": 24100, "option_type": "CE", "ltp": 100.0, "lot_size": 25, "iv": 15.0},
+    ]
+    hint = StrategyHints(
+        signal=BULLISH_SIGNAL, chain=chain_ltp, current_price=24000.0,
+        slippage_per_lot=0.0, brokerage_per_lot=0.0,
+    ).generate()
+    assert hint.direction == "bullish"
+    assert hint.strike == 24000.0
+    assert hint.premium == pytest.approx(150.0)
+    assert hint.ev_after_cost > 0
+
+
+def test_hints_premium_from_last_price() -> None:
+    """Hints must work when chain rows use 'last_price' (alternative key)."""
+    chain_last_price = [
+        {"strike": 24000, "option_type": "CE", "last_price": 150.0, "lot_size": 25, "iv": 15.0},
+        {"strike": 24100, "option_type": "CE", "last_price": 100.0, "lot_size": 25, "iv": 15.0},
+    ]
+    hint = StrategyHints(
+        signal=BULLISH_SIGNAL, chain=chain_last_price, current_price=24000.0,
+        slippage_per_lot=0.0, brokerage_per_lot=0.0,
+    ).generate()
+    assert hint.direction == "bullish"
+    assert hint.strike == 24000.0
+    assert hint.premium == pytest.approx(150.0)

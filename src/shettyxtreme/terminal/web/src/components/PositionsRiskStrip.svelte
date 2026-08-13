@@ -24,6 +24,23 @@
     m2m: number;
     pnl: number;
     product: string;
+    strike?: number | null;
+    option_type?: string | null;
+    expiry?: string | null;
+    instrument_type?: string | null;
+    greeks?: {
+      delta: number;
+      gamma: number;
+      theta: number;
+      vega: number;
+    } | null;
+    // P3-4.3: trade context from the originating proposal.
+    stop_loss?: number | null;
+    target?: number | null;
+    rationale?: string | null;
+    confidence?: number | null;
+    signal_id?: string | null;
+    lot_size?: number | null;
   };
 
   type Risk = {
@@ -72,6 +89,11 @@
     return value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
+  function fmtGreek(value: number | undefined): string {
+    if (value === undefined || !isFinite(value) || value === 0) return "—";
+    return value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
   let marginUnknown = $derived(risk !== null && risk.margin_available === null);
   let marginRatio = $derived(
     risk && risk.margin_available !== null && risk.margin_used + risk.margin_available > 0
@@ -99,20 +121,34 @@
           <TableHeader>
             <TableRow class="hover:bg-transparent">
               <TableHead>Symbol</TableHead>
+              <TableHead class="text-right" title="Strike price">Strike</TableHead>
+              <TableHead class="text-right" title="Option type">Type</TableHead>
+              <TableHead class="text-right" title="Expiry date">Expiry</TableHead>
               <TableHead class="text-right">Qty</TableHead>
               <TableHead class="text-right">Avg</TableHead>
               <TableHead class="text-right">M2M</TableHead>
               <TableHead class="text-right">P&L</TableHead>
+              <TableHead class="text-right greek-col-head" title="Position Delta">Δ</TableHead>
+              <TableHead class="text-right greek-col-head" title="Position Gamma">Γ</TableHead>
+              <TableHead class="text-right greek-col-head" title="Position Theta (daily)">Θ</TableHead>
+              <TableHead class="text-right greek-col-head" title="Position Vega">V</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {#each positions as p (p.symbol)}
               <TableRow>
                 <TableCell class="font-mono font-semibold text-ink">{p.symbol}</TableCell>
+                <TableCell class="font-mono text-right tabular-nums">{p.strike ?? "—"}</TableCell>
+                <TableCell class="font-mono text-right tabular-nums {p.option_type === 'CE' ? 'text-option-call' : p.option_type === 'PE' ? 'text-option-put' : ''}">{p.option_type ?? "—"}</TableCell>
+                <TableCell class="font-mono text-right tabular-nums text-xs">{p.expiry ?? "—"}</TableCell>
                 <TableCell class="font-mono text-right tabular-nums">{p.net_quantity}</TableCell>
                 <TableCell class="font-mono text-right tabular-nums">{p.buy_avg ? fmtAvg(p.buy_avg) : "—"}</TableCell>
                 <TableCell class="font-mono text-right tabular-nums {pnlClass(p.m2m)}">{fmtMoney(p.m2m)}</TableCell>
                 <TableCell class="font-mono text-right tabular-nums {pnlClass(p.pnl)}">{fmtMoney(p.pnl)}</TableCell>
+                <TableCell class="font-mono text-right tabular-nums greek-val">{fmtGreek(p.greeks?.delta)}</TableCell>
+                <TableCell class="font-mono text-right tabular-nums greek-val">{fmtGreek(p.greeks?.gamma)}</TableCell>
+                <TableCell class="font-mono text-right tabular-nums greek-val">{fmtGreek(p.greeks?.theta)}</TableCell>
+                <TableCell class="font-mono text-right tabular-nums greek-val">{fmtGreek(p.greeks?.vega)}</TableCell>
               </TableRow>
             {/each}
           </TableBody>
@@ -265,5 +301,19 @@
   .chip-mute {
     color: var(--faint);
     border: 1px solid var(--hairline-strong);
+  }
+  /* Greek column headers — Δ/Γ/Θ/V in the positions strip. */
+  :global(.greek-col-head) {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+  }
+  /* Greek value cells — secondary data, slightly muted. */
+  .greek-val {
+    color: var(--faint);
+    font-size: 11px;
   }
 </style>

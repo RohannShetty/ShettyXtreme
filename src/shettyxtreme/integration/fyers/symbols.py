@@ -57,10 +57,80 @@ _INDEX_INTERNAL_TO_TICKER: dict[str, str] = {
     "NIFTY": "NIFTY50-INDEX",
     "BANKNIFTY": "NIFTYBANK-INDEX",
     "FINNIFTY": "FINNIFTY-INDEX",
+    "MIDCPNIFTY": "MIDCPNIFTY-INDEX",
 }
 _INDEX_TICKER_TO_INTERNAL: dict[str, str] = {
     ticker[:-6]: internal for internal, ticker in _INDEX_INTERNAL_TO_TICKER.items()
 }
+
+# ---------------------------------------------------------------------------
+# Expiry calendar policy — per-underlying weekly/monthly day rules
+# ---------------------------------------------------------------------------
+
+# weekday index: Monday=0 ... Sunday=6
+_EXPIRY_POLICY: dict[str, dict[str, Any]] = {
+    "NIFTY": {"weekly_day": 3, "monthly_day": 3},           # Thu weekly, Thu monthly
+    "BANKNIFTY": {"weekly_days": [0, 1, 2, 3], "monthly_day": 3},  # Mon-Thu weekly, Thu monthly
+    "FINNIFTY": {"weekly_day": 3, "monthly_day": 3},         # Thu weekly, Thu monthly
+    "MIDCPNIFTY": {"weekly_day": 0, "monthly_day": 3},       # Mon weekly, Thu monthly
+}
+# Default policy for any symbol not in the table: monthly-only (e.g. stock options).
+_DEFAULT_POLICY: dict[str, Any] = {"monthly_day": 3}
+
+
+def _expiry_policy(symbol: str) -> dict[str, Any]:
+    """Return the expiry policy for an internal symbol."""
+    return _EXPIRY_POLICY.get(symbol.upper(), _DEFAULT_POLICY)
+
+
+def classify_expiry(symbol: str, expiry: Any) -> str:
+    """Classify an expiry date as ``"weekly"`` or ``"monthly"``.
+
+    Uses the per-underlying policy when available, falling back to the
+    generic ``is_monthly_expiry()`` heuristic.
+    """
+    d = _coerce_date(expiry, required=True)
+    policy = _expiry_policy(symbol)
+    weekly_days: list[int] | None = policy.get("weekly_days")
+    wd = policy.get("weekly_day")
+    monthly_day: int = policy.get("monthly_day", 3)  # default Thu
+
+    # Is it the last occurrence of the monthly-day weekday in the month?
+    is_last_monthly = (
+        d.weekday() == monthly_day
+        and (d + timedelta(days=7)).month != d.month
+    )
+    if is_last_monthly:
+        return "monthly"
+
+    # Check if the weekday is a known weekly day for this symbol.
+    if weekly_days is not None and d.weekday() in weekly_days:
+        return "weekly"
+    if wd is not None and d.weekday() == wd:
+        return "weekly"
+
+    # Fallback: generic heuristic.
+    return "monthly" if is_monthly_expiry(d) else "weekly"
+
+
+def resolve_default_expiry(symbol: str, expiries: list[str]) -> str | None:
+    """Pick the default expiry from a sorted list.
+
+    * Index underlyings → nearest weekly expiry.
+    * Everything else (equity/OPTSTK) → nearest monthly expiry.
+    * Falls back to the first available expiry if no match.
+    """
+    if not expiries:
+        return None
+    from shettyxtreme.integration.fyers._util import INDEX_SYMBOLS
+
+    is_index = symbol.upper() in INDEX_SYMBOLS
+    preferred = "weekly" if is_index else "monthly"
+    for e in expiries:
+        if classify_expiry(symbol, e) == preferred:
+            return e
+    return expiries[0]
+
 
 # Equity series suffixes (from the master's exSeries values).
 _EQUITY_SERIES: frozenset[str] = frozenset(

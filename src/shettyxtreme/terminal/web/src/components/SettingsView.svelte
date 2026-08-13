@@ -8,6 +8,7 @@
     getSettings,
     updateSettings,
     setTheme,
+    setColorConvention,
     getScheduler,
     updateScheduler,
     type AuthStatus,
@@ -15,6 +16,7 @@
     type SettingsScheduler,
   } from "../lib/api";
   import { applyTheme, type Theme } from "../lib/theme";
+  import { applyColorConvention, type ColorConvention } from "../lib/color-convention";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import { Card, CardContent, CardHeader, CardTitle } from "$lib/components/ui/card";
@@ -39,6 +41,11 @@
   let theme: Theme = $state("dark");
   let themeError = $state("");
   let themeSaving = $state(false);
+
+  // ── Color convention ───────────────────────────────────────────────────
+  let colorConvention: ColorConvention = $state("international");
+  let conventionError = $state("");
+  let conventionSaving = $state(false);
 
   // ── Research scheduler form + live status ───────────────────────────────
   let schedEnabled = $state(false);
@@ -86,6 +93,7 @@
     lossLimitStr = String(Math.abs(s.loss_limit));
     maxPositionsStr = String(s.max_positions);
     theme = s.theme;
+    colorConvention = s.color_convention;
     const sch = s.scheduler;
     schedEnabled = sch.enabled;
     schedIntervalStr = String(sch.interval_minutes);
@@ -201,6 +209,28 @@
       applyTheme(prev);
     } finally {
       themeSaving = false;
+    }
+  }
+
+  // ── Color convention ───────────────────────────────────────────────────
+  async function onChangeConvention(next: ColorConvention): Promise<void> {
+    if (next === colorConvention || conventionSaving) return;
+    const prev = colorConvention;
+    conventionError = "";
+    conventionSaving = true;
+    colorConvention = next;
+    applyColorConvention(next);
+    try {
+      const r = await setColorConvention(next);
+      colorConvention = r.color_convention;
+      applyColorConvention(r.color_convention);
+      toast.success(`Price colors set to ${r.color_convention}`);
+    } catch (err) {
+      conventionError = err instanceof Error ? err.message : String(err);
+      colorConvention = prev;
+      applyColorConvention(prev);
+    } finally {
+      conventionSaving = false;
     }
   }
 
@@ -427,6 +457,43 @@
         </div>
         {#if themeError}
           <p class="err-text" role="alert">{themeError}</p>
+        {/if}
+      </CardContent>
+    </Card>
+
+    <!-- Price colors — convention toggle (Indian / International). -->
+    <Card>
+      <CardHeader>
+        <CardTitle>Price colors</CardTitle>
+        <p class="card-desc">Indian (red=up, green=down) or International (green=up, red=down).</p>
+      </CardHeader>
+      <CardContent>
+        <div class="seg" role="radiogroup" aria-label="Price color convention">
+          <button
+            type="button"
+            class="seg-btn"
+            class:active={colorConvention === "international"}
+            role="radio"
+            aria-checked={colorConvention === "international"}
+            onclick={() => void onChangeConvention("international")}
+            disabled={conventionSaving}
+          >
+            International
+          </button>
+          <button
+            type="button"
+            class="seg-btn"
+            class:active={colorConvention === "indian"}
+            role="radio"
+            aria-checked={colorConvention === "indian"}
+            onclick={() => void onChangeConvention("indian")}
+            disabled={conventionSaving}
+          >
+            Indian
+          </button>
+        </div>
+        {#if conventionError}
+          <p class="err-text" role="alert">{conventionError}</p>
         {/if}
       </CardContent>
     </Card>

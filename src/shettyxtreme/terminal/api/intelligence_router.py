@@ -14,9 +14,13 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from shettyxtreme.integration.fyers._util import IST
 from shettyxtreme.intelligence.hints.strategy_hints import StrategyHints
 from shettyxtreme.options.greeks import GreeksCalculator
+from shettyxtreme.options.max_pain import compute_max_pain
 from shettyxtreme.terminal.api.models import (
+    ExpiryCalendarItem,
+    ExpiryCalendarResponse,
     OptionsChainItem,
     OptionsChainResponse,
+    OptionsSummaryResponse,
     RegimeResponse,
     SignalResponse,
     StrategyHintResponse,
@@ -186,12 +190,48 @@ async def _fetch_chain_with_spot(
     if result.get("entitlement") is True:
         raise DataEntitlementError(_ENTITLEMENT_MSG)
     if result.get("s") != "ok":
-        return [], None
+        code = result.get("code", 0)
+        msg = result.get("message", str(result))
+        if code == -373:
+            raise DataEntitlementError(_ENTITLEMENT_MSG)
+        raise HTTPException(status_code=503, detail=f"Fyers options chain error (code {code}): {msg}")
     chain = result.get("option_chain", [])
     if not isinstance(chain, list):
         return [], None
     spot = _safe_float_opt(_row_value(result, *_SPOT_ALIASES))
     return chain, spot
+
+
+def _feed_options_calculators(
+    app: Any, chain: list[dict[str, Any]], symbol: str, expiry: str,
+) -> None:
+    """Feed IV rank calculator and OI tracker from chain rows."""
+    iv_calc = getattr(app.state, "iv_rank_calculator", None)
+    oi_track = getattr(app.state, "oi_tracker", None)
+    if not iv_calc and not oi_track:
+        return
+    for row in chain:
+        if not isinstance(row, dict):
+            continue
+        # Feed IV rank calculator
+        if iv_calc:
+            iv_val = row.get("iv") or row.get("impl_volatility") or 0.0
+            try:
+                iv_float = float(iv_val)
+            except (TypeError, ValueError):
+                iv_float = 0.0
+            if iv_float > 0:
+                strike = _safe_float(_row_value(row, "strike", "strike_price"))
+                opt_type = _normalized_type(row)
+                iv_calc.record_iv(
+                    symbol, iv_float, strike=strike, expiry=expiry, option_type=opt_type,
+                )
+    # Feed OI tracker with the full chain at once
+    if oi_track:
+        try:
+            oi_track.update_from_chain(symbol=symbol, expiry=expiry, contracts=chain)
+        except Exception:
+            logger.debug("OI tracker feed failed for %s/%s", symbol, expiry, exc_info=True)
 
 
 async def prime_options_chain(app: Any) -> None:
@@ -230,6 +270,14 @@ async def prime_options_chain(app: Any) -> None:
         **getattr(app.state, "options_chain", {}),
         "NIFTY": {"spot": spot, "contracts": chain},
     }
+    # Feed IV rank calculator and OI tracker from primed chain
+    _feed_options_calculators(app, chain, "NIFTY", "")
+    # Seed IV cache for per-position greeks (raw chain rows)
+    try:
+        from shettyxtreme.terminal.api.execution_router import update_iv_cache
+        update_iv_cache(chain, spot)
+    except Exception:
+        pass
     logger.info("options chain primed: NIFTY (%d contracts)", len(chain))
 
 
@@ -348,23 +396,93 @@ async def get_options(
     symbol: str = Query("NIFTY"),
     expiry: str | None = None,
 ) -> OptionsChainResponse:
-    """Return option chain for a given symbol and expiry."""
+    """Return option chain for a given symbol and expiry.
+
+    When ``expiry`` is empty, resolves the calendar default server-side
+    (index → nearest weekly, stock → nearest monthly) instead of relying
+    on Fyers' opaque nearest-expiry behavior.
+    """
+    from shettyxtreme.integration.fyers.symbols import resolve_default_expiry
+
+    resolved_expiry = expiry
+    if not resolved_expiry or not resolved_expiry.strip():
+        master = getattr(request.app.state, "instrument_master", None)
+        if master is not None:
+            expiries = master.list_expiries(
+                symbol.strip().upper(), exchange="NSE", instrument_type="OPTION",
+            )
+            if expiries:
+                resolved_expiry = resolve_default_expiry(symbol.strip().upper(), expiries)
     try:
         chain, spot = await _fetch_chain_with_spot(
-            request.app.state.data_adapter, symbol, expiry
+            request.app.state.data_adapter, symbol, resolved_expiry
         )
     except DataEntitlementError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except DataAdapterUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    contracts = _enrich_chain(chain, spot, tte=_expiry_to_tte(expiry))
+    contracts = _enrich_chain(chain, spot, tte=_expiry_to_tte(resolved_expiry))
     # Cache the RAW rows (pre-enrichment) so the research layer's
     # options_posture tool can derive IV/PCR/OI posture from live data.
     request.app.state.options_chain = {
         **getattr(request.app.state, "options_chain", {}),
         symbol: {"spot": spot, "contracts": chain},
     }
-    return OptionsChainResponse(underlying=symbol, expiry=expiry or "", contracts=contracts)
+    # Feed IV rank calculator and OI tracker with live chain data
+    _feed_options_calculators(request.app, chain, symbol, resolved_expiry or "")
+    # Update the execution router's IV cache so per-position greeks can be
+    # computed on the positions endpoint (the chain poll and position poll
+    # are independent; this bridges them).
+    try:
+        from shettyxtreme.terminal.api.execution_router import update_iv_cache
+        # Convert OptionsChainItem pydantic models to dicts for the cache
+        enriched_dicts = [c.model_dump() for c in contracts]
+        update_iv_cache(enriched_dicts, spot)
+    except Exception:
+        logger.debug("IV cache update failed", exc_info=True)
+    return OptionsChainResponse(underlying=symbol, expiry=resolved_expiry or "", contracts=contracts)
+
+
+@router.get("/expiry-calendar", response_model=ExpiryCalendarResponse)
+async def get_expiry_calendar(
+    request: Request,
+    symbol: str = Query("NIFTY"),
+) -> ExpiryCalendarResponse:
+    """Return distinct future expiries classified as weekly/monthly.
+
+    Uses the instrument master as the source of truth. Returns the
+    policy-driven default expiry for the symbol.
+    """
+    from shettyxtreme.integration.fyers._util import INDEX_SYMBOLS
+    from shettyxtreme.integration.fyers.symbols import (
+        classify_expiry,
+        resolve_default_expiry,
+    )
+
+    master = getattr(request.app.state, "instrument_master", None)
+    if master is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Instrument master not available",
+        )
+
+    sym = symbol.strip().upper()
+    # Indices use OPTION expiries; equities also query OPTION (F&O segment).
+    instrument_type = "OPTION"
+    expiries = master.list_expiries(sym, exchange="NSE", instrument_type=instrument_type)
+
+    items = [
+        ExpiryCalendarItem(date=e, kind=classify_expiry(sym, e))
+        for e in expiries
+    ]
+    default = resolve_default_expiry(sym, expiries)
+
+    return ExpiryCalendarResponse(
+        symbol=sym,
+        instrument_type=instrument_type,
+        expiries=items,
+        default=default,
+    )
 
 
 @router.get("/strategy-hint", response_model=StrategyHintResponse)
@@ -397,4 +515,60 @@ async def get_strategy_hint(request: Request) -> StrategyHintResponse:
         premium=hint.premium,
         ev_after_cost=hint.ev_after_cost,
         rationale=hint.rationale,
+        expiry=hint.leg.expiry if hint.leg else None,
+        option_type=hint.leg.option_type if hint.leg else None,
+        lot_size=hint.leg.lot_size if hint.leg else None,
+        lots=hint.leg.lots if hint.leg else None,
+        entry_premium=hint.leg.entry_premium if hint.leg else None,
+        stop_loss=hint.stop_loss,
+        target=hint.target,
+        confidence=hint.confidence,
+    )
+
+
+@router.get("/options-summary", response_model=OptionsSummaryResponse)
+async def get_options_summary(
+    request: Request,
+    symbol: str = Query("NIFTY"),
+) -> OptionsSummaryResponse:
+    """Return options analytics summary: max pain, PCR, IV rank."""
+    # Get chain data — use cache if available, otherwise fetch
+    cached = getattr(request.app.state, "options_chain", {}).get(symbol)
+    if cached and cached.get("contracts"):
+        chain = cached["contracts"]
+    else:
+        try:
+            chain, _spot = await _fetch_chain_with_spot(
+                request.app.state.data_adapter, symbol, None,
+            )
+        except (DataEntitlementError, DataAdapterUnavailable):
+            chain = []
+        except Exception:
+            logger.debug("options-summary fetch failed for %s", symbol, exc_info=True)
+            chain = []
+
+    max_pain_val = compute_max_pain(chain) if chain else None
+
+    # PCR from OI tracker
+    oi_track = getattr(request.app.state, "oi_tracker", None)
+    pcr_val = oi_track.get_pcr(symbol) if oi_track else None
+    if pcr_val == 0.0:
+        pcr_val = None
+
+    # IV rank from calculator
+    iv_calc = getattr(request.app.state, "iv_rank_calculator", None)
+    iv_rank_val: float | None = None
+    iv_class_val: str | None = None
+    if iv_calc:
+        result = iv_calc.compute_iv_rank_percent(symbol)
+        if result is not None:
+            iv_rank_val = result.iv_rank_percent
+            iv_class_val = result.classification
+
+    return OptionsSummaryResponse(
+        underlying=symbol,
+        max_pain=max_pain_val,
+        pcr=pcr_val,
+        iv_rank_percent=iv_rank_val,
+        iv_classification=iv_class_val,
     )

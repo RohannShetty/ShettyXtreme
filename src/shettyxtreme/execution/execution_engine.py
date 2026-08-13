@@ -29,6 +29,7 @@ from shettyxtreme.core.interfaces.order_executor import OrderExecutor
 from shettyxtreme.integration.order_validator import OrderValidator
 from shettyxtreme.intelligence.risk.risk_engine import (
     Portfolio,
+    ProposalRiskContext,
     RiskDecision,
     RiskEngine,
 )
@@ -193,6 +194,7 @@ class ExecutionEngine:
         approval_timeout_seconds: int = 300,
         db_path: str | None = None,
         portfolio_provider: Callable[[], Portfolio] | None = None,
+        event_bus: Any | None = None,
     ) -> None:
         self._executor = executor
         self._risk_engine = risk_engine
@@ -201,6 +203,7 @@ class ExecutionEngine:
         self._db_path = db_path
         self._approvals: dict[str, PendingApproval] = {}
         self._portfolio_provider = portfolio_provider
+        self._event_bus = event_bus
         if db_path is not None:
             self._init_db()
             self._load_approvals()
@@ -325,13 +328,35 @@ class ExecutionEngine:
             raise RuntimeError(f"approval {approval_id} is not pending (status={approval.status})")
 
         order = self._build_order(approval.signal, approval.strategy_hint)
+        # P3-4.3: link the order back to its originating signal so the fill
+        # event and position projection can trace the trade back to the plan.
+        order.signal_id = approval.signal_id
+
+        # Build proposal risk context from strategy_hint + built order
+        hint = approval.strategy_hint
+        proposal = ProposalRiskContext(
+            symbol=order.symbol,
+            side=order.side.value,
+            quantity=order.quantity,
+            entry_price=order.price or hint.get("entry_premium"),
+            stop_loss=hint.get("stop_loss"),
+            target=hint.get("target"),
+            product=order.product.value if hasattr(order.product, "value") else str(order.product),
+            lot_size=order.lot_size or hint.get("lot_size"),
+            underlying=hint.get("underlying"),
+            estimated_margin=hint.get("estimated_margin"),
+        )
 
         portfolio = await self._get_portfolio()
-        decision: RiskDecision = self._risk_engine.check_entry(approval.signal, portfolio)
+        decision: RiskDecision = self._risk_engine.check_entry(
+            approval.signal, portfolio, proposal,
+        )
         if not decision.allowed:
             approval.status = ApprovalStatus.REJECTED.value
             approval.failure_reason = decision.reason
             self._db_upsert(approval)
+            # Publish RISK_ALERT (subscribers exist; publisher was missing)
+            self._publish_risk_alert(approval, decision)
             raise RuntimeError(f"pre-execution risk check rejected: {decision.reason}")
 
         self._validator.validate(order)
@@ -361,6 +386,32 @@ class ExecutionEngine:
         approval.status = ApprovalStatus.REJECTED.value
         approval.failure_reason = reason or "rejected by operator"
         self._db_upsert(approval)
+
+    def _publish_risk_alert(
+        self, approval: PendingApproval, decision: RiskDecision,
+    ) -> None:
+        """Publish RISK_ALERT on risk rejection. No-op when event bus is absent."""
+        if self._event_bus is None:
+            return
+        try:
+            from shettyxtreme.core.event_bus.event_bus import Event, Topic
+            alert_data = {
+                "symbol": approval.strategy_hint.get("symbol", ""),
+                "filter_name": decision.filter_name,
+                "reason": decision.reason,
+                "proposal_id": approval.id,
+            }
+            # Best-effort publish; the bus may not be running in tests.
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._event_bus.publish(
+                    Event(topic=Topic.RISK_ALERT, data=alert_data, source="risk_engine"),
+                ))
+            except RuntimeError:
+                pass
+        except Exception:
+            logger.debug("failed to publish RISK_ALERT", exc_info=True)
 
     def expire_stale(self, now: datetime | None = None) -> int:
         """Mark PENDING approvals past their timeout as EXPIRED.
@@ -418,11 +469,20 @@ class ExecutionEngine:
             exchange=strategy_hint["exchange"],
             side=side,
             order_type=order_type,
-            quantity=int(strategy_hint["quantity"]),
+            quantity=int(strategy_hint.get("quantity") or 0),
             price=price,
             trigger_price=strategy_hint.get("trigger_price"),
             product=product,
             validity=strategy_hint.get("validity", "DAY"),
             tag=strategy_hint.get("tag"),
             client_id=strategy_hint.get("client_id"),
+            strike=strategy_hint.get("strike"),
+            expiry=strategy_hint.get("expiry"),
+            option_type=strategy_hint.get("option_type"),
+            lot_size=strategy_hint.get("lot_size"),
+            # Trade context (P3-4.3) — carried from hint for order history.
+            stop_loss=strategy_hint.get("stop_loss"),
+            target=strategy_hint.get("target"),
+            rationale=strategy_hint.get("rationale"),
+            confidence=strategy_hint.get("confidence"),
         )

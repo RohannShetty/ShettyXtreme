@@ -1,16 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { del, get, post } from "../lib/api";
-  import { selectedSymbol } from "../lib/selection";
+  import { selectedSymbol } from "../lib/selection.svelte.ts";
   import { onMessage } from "../lib/ws";
   import { Button } from "$lib/components/ui/button";
-  import { Input } from "$lib/components/ui/input";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
   import { Select, SelectContent, SelectItem, SelectTrigger } from "$lib/components/ui/select";
   import { Plus, X } from "@lucide/svelte";
   import EmptyState from "./state/EmptyState.svelte";
   import LoadingState from "./state/LoadingState.svelte";
   import ErrorState from "./state/ErrorState.svelte";
+  import SymbolSearch from "./SymbolSearch.svelte";
 
   type WatchItem = {
     symbol: string;
@@ -19,6 +19,8 @@
     change_pct: number;
     volume: number;
     timestamp: string | null;
+    expiry: string | null;
+    lot_size: number | null;
   };
 
   const STALE_MS = 60_000;
@@ -183,7 +185,8 @@
   // instead of deriving it from REST calls or hardcoded defaults.
   function selectRow(item: WatchItem): void {
     selected = item.symbol;
-    selectedSymbol.set({ symbol: item.symbol, exchange: item.exchange || "NSE" });
+    selectedSymbol.symbol = item.symbol;
+    selectedSymbol.exchange = item.exchange || "NSE";
   }
 </script>
 
@@ -194,11 +197,15 @@
   </header>
 
   <div class="add-row">
-    <Input
-      class="mono h-7"
-      placeholder="SYMBOL"
+    <SymbolSearch
+      class="flex-1"
       bind:value={newSymbol}
-      onkeydown={(e) => e.key === "Enter" && add()}
+      placeholder="SYMBOL"
+      onSelect={(hit) => {
+        newSymbol = hit.internal_symbol;
+        newExchange = hit.exchange || "NSE";
+        add();
+      }}
     />
     <Select type="single" value={newExchange} onValueChange={(v) => (newExchange = v)}>
       <SelectTrigger class="mono h-7 w-[64px] text-[11px]" aria-label="Exchange">

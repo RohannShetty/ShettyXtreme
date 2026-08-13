@@ -182,6 +182,32 @@ class TestTheme:
         assert resp.status_code == 400
 
 
+class TestColorConvention:
+    @pytest.mark.asyncio
+    async def test_get_color_convention(self, client: AsyncClient) -> None:
+        resp = await client.get("/api/settings/color-convention")
+        assert resp.status_code == 200
+        assert resp.json()["color_convention"] == "international"
+
+    @pytest.mark.asyncio
+    async def test_put_color_convention_persists_and_broadcasts(self, client: AsyncClient) -> None:
+        with patch(
+            "shettyxtreme.terminal.api.settings_router.ws_bridge.broadcast",
+            new_callable=AsyncMock,
+        ) as mock_broadcast:
+            resp = await client.put("/api/settings/color-convention", json={"color_convention": "indian"})
+        assert resp.status_code == 200
+        assert resp.json()["color_convention"] == "indian"
+        mock_broadcast.assert_awaited_once_with("color-convention", {"color_convention": "indian"})
+        got = await client.get("/api/settings/color-convention")
+        assert got.json()["color_convention"] == "indian"
+
+    @pytest.mark.asyncio
+    async def test_put_color_convention_invalid_400(self, client: AsyncClient) -> None:
+        resp = await client.put("/api/settings/color-convention", json={"color_convention": "murican"})
+        assert resp.status_code == 400
+
+
 class TestScheduler:
     @pytest.mark.asyncio
     async def test_get_scheduler_defaults(self, client: AsyncClient) -> None:

@@ -27,6 +27,7 @@ _SCHEMA: dict[str, type | tuple[type, ...]] = {
     "log_dir": str,
     "fyers_app_id": (str, type(None)),
     "fyers_secret_id": (str, type(None)),
+    "paper_trading_margin": (int, float, type(None)),
 }
 
 # Keys a config file must provide. Deliberately just ``mode``: the legacy
@@ -57,6 +58,9 @@ class Config:
     # path — these are optional overrides for headless runs)
     fyers_app_id: str | None = None
     fyers_secret_id: str | None = None
+
+    # Paper trading capital (₹) — used as available margin in PAPER mode
+    paper_trading_margin: float | None = None
 
 class ConfigManager:
     def __init__(self, config_path: str | None = None):
@@ -109,12 +113,18 @@ class ConfigManager:
             "SHETTY_DRY_RUN": "dry_run",
             "FYERS_APP_ID": "fyers_app_id",
             "FYERS_SECRET_ID": "fyers_secret_id",
+            "SHETTY_PAPER_TRADING_MARGIN": "paper_trading_margin",
         }
         for env_key, config_key in env_map.items():
             val = os.environ.get(env_key)
             if val is not None:
                 if config_key == "dry_run":
                     val = val.lower() in ("true", "1", "yes")
+                elif config_key == "paper_trading_margin":
+                    try:
+                        val = float(val)
+                    except ValueError:
+                        continue
                 setattr(self._config, config_key, val)
 
     @property

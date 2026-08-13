@@ -6,6 +6,7 @@ and open interest monitoring.
 
 from .greeks import GreeksCalculator
 from .iv_rank import IVRankCalculator, IVRankResult, IVSnapshot
+from .portfolio_greeks import PortfolioGreeks, aggregate_greeks
 from .strategy_analyzer import StrategyAnalyzer, StrategyAnalysis, StrategyParams
 from .oi_tracker import OITracker, OIAlert, OISnapshot
 try:
@@ -18,6 +19,7 @@ __all__ = [
     "IVRankCalculator",
     "IVRankResult",
     "IVSnapshot",
+    "PortfolioGreeks",
     "StrategyAnalyzer",
     "StrategyAnalysis",
     "StrategyParams",
@@ -25,4 +27,5 @@ __all__ = [
     "OIAlert",
     "OISnapshot",
     "QuantLibPricer",
+    "aggregate_greeks",
 ]

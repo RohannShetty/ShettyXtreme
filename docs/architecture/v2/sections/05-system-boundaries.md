@@ -9,7 +9,8 @@
   G. KNOWLEDGE      Phase-4 │ imports core ONLY, physically separated (D12)
   F. TERMINAL        FAST    │ FastAPI REST+WS → Svelte (D9)
   E. LEARNING        stable-ish│ imports core + intelligence/execution read models
-  D. EXECUTION               │ imports core + integration/contracts
+  D. EXECUTION               │ imports core + integration/contracts + intelligence read models
+  C+.OPTIONS         RAPID   │ imports core ONLY (IV rank, OI analysis, strategy analyzer)
   C. INTELLIGENCE    RAPID   │ imports core ONLY
   B. INTEGRATION     SWAPPABLE│ imports core/interfaces + external APIs
   A. CORE            STABLE  │ zero external imports
@@ -63,7 +64,6 @@ Dependencies point **down only**. No layer may import a sibling or a layer above
 - `regime/` — regime classifier on coarser bars (no Markov on 1m noise)
 - `signals/` — signal engine, conviction computation, D/P/G, NEUTRAL state
 - `voters/` — voter plugin system (breadth, micro, options_flow, orb, iv_rank + shadow voters); `VoterRegistry` is a Phase-2 stub
-- `options/` — IV rank, OI analysis, PCR context, expiry/strike selection, strategy analyzer
 - `risk/` — position sizing, loss limits (entries-only), margin guardrails, composable filter chain, cost model
 - `scanners/` — gap detection, opportunity clusters
 
@@ -73,13 +73,23 @@ Dependencies point **down only**. No layer may import a sibling or a layer above
 
 **Stability:** RAPID — this is where the platform's edge lives; boundary tests protect core from its churn.
 
+## C+) Options — RAPID (leaf layer)
+
+**Purpose:** options analytics — IV rank, OI analysis, PCR context, expiry/strike selection, strategy analyzer. Lives at `src/shettyxtreme/options/` as a top-level package (intra-layer with intelligence in spirit, but a clean core-only leaf).
+
+**What belongs:** `IVRankCalculator`, `OITracker`, `StrategyAnalyzer`, options intel helpers.
+
+**Import rule:** imports core only. Intelligence imports options freely (intra-layer).
+
+**Stability:** RAPID — co-developed with intelligence.
+
 ## D) Execution
 
 **Purpose:** order lifecycle and position management.
 
 **What belongs:** semi-auto approval flow, order lifecycle, `PositionManager` (TP1/TP2/TP3 fixed ordering, TSL, EOD close 15:15), `PaperTradingEngine`, one canonical stop-loss definition (premium-relative, vol-aware), mode gating (LIVE is explicit per-session action, per D10).
 
-**Import rule:** imports core + integration/contracts (interfaces only, never DhanHQ directly).
+**Import rule:** imports core + integration/contracts (interfaces only, never DhanHQ directly) + intelligence read models (risk/signal data consumed downstream).
 
 **What does NOT belong:** signal generation, strategy logic, UI.
 

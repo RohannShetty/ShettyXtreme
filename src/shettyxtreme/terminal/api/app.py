@@ -686,7 +686,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="ShettyXtreme Terminal",
-    version="0.13.0",
+    version="0.16.0",
     lifespan=lifespan,
 )
 

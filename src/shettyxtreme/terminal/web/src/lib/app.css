@@ -48,6 +48,12 @@
   --color-price-down-soft: var(--price-down-soft);
   --color-flash-up: var(--flash-up);
   --color-flash-down: var(--flash-down);
+  --color-option-call: var(--option-call);
+  --color-option-put: var(--option-put);
+  --color-side-buy: var(--side-buy);
+  --color-side-sell: var(--side-sell);
+  --color-sl-level: var(--sl-level);
+  --color-tgt-level: var(--tgt-level);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);

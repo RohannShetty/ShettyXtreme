@@ -12,7 +12,8 @@ from datetime import time
 from shettyxtreme.intelligence.risk.cost_model import compute_cost
 from shettyxtreme.learning.outcome_tracker import OutcomeLabel, SignalDecision
 
-LOT_SIZE = 75
+# NIFTY lot size as of Jan 2026; overridden via constructor.
+_DEFAULT_LOT_SIZE = 65
 
 
 @dataclass
@@ -34,7 +35,9 @@ class WalkforwardResult:
 class WalkforwardEvaluator:
     """Evaluate signal decisions against premium entry/exit prices."""
 
-    def __init__(self, config: dict | None = None) -> None:
+    def __init__(
+        self, config: dict | None = None, lot_size: int | None = None,
+    ) -> None:
         cfg = config or {}
         self.tp1 = float(cfg.get("tp1", 0.30))
         self.tp2 = float(cfg.get("tp2", 0.60))
@@ -46,6 +49,7 @@ class WalkforwardEvaluator:
             hh, mm = eod.split(":")
             eod = time(int(hh), int(mm))
         self.eod_time = eod
+        self.lot_size = lot_size if lot_size is not None else _DEFAULT_LOT_SIZE
 
     def _direction(self, decision: SignalDecision) -> float:
         d = decision.signal.direction.value
@@ -124,10 +128,10 @@ class WalkforwardEvaluator:
             exit_price = float(exit_prices[decision.id])
             exit_premium = self._simulate_exit(entry, exit_price, direction)
             if direction > 0:
-                gross = (exit_premium - entry) * LOT_SIZE
+                gross = (exit_premium - entry) * self.lot_size
             else:
-                gross = (entry - exit_premium) * LOT_SIZE
-            cost = compute_cost(LOT_SIZE, entry).total
+                gross = (entry - exit_premium) * self.lot_size
+            cost = compute_cost(self.lot_size, entry, lot_size=self.lot_size).total
             total_cost += cost
             net = gross - cost
             pnls.append(net)

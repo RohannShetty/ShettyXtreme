@@ -45,7 +45,7 @@ Tests live in `tests/wave1`–`wave8` (feature waves) plus per-module dirs (`cor
 ## Docs conventions
 
 - Binding: `docs/architecture/v2/ARCHITECTURE_V2.md` (master + 20 sections, decisions D1–D12, ADRs), `DESIGN.md` (UI design contract).
-- **DESIGN.md is binding for all UI work**: near-black canvas, one accent, Indian price convention — **red = up `#f6525c`, green = down `#2ebd85` — never "fix" this**. Numerals in JetBrains Mono tabular, labels in Inter.
+- **DESIGN.md is binding for all UI work**: near-black canvas, one accent, configurable price convention — **international default (green = up `#2ebd85`, red = down `#f6525c`)**, Indian legacy opt-in (red = up, green = down). Toggle in Settings. Numerals in JetBrains Mono tabular, labels in Inter.
 - Feature work follows the superpowers convention: spec → plan → handoff in `docs/superpowers/{specs,plans,handoffs}/` (dated `YYYY-MM-DD-<topic>.md`). Check for existing specs/plans before starting work.
 - **Tiny-fix exemption**: single-file fixes with no API/schema/behavior change and a small diff (< ~30 lines) skip the spec/plan/handoff ritual — fix, run the test suite, report. Docs stay mandatory for features, refactors, and multi-file work.
 - `CHANGELOG.md` is maintained per release with suite counts.

@@ -54,6 +54,7 @@ def _make_portfolio() -> Portfolio:
         daily_pnl=0.0,
         total_margin_used=0.0,
         available_margin=1_000_000.0,
+        equity=1_000_000.0,
     )
 
 
@@ -118,7 +119,7 @@ async def test_reject_no_order_placed() -> None:
 async def test_pre_execution_risk_reject_blocks_order() -> None:
     executor = _make_executor()
     risk_engine = RiskEngine()
-    risk_engine.check_entry = lambda signal, portfolio: RiskDecision.reject(  # type: ignore[assignment]
+    risk_engine.check_entry = lambda signal, portfolio, proposal=None: RiskDecision.reject(  # type: ignore[assignment]
         "daily loss limit reached", filter_name="loss_limit"
     )
     engine = ExecutionEngine(
@@ -218,3 +219,28 @@ def test_db_failure_does_not_abort_submit(tmp_path, monkeypatch) -> None:
     approval = engine.get_approval(approval_id)
     assert approval is not None
     assert approval.status == ApprovalStatus.PENDING.value
+
+
+@pytest.mark.asyncio
+async def test_paper_mode_approve_succeeds_with_funded_portfolio() -> None:
+    """PAPER-mode approve() succeeds when portfolio has real available margin.
+
+    This is the end-to-end scenario that was failing before the P0-1.3 fix:
+    paper engine provides available_margin=1_000_000 → MarginFilter allows.
+    """
+    from shettyxtreme.execution.paper_trading import PaperTradingEngine
+
+    paper_engine = PaperTradingEngine(initial_capital=1_000_000.0)
+
+    def paper_portfolio():
+        return paper_engine.get_portfolio()
+
+    executor = _make_executor()
+    engine = ExecutionEngine(
+        executor=executor, risk_engine=RiskEngine(),
+        portfolio_provider=paper_portfolio,
+    )
+    approval_id = engine.submit_signal(_make_signal(), _make_hint())
+    order = await engine.approve(approval_id)
+    assert isinstance(order, OrderRequest)
+    assert executor.place_order.await_count == 1

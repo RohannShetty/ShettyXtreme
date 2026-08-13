@@ -1,5 +1,30 @@
 # ShettyXtreme Changelog
 
+## v0.16.0 — Complete Frontend + Backend API Refactor (2026-08-13)
+
+### Phase 1: Foundation (Consolidate + Extend)
+- Added 8 missing shadcn-svelte primitives (alert, popover, switch, slider, sheet, progress, radio-group, collapsible)
+- Introduced `/api/v2` namespace with versioned API contracts
+- Migrated legacy Svelte stores to Svelte 5 runes
+- Extracted App.svelte shell into modular router + layout components
+- Version alignment across all files to 0.16.0
+
+## [2026-08-12] — v0.15.0: Color Convention Toggle (P5 EXTERNAL)
+
+Suite: **TBD passed / 0 failed / 0 skipped**. Price color convention is now configurable: **international (green=up, red=down) is the new default**; Indian (red=up, green=down) remains the legacy opt-in. Operators who never chose a convention will see flipped colors on upgrade — switch back in Settings with one click.
+
+### Added
+- **Color convention toggle** (`data-convention` attribute on `<html>`): two conventions — `international` (green=up, red=down, new default) and `indian` (red=up, green=down, legacy). Persisted via `sx-convention` localStorage + backend `SettingsStore`.
+- **Backend endpoints**: `GET/PUT /api/settings/color-convention` (mirrors theme endpoints); WS broadcast to connected clients.
+- **Settings UI**: segmented control "Price colors: Indian / International" in SettingsView, mirroring the Theme card.
+- **Decoupled non-directional usages**: CE/PE badges, BUY/SELL badges, SL/TGT levels, FILLED status badge all use convention-independent tokens.
+
+### Changed
+- **BREAKING (visual)**: existing operators who never chose a convention see **international** colors (green=up, red=down) instead of Indian. Switch back to Indian in Settings → Price colors.
+- `DESIGN.md` + `AGENTS.md` amended: convention is configurable, international is default.
+- `RiskHeatmap.svelte`: hardcoded `rgba(246,82,92)`/`rgba(46,189,133)` replaced with CSS token-driven values.
+- `OrderHistory.svelte`: FILLED badge changed from `price-down` to `success` (fixes existing DESIGN.md violation).
+
 ## [2026-08-06] — v0.14.0: Dashboard Redesign + Options Chain Fix
 
 Suite: **1244 passed / 0 failed / 0 skipped** (was 1051 at v0.13.0). Dashboard overhaul: tabbed right dock eliminates overlapping frames, modern panel styling with subtle depth. Fixed options chain 500 error when expiry is empty.

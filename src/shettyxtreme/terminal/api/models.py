@@ -19,6 +19,27 @@ class WatchlistItem(BaseModel):
     volume: int = 0
     timestamp: datetime | None = None
     security_id: str | None = None
+    expiry: str | None = None
+    lot_size: int | None = None
+
+
+# ── Symbol Search ─────────────────────────────────────────────────────────
+class SymbolSearchHit(BaseModel):
+    internal_symbol: str
+    fyers_symbol: str
+    exchange: str
+    instrument_type: str
+    expiry: str | None = None
+    strike: float | None = None
+    option_type: str | None = None
+    lot_size: int | None = None
+    tick_size: float | None = None
+
+
+class SymbolSearchResponse(BaseModel):
+    query: str
+    canonical: str
+    hits: list[SymbolSearchHit] = []
 
 
 # ── Intelligence ───────────────────────────────────────────────────────────
@@ -76,6 +97,14 @@ class StrategyHintResponse(BaseModel):
     premium: float | None = None
     ev_after_cost: float | None = None
     rationale: str = ""
+    expiry: str | None = None
+    option_type: str | None = None
+    lot_size: int | None = None
+    lots: int | None = None
+    entry_premium: float | None = None
+    stop_loss: float | None = None
+    target: float | None = None
+    confidence: float | None = None
 
 
 # ── Market data ────────────────────────────────────────────────────────────
@@ -106,6 +135,14 @@ class MarketLtpResponse(BaseModel):
 
 
 # ── Execution ──────────────────────────────────────────────────────────────
+class PositionGreeks(BaseModel):
+    """Per-position greeks block (net_quantity × contract_greek)."""
+    delta: float = 0.0
+    gamma: float = 0.0
+    theta: float = 0.0
+    vega: float = 0.0
+
+
 class PositionResponse(BaseModel):
     symbol: str
     exchange: str
@@ -115,6 +152,26 @@ class PositionResponse(BaseModel):
     m2m: float = 0.0
     pnl: float = 0.0
     product: str = "NRML"
+    # Option identity — populated when the symbol parses as a Fyers option.
+    strike: float | None = None
+    option_type: str | None = None  # CE / PE
+    expiry: str | None = None
+    # Instrument type — OPTION / FUTURES / EQUITY / INDEX. Populated from
+    # the Fyers symbol parser so the frontend can render per-position context
+    # without extra lookups.
+    instrument_type: str | None = None
+    # Per-position greeks (net_quantity × contract_greek). None when not an
+    # option or when IV/spot are unavailable.
+    greeks: PositionGreeks | None = None
+    # Trade context — linked from the originating proposal (P3-4.3).
+    # Populated when the fill event carries a signal_id that maps to a
+    # PendingApproval with a strategy_hint.
+    stop_loss: float | None = None
+    target: float | None = None
+    rationale: str | None = None
+    confidence: float | None = None
+    signal_id: str | None = None
+    lot_size: int | None = None
 
 
 class RiskResponse(BaseModel):
@@ -127,6 +184,75 @@ class RiskResponse(BaseModel):
     loss_limit_hit: bool = False
     max_positions: int = 0
     active_positions: int = 0
+
+
+class PortfolioGreeksResponse(BaseModel):
+    """Aggregate portfolio greeks across all open option positions."""
+    net_delta: float = 0.0
+    net_gamma: float = 0.0
+    net_theta: float = 0.0
+    net_vega: float = 0.0
+    positions: list[PositionResponse] = []
+
+
+# ── Risk Heat Map ─────────────────────────────────────────────────────────
+class SectorExposureItem(BaseModel):
+    """One sector's aggregated exposure."""
+    sector: str
+    notional: float = 0.0
+    pnl: float = 0.0
+    share_pct: float = 0.0
+
+
+class GreeksBreakdownItem(BaseModel):
+    """Long/short split for one greek."""
+    long_val: float = 0.0
+    short_val: float = 0.0
+    net: float = 0.0
+
+
+class GreeksConcentrationItem(BaseModel):
+    """Portfolio-level greeks with long/short breakdown."""
+    delta: GreeksBreakdownItem = GreeksBreakdownItem()
+    gamma: GreeksBreakdownItem = GreeksBreakdownItem()
+    theta: GreeksBreakdownItem = GreeksBreakdownItem()
+    vega: GreeksBreakdownItem = GreeksBreakdownItem()
+    lopsided_warning: str | None = None
+
+
+class ScenarioPnlItem(BaseModel):
+    """P&L for one spot shift scenario."""
+    shift_pct: float
+    total_pnl: float = 0.0
+
+
+class StressItem(BaseModel):
+    """Max-loss stress test result."""
+    scenarios: list[ScenarioPnlItem] = []
+    worst_case_pnl: float = 0.0
+    worst_case_shift: float = 0.0
+
+
+class MarginUtilizationItem(BaseModel):
+    """Margin utilization metric."""
+    margin_used: float | None = None
+    margin_available: float | None = None
+    total: float | None = None
+    utilization_pct: float | None = None
+    breach: bool = False
+
+
+class RiskHeatmapResponse(BaseModel):
+    """Full risk heat map — all 4 dimensions.
+
+    Missing data degrades to empty/None — never faked (honesty rule).
+    """
+    sector_exposure: list[SectorExposureItem] = []
+    greeks: GreeksConcentrationItem = GreeksConcentrationItem()
+    stress: StressItem = StressItem()
+    margin: MarginUtilizationItem = MarginUtilizationItem()
+    position_count: int = 0
+    enriched_count: int = 0
 
 
 class ModeResponse(BaseModel):
@@ -165,6 +291,46 @@ class ProposalResponse(BaseModel):
     status: str = "PENDING"  # PENDING / APPROVED / REJECTED / EXPIRED
     reason: str = ""
     timestamp: datetime | None = None
+    strike: float | None = None
+    expiry: str | None = None
+    option_type: str | None = None
+    lot_size: int | None = None
+    lots: int | None = None
+    entry_premium: float | None = None
+    stop_loss: float | None = None
+    target: float | None = None
+    rationale: str | None = None
+    # Enriched fields (P3-4.3): strategy context from chain hint builder.
+    confidence: float | None = None
+    ev_after_cost: float | None = None
+    strategy: str | None = None
+    underlying: str | None = None
+
+
+class OrderResponse(BaseModel):
+    """An order record for the order history endpoint (P3-4.3)."""
+    order_id: str
+    symbol: str
+    exchange: str
+    side: str
+    order_type: str
+    quantity: int
+    price: float
+    status: str  # FILLED / REJECTED / CANCELLED / OPEN / PARTIALLY_FILLED
+    filled_quantity: int = 0
+    average_price: float = 0.0
+    tag: str | None = None
+    created_at: datetime | None = None
+    # Option identity (P3-4.3).
+    strike: float | None = None
+    expiry: str | None = None
+    option_type: str | None = None
+    lot_size: int | None = None
+    # Trade context from the originating proposal (P3-4.3).
+    stop_loss: float | None = None
+    target: float | None = None
+    rationale: str | None = None
+    confidence: float | None = None
 
 
 # ── Scanner ────────────────────────────────────────────────────────────────
@@ -198,6 +364,14 @@ class LogResponse(BaseModel):
     timestamp: datetime | None = None
 
 
+class ScannerFindingResponse(BaseModel):
+    scanner_type: str  # e.g. gamma_spike, gap_fill, etc.
+    symbol: str
+    severity: str  # LOW / MEDIUM / HIGH
+    detail: dict = {}
+    timestamp: datetime | None = None
+
+
 # ── Health ─────────────────────────────────────────────────────────────────
 class ComponentHealth(BaseModel):
     name: str
@@ -210,6 +384,9 @@ class ComponentHealth(BaseModel):
 class HealthResponse(BaseModel):
     components: list[ComponentHealth] = []
     overall: str = "healthy"  # healthy / degraded / down (aggregate severity)
+    # P1-2.4: unified connection state from the state machine.
+    state: str = "unknown"  # connected / connecting / stale / expired / disconnected / unknown
+    detail: str = ""
 
 
 class SessionResponse(BaseModel):
@@ -346,3 +523,24 @@ class ResearchScoringItem(BaseModel):
 
 class ResearchScoringResponse(BaseModel):
     lenses: list[ResearchScoringItem] = []
+
+
+# ── Options summary ───────────────────────────────────────────────────────
+class ExpiryCalendarItem(BaseModel):
+    date: str            # ISO date YYYY-MM-DD
+    kind: str            # "weekly" | "monthly"
+
+
+class ExpiryCalendarResponse(BaseModel):
+    symbol: str
+    instrument_type: str   # OPTION / FUTURES
+    expiries: list[ExpiryCalendarItem] = []
+    default: str | None = None   # ISO date of the policy-selected default
+
+
+class OptionsSummaryResponse(BaseModel):
+    underlying: str
+    max_pain: float | None = None
+    pcr: float | None = None
+    iv_rank_percent: float | None = None
+    iv_classification: str | None = None  # LOW / NORMAL / HIGH

@@ -2,8 +2,14 @@
   import { onMount } from "svelte";
   import { authStatus, get, type AuthStatus } from "../lib/api";
   import { applyTheme, getTheme, type Theme } from "../lib/theme";
-  import { selectedSymbol } from "../lib/selection";
-  import { onMessage } from "../lib/ws";
+  import { selectedSymbol } from "../lib/selection.svelte.ts";
+  import { onMessage, onConnectionChange } from "../lib/ws";
+  import {
+    connectionStore,
+    applyServerState,
+    applyHealthState,
+    applyLocalWsState,
+  } from "../lib/connection.svelte.ts";
   import { Button } from "$lib/components/ui/button";
   import {
     Tooltip,
@@ -24,6 +30,8 @@
   type HealthResponse = {
     components: ComponentHealth[];
     overall: string;
+    state: string;
+    detail: string;
   };
 
   type Session = {
@@ -53,10 +61,14 @@
   let theme: Theme = $state(getTheme());
   let refreshTimer: number | undefined;
 
+  // P1-2.4: derive pip state from the unified connection store.
+  let pipState = $derived(connectionStore.state);
+  let pipDetail = $derived(connectionStore.detail);
+
   // --- LTP hero (DESIGN §5 header anatomy, §3.1 number-xl) ---
   // The selection store carries {symbol, exchange}, so the hero reads the
   // exchange straight from the selection — no watchlist REST round-trip.
-  let selection = $derived($selectedSymbol);
+  let selection = $derived(selectedSymbol);
   let selected = $derived(selection.symbol);
   let tickBySymbol = $state<Record<string, Tick>>({});
   let flashDir = $state<"" | "up" | "down">("");
@@ -67,7 +79,8 @@
   let exchange = $derived(selected ? (selection.exchange || "NSE") : "");
   let changePct = $derived(tick?.change_pct ?? null);
   let ltp = $derived(tick?.ltp ?? null);
-  // Indian price law: red = up, green = down. Flash toggles color weight
+  // Price convention: green=up/red=down (international, default) or
+  // red=up/green=down (indian, opt-in). Flash toggles color weight
   // (price-up-strong), never font size/weight — no jitter (DESIGN §3.2).
   let ltpColor = $derived(
     flashDir === "up"
@@ -93,12 +106,25 @@
     load();
     loadCreds();
     const offTick = onMessage("tick", applyTick);
+    // P1-2.4: subscribe to server-pushed connection state transitions.
+    const offConn = onMessage("connection", (data: unknown) => {
+      const d = data as { state?: string; detail?: string };
+      if (d && typeof d.state === "string") {
+        applyServerState(d.state, d.detail ?? "");
+      }
+    });
+    // P1-2.4: subscribe to browser-WS open/close events.
+    const offWsChange = onConnectionChange((wsState: string) => {
+      applyLocalWsState(wsState === "open");
+    });
     refreshTimer = window.setInterval(() => {
       load();
       loadCreds();
     }, 30_000);
     return () => {
       offTick();
+      offConn();
+      offWsChange();
       if (flashTimer !== undefined) window.clearTimeout(flashTimer);
       if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
     };
@@ -112,6 +138,10 @@
       ]);
       health = h;
       session = s;
+      // P1-2.4: feed REST health state into the connection store as fallback.
+      if (h.state) {
+        applyHealthState(h.state, h.detail ?? "");
+      }
     } catch {
       /* header degrades silently — panels show their own errors */
     }
@@ -155,43 +185,20 @@
     });
   }
 
-  // Broker-neutral connection pip (S0 honesty hardening).
-  // Backend contract statuses: healthy / stale / disconnected / token_expired / down.
-  // Legacy Dhan component names are matched too so the pip stays honest mid-migration.
-  const BROKER_COMPONENTS = ["data_adapter", "trading_adapter", "dhan_data", "dhan_trading"];
+  // P1-2.4: pip state is now derived from the unified connection store
+  // (connection.ts).  The old pipState()/statusRank()/brokerComponents()
+  // local derivation has been removed — the store is the single source
+  // of truth, fed by server-pushed "connection" broadcasts and the
+  // /api/health REST fallback.
 
-  type PipState = "live" | "stale" | "disconnected" | "expired" | "unknown";
-
-  function brokerComponents(): ComponentHealth[] {
-    return (health?.components ?? []).filter((c) => BROKER_COMPONENTS.includes(c.name));
-  }
-
-  function statusRank(status: string): number {
-    const s = String(status).toLowerCase();
-    if (s === "token_expired") return 4;
-    if (s === "down" || s === "disconnected") return 3;
-    if (s === "stale" || s === "degraded") return 2;
-    if (s === "healthy") return 1;
-    return 0;
-  }
-
-  function pipState(): PipState {
-    const comps = brokerComponents();
-    if (comps.length === 0) return "unknown";
-    let worst = 0;
-    for (const c of comps) worst = Math.max(worst, statusRank(c.status));
-    if (worst >= 4) return "expired";
-    if (worst === 3) return "disconnected";
-    if (worst === 2) return "stale";
-    return "live";
-  }
-
-  function pipLabel(state: PipState): string {
+  function pipLabel(state: string): string {
     switch (state) {
       case "live":
         return "LIVE";
       case "stale":
         return "STALE";
+      case "connecting":
+        return "CONNECTING";
       case "disconnected":
         return "DISCONNECTED";
       case "expired":
@@ -199,13 +206,6 @@
       default:
         return "…";
     }
-  }
-
-  function pipDetail(): string {
-    const comps = brokerComponents();
-    if (comps.length === 0) return "No broker adapter status reported";
-    const worst = [...comps].sort((a, b) => statusRank(b.status) - statusRank(a.status))[0];
-    return worst ? `${worst.name}: ${worst.message || worst.status}` : "";
   }
 
   function sessionText(status: string): string {
@@ -261,12 +261,12 @@
 
     <div class="health">
       <span
-        class="pip pip-{pipState()}"
-        title={pipDetail()}
-        aria-label="Connection status: {pipLabel(pipState())}"
+        class="pip pip-{pipState}"
+        title={pipDetail}
+        aria-label="Connection status: {pipLabel(pipState)}"
       >
         <span class="pip-dot" aria-hidden="true"></span>
-        <span class="pip-label">{pipLabel(pipState())}</span>
+        <span class="pip-label">{pipLabel(pipState)}</span>
       </span>
     </div>
 
@@ -522,6 +522,13 @@
     background: var(--warning);
   }
   .pip-stale .pip-label {
+    color: var(--warning);
+  }
+  .pip-connecting .pip-dot {
+    background: var(--warning);
+    animation: pip-pulse 1.2s ease-in-out infinite;
+  }
+  .pip-connecting .pip-label {
     color: var(--warning);
   }
   .pip-disconnected .pip-dot {

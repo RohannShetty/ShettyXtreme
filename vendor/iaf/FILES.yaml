@@ -1,0 +1,41 @@
+# Vendored files from coding-kitties/investing-algorithm-framework (Apache-2.0)
+# Sources are relative to references/upstream/iaf/ (mirror commit TBD)
+#
+# Excludes: ccxt integration, cloud deploy (AWS Lambda/Azure), Finterion,
+# live/paper trading path, OBTF storage layer, iaf CLI.
+# Pin: v8 stable (v9 alpha has breaking OBTF changes).
+#
+# See ADR-009 for the integration boundary and exclusion rationale.
+files:
+  - src: investing_algorithm_framework/core/__init__.py
+    dest: core/__init__.py
+  - src: investing_algorithm_framework/core/models/__init__.py
+    dest: core/models/__init__.py
+  - src: investing_algorithm_framework/core/models/trading_strategy.py
+    dest: core/models/trading_strategy.py
+  - src: investing_algorithm_framework/core/models/position_size.py
+    dest: core/models/position_size.py
+  - src: investing_algorithm_framework/core/models/scaling_rule.py
+    dest: core/models/scaling_rule.py
+  - src: investing_algorithm_framework/core/models/stop_loss_rule.py
+    dest: core/models/stop_loss_rule.py
+  - src: investing_algorithm_framework/core/models/take_profit_rule.py
+    dest: core/models/take_profit_rule.py
+  - src: investing_algorithm_framework/core/models/cooldown_rule.py
+    dest: core/models/cooldown_rule.py
+  - src: investing_algorithm_framework/core/models/trading_cost.py
+    dest: core/models/trading_cost.py
+  - src: investing_algorithm_framework/core/models/market_data_type.py
+    dest: core/models/market_data_type.py
+  - src: investing_algorithm_framework/backtesting/__init__.py
+    dest: backtesting/__init__.py
+  - src: investing_algorithm_framework/backtesting/backtest.py
+    dest: backtesting/backtest.py
+  - src: investing_algorithm_framework/backtesting/vector_backtest.py
+    dest: backtesting/vector_backtest.py
+  - src: investing_algorithm_framework/backtesting/report.py
+    dest: backtesting/report.py
+  - src: investing_algorithm_framework/metrics/__init__.py
+    dest: metrics/__init__.py
+  - src: investing_algorithm_framework/metrics/calculator.py
+    dest: metrics/calculator.py
