@@ -270,6 +270,85 @@ export type ScorecardResponse = {
   calibration: CalibrationPoint[];
   current_regime: string | null;
 };
+
+// --- Analytics history (Phase 3B.3) ---
+
+export type IVRankHistoryPoint = {
+  timestamp: string;
+  iv_rank_percent: number;
+  iv_classification: string;
+};
+
+export type PCRHistoryPoint = {
+  timestamp: string;
+  pcr: number;
+  total_call_oi: number;
+  total_put_oi: number;
+};
+
+export type MaxPainHistoryPoint = {
+  timestamp: string;
+  max_pain: number;
+  spot_price: number | null;
+};
+
+export type RegimeHistoryPoint = {
+  timestamp: string;
+  regime: string;
+  confidence: number;
+  adx: number | null;
+};
+
+export type ExportFormat = "csv" | "json";
+
+export async function getIVRankHistory(
+  symbol: string,
+  days: number = 30,
+): Promise<IVRankHistoryPoint[]> {
+  const params = new URLSearchParams({ symbol, days: String(days) });
+  return get<IVRankHistoryPoint[]>(`/api/analytics/iv-rank-history?${params}`);
+}
+
+export async function getPCRHistory(
+  symbol: string,
+  days: number = 30,
+): Promise<PCRHistoryPoint[]> {
+  const params = new URLSearchParams({ symbol, days: String(days) });
+  return get<PCRHistoryPoint[]>(`/api/analytics/pcr-history?${params}`);
+}
+
+export async function getMaxPainHistory(
+  symbol: string,
+  days: number = 30,
+): Promise<MaxPainHistoryPoint[]> {
+  const params = new URLSearchParams({ symbol, days: String(days) });
+  return get<MaxPainHistoryPoint[]>(`/api/analytics/max-pain-history?${params}`);
+}
+
+export async function getRegimeHistory(days: number = 30): Promise<RegimeHistoryPoint[]> {
+  const params = new URLSearchParams({ days: String(days) });
+  return get<RegimeHistoryPoint[]>(`/api/analytics/regime-history?${params}`);
+}
+
+export async function exportAnalytics(
+  format: ExportFormat,
+  symbol: string,
+  days: number = 30,
+): Promise<Blob> {
+  const path = `/api/analytics/export?format=${format}&symbol=${encodeURIComponent(symbol)}&days=${days}`;
+  let resp: Response;
+  try {
+    resp = await fetchWithTimeout(path, { method: "GET", credentials: "same-origin" });
+  } catch (err) {
+    if (isAbortError(err)) throw new Error("Request timeout");
+    throw new Error(`Network error reaching ${path}`);
+  }
+  if (!resp.ok) {
+    throw new Error(await describeError(resp));
+  }
+  return resp.blob();
+}
+
 export type SessionRecord = {
   session_id: string;
   started_at: string;
@@ -431,10 +510,134 @@ export async function riskSummary(): Promise<RiskSummary> {
   return get<RiskSummary>("/api/execution/risk");
 }
 
+// --- Execution: greeks history + risk heatmap (Phase 3B.4) ---
+
+export type GreeksHistoryPoint = {
+  timestamp: string;
+  net_delta: number;
+  net_gamma: number;
+  net_theta: number;
+  net_vega: number;
+  position_count: number;
+};
+
+export type RiskSectorExposure = {
+  sector: string;
+  notional: number;
+  pnl: number;
+  share_pct: number;
+};
+
+export type RiskGreeksBreakdown = {
+  long_val: number;
+  short_val: number;
+  net: number;
+};
+
+export type RiskGreeksConcentration = {
+  delta: RiskGreeksBreakdown;
+  gamma: RiskGreeksBreakdown;
+  theta: RiskGreeksBreakdown;
+  vega: RiskGreeksBreakdown;
+  lopsided_warning: string | null;
+};
+
+export type RiskScenarioPnl = {
+  shift_pct: number;
+  total_pnl: number;
+};
+
+export type RiskStress = {
+  scenarios: RiskScenarioPnl[];
+  worst_case_pnl: number;
+  worst_case_shift: number;
+};
+
+export type RiskMarginUtilization = {
+  margin_used: number | null;
+  margin_available: number | null;
+  total: number | null;
+  utilization_pct: number | null;
+  breach: boolean;
+};
+
+export type RiskHeatmapData = {
+  sector_exposure: RiskSectorExposure[];
+  greeks: RiskGreeksConcentration;
+  stress: RiskStress;
+  margin: RiskMarginUtilization;
+  position_count: number;
+  enriched_count: number;
+};
+
+export async function getGreeksHistory(days = 7): Promise<GreeksHistoryPoint[]> {
+  return get<GreeksHistoryPoint[]>(`/api/execution/greeks-history?days=${days}`);
+}
+
+export async function getRiskHeatmap(): Promise<RiskHeatmapData> {
+  return get<RiskHeatmapData>("/api/execution/risk/heatmap");
+}
+
 // P3-4.3: order history from the paper trading engine.
 export async function getOrders(status?: string): Promise<OrderRecord[]> {
   const qs = status ? `?status=${encodeURIComponent(status)}` : "";
   return get<OrderRecord[]>(`/api/execution/orders${qs}`);
+}
+
+// --- Intelligence: hints & proposals (Phase 3) ---
+
+export type StrategyHint = {
+  direction: string;
+  strategy: string | null;
+  strike: number | null;
+  premium: number | null;
+  ev_after_cost: number | null;
+  rationale: string;
+  expiry: string | null;
+  option_type: string | null;
+  lot_size: number | null;
+  lots: number | null;
+  entry_premium: number | null;
+  stop_loss: number | null;
+  target: number | null;
+  confidence: number | null;
+};
+
+export type ProposeFromHintRequest = {
+  symbol: string;
+  direction: string;
+  strike: number | null;
+  premium: number | null;
+  expiry: string | null;
+  option_type: string | null;
+  lot_size: number | null;
+  lots: number | null;
+  stop_loss: number | null;
+  target: number | null;
+  rationale: string | null;
+  confidence: number | null;
+  conviction?: number | null;
+  quantity?: number | null;
+};
+
+export type HintStatsResponse = {
+  win_rate: number | null;
+  avg_pnl: number | null;
+  sample_size: number;
+  total_hints: number;
+  days: number;
+};
+
+export async function getStrategyHint(): Promise<StrategyHint> {
+  return get<StrategyHint>("/api/intelligence/strategy-hint");
+}
+
+export async function proposeFromHint(payload: ProposeFromHintRequest): Promise<Proposal> {
+  return postBody<Proposal>("/api/intelligence/propose-from-hint", payload);
+}
+
+export async function getHintStats(days = 30): Promise<HintStatsResponse> {
+  return get<HintStatsResponse>(`/api/intelligence/hint-stats?days=${days}`);
 }
 
 // --- Market: intraday bars (T2) ---
@@ -462,6 +665,52 @@ export async function getMarketBars(
 ): Promise<MarketBarsResponse> {
   const q = new URLSearchParams({ symbol, exchange, tf: String(tf), days: String(days) });
   return get<MarketBarsResponse>(`/api/market/bars?${q}`);
+}
+
+// --- Scanner (Phase 3A.1 / 3B.1) ---
+
+export type ScannerFinding = {
+  scanner_type: string;
+  symbol: string;
+  severity: string;
+  detail: Record<string, unknown>;
+  timestamp: string | null;
+};
+
+export type ScannerThresholdsResponse = {
+  scanner_thresholds: Record<string, Record<string, number>>;
+};
+
+export type ScannerThresholdsUpdate = {
+  scanner_thresholds: Record<string, Record<string, number>>;
+};
+
+export type ScannerHistoryFilters = {
+  scanner_type?: string;
+  since?: string;
+  severity?: string;
+  limit?: number;
+};
+
+export async function getScannerThresholds(): Promise<ScannerThresholdsResponse> {
+  return get<ScannerThresholdsResponse>("/api/settings/scanner-thresholds");
+}
+
+export async function updateScannerThresholds(
+  thresholds: Record<string, Record<string, number>>,
+): Promise<ScannerThresholdsResponse> {
+  return putBody<ScannerThresholdsResponse>("/api/settings/scanner-thresholds", {
+    scanner_thresholds: thresholds,
+  });
+}
+
+export async function getScannerHistory(filters: ScannerHistoryFilters = {}): Promise<ScannerFinding[]> {
+  const q = new URLSearchParams();
+  if (filters.scanner_type) q.set("scanner_type", filters.scanner_type);
+  if (filters.since) q.set("since", filters.since);
+  if (filters.limit) q.set("limit", String(filters.limit));
+  const qs = q.toString();
+  return get<ScannerFinding[]>(`/api/scanner/findings/history${qs ? "?" + qs : ""}`);
 }
 
 // --- Settings (Phase 7 W3, settings_router.py) ---

@@ -1,35 +1,39 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import ProposalQueue from "./ProposalQueue.svelte";
   import OrderHistory from "./OrderHistory.svelte";
   import ResearchPanel from "./ResearchPanel.svelte";
   import KnowledgePanel from "./KnowledgePanel.svelte";
   import LogDrawer from "./LogDrawer.svelte";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
-
-  type TabId = "proposals" | "orders" | "research" | "logs";
+  import { rightDockTab, type RightDockTabId } from "$lib/rightDockTab.svelte";
 
   let { open = $bindable(false), dockLogsTick = 0 }: { open?: boolean; dockLogsTick?: number } = $props();
 
-  let activeTab = $state<TabId>("proposals");
+  let activeTab = $state<RightDockTabId>(rightDockTab.value);
+
+  // Sync with external tab changes (e.g. HintsPanel jumping to Proposals).
+  $effect(() => {
+    activeTab = rightDockTab.value;
+  });
 
   // Task 2.3: the header "logs drawer" button bumps dockLogsTick each time it
   // OPENS the dock — land on the Logs tab so the button actually reveals the
   // log panel. Ctrl+R and the palette's sx:open-dock set `open` without
   // bumping the tick, so they keep whatever tab is active.
   $effect(() => {
-    if (dockLogsTick > 0) activeTab = "logs";
+    if (dockLogsTick > 0) setActive("logs");
   });
 
-  const tabs: { id: TabId; label: string }[] = [
+  const tabs: { id: RightDockTabId; label: string }[] = [
     { id: "proposals", label: "Proposals" },
     { id: "orders", label: "Orders" },
     { id: "research", label: "Research" },
     { id: "logs", label: "Logs" },
   ];
 
-  function setActive(id: TabId): void {
+  function setActive(id: RightDockTabId): void {
     activeTab = id;
+    rightDockTab.value = id;
   }
 </script>
 
