@@ -1,6 +1,10 @@
 import { cleanup, render, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import ChainGrid from "./ChainGrid.svelte";
+// The real selection rune (the vi.mock("../lib/selection") below is inert —
+// the component imports ../lib/selection.svelte.ts, so tests drive the real
+// module the same way Watchlist/Header/ChainGrid do in production).
+import { selectedSymbol } from "../lib/selection.svelte.ts";
 
 // Captured WS "tick" handlers (the mock registers via onMessage) so tests can
 // drive the live payload stream exactly as ws_manager would deliver it.
@@ -171,4 +175,57 @@ test("greeks column headers render Δ/Γ/Θ/V labels", async () => {
     expect(text).toContain("Γ");
     expect(text).toContain("Θ");
   });
+});
+
+test("symbol change drops the previous symbol's expiry and loads the calendar default", async () => {
+  // URL-aware mock: the chain endpoint echoes the requested expiry (server
+  // behaviour); the calendar endpoint serves per-symbol expiries + defaults.
+  const chainCalls: string[] = [];
+  mockGet.mockImplementation((path: string) => {
+    if (path.includes("expiry-calendar")) {
+      const forBank = path.includes("BANKNIFTY");
+      return Promise.resolve({
+        symbol: forBank ? "BANKNIFTY" : "NIFTY",
+        instrument_type: "OPTION",
+        expiries: [
+          { date: "2026-08-20", kind: "weekly" },
+          { date: "2026-08-27", kind: "weekly" },
+        ],
+        default: forBank ? "2026-08-27" : "2026-08-20",
+      } as unknown as OptionsResponse);
+    }
+    chainCalls.push(path);
+    // The server resolves each symbol's own default when no expiry is
+    // requested (same resolver the calendar endpoint uses), then echoes it.
+    const forBank = path.includes("BANKNIFTY");
+    const requested = new URLSearchParams(path.split("?")[1]).get("expiry");
+    const expiry = requested || (forBank ? "2026-08-27" : "2026-08-20");
+    return Promise.resolve({ underlying: "NIFTY", expiry, contracts: chainPayload.contracts });
+  });
+
+  const { container } = render(ChainGrid);
+  // Initial NIFTY load: the server resolves a default expiry and the grid
+  // renders contracts with that expiry selected.
+  await waitFor(() => {
+    expect(container.querySelector('[data-strike="25000"]')).toBeTruthy();
+  });
+  expect(
+    chainCalls.some((p) => p.includes("symbol=NIFTY") && p.includes("expiry=2026-08-20")),
+  ).toBe(true);
+
+  // User switches symbol (watchlist row click → selectedSymbol mutation).
+  selectedSymbol.symbol = "BANKNIFTY";
+  selectedSymbol.exchange = "NSE_FNO";
+
+  // The chain must eventually load for BANKNIFTY at the calendar default.
+  await waitFor(() => {
+    expect(chainCalls.some((p) => p.includes("BANKNIFTY") && p.includes("expiry=2026-08-27"))).toBe(true);
+  });
+
+  // Regression: the stale NIFTY expiry must NEVER ride along to BANKNIFTY —
+  // that invalid pair is what left the grid on "No chain data" with an
+  // expiry still selected.
+  const bankCalls = chainCalls.filter((p) => p.includes("BANKNIFTY"));
+  expect(bankCalls.length).toBeGreaterThan(0);
+  expect(bankCalls.every((p) => !p.includes("expiry=2026-08-20"))).toBe(true);
 });

@@ -83,6 +83,11 @@
   // Per-contract last-tick direction (persistent LTP cell color) and last LTP.
   const dirMap = new Map<string, Dir>();
   const prevLtp = new Map<string, number>();
+  // Ticks that raced the REST load (the contract isn't in the grid yet) are
+  // stashed by `${strike}|${side}` and applied when the chain response lands,
+  // so a tick arriving before the load completes is never lost (watchlist-fix
+  // pattern — a dropped tick = a stale LTP cell).
+  const pendingTicks = new Map<string, { ltp?: number; oi?: number; bid?: number; ask?: number }>();
   let lastTickAt: number | null = null;
 
   let reqId = 0;
@@ -115,6 +120,10 @@
     }, REFRESH_MS);
     nowTimer = window.setInterval(() => {
       now = Date.now();
+      // Re-derive freshness as time advances — without this, `live` latches
+      // true forever after the first tick/REST load instead of decaying to
+      // SYNC after LIVE_MS without any fresh data.
+      live = lastTickAt !== null && now - lastTickAt <= LIVE_MS;
     }, 5000);
     return () => {
       unsubTick();
@@ -131,13 +140,34 @@
     const sel = selectedSymbol;
     if (sel.symbol && sel.symbol !== symbol) {
       symbol = sel.symbol;
-      snapshot = { symbol: sel.symbol, expiry: snapshot.expiry };
+      if (sel.symbol !== snapshot.symbol) {
+        // A new symbol must never inherit the previous symbol's expiry —
+        // that pair is invalid (Fyers returns an empty/error chain) and the
+        // grid would sit on "No chain data" with a stale expiry still
+        // selected. The calendar fetch re-selects the new symbol's default.
+        resetForSymbolChange();
+        snapshot = { symbol: sel.symbol, expiry: "" };
+      }
       void fetchExpiryCalendar(sel.symbol);
     }
     if (sel.exchange && sel.exchange !== exchange) {
       exchange = sel.exchange;
     }
   });
+
+  // A new symbol must never inherit the previous symbol's expiry/chain:
+  // the stale pair is invalid (empty chain from Fyers → "No chain data").
+  // Also clears per-symbol tick state so flashes/directions don't leak
+  // across symbols (strike|side keys can collide between underlyings).
+  function resetForSymbolChange(): void {
+    expiry = "";
+    expiries = [];
+    expiryKinds = {};
+    contracts = [];
+    dirMap.clear();
+    prevLtp.clear();
+    pendingTicks.clear();
+  }
 
   function buildRows(list: Contract[]): ChainRow[] {
     const byStrike = new Map<number, ChainRow>();
@@ -174,6 +204,19 @@
     return String(optionType).toUpperCase() === "PE" ? "pe" : "ce";
   }
 
+  // Apply a live LTP to a contract: direction is the tick-vs-previous-tick
+  // move (configurable price convention), flashing on every change.
+  function applyLiveLtp(c: Contract, key: string, ltp: number): void {
+    const prev = prevLtp.get(key) ?? c.ltp;
+    if (ltp !== prev) {
+      const dir: Dir = ltp > prev ? "up" : "down";
+      dirMap.set(key, dir);
+      scheduleFlash(key, dir);
+    }
+    prevLtp.set(key, ltp);
+    c.ltp = ltp;
+  }
+
   // Live chain tick (P6-W2): the backend broadcasts strike/option_type/oi on
   // every tick, so the contract identity comes from the wire payload — no
   // symbol regex parsing. Non-option symbols (indexes, equities) carry
@@ -186,28 +229,32 @@
     if (strike === null || optionType === null) return;
     const key = contractKey(strike, sideOf(optionType));
     const entry = matchIndex.get(key);
-    if (!entry) return;
+    if (!entry) {
+      // Tick raced the REST load — the contract isn't in the grid yet.
+      // Stash its values so applyResponse applies them when the chain
+      // arrives (a lost tick would leave the cell stale until the next
+      // tick or the 15s poll).
+      pendingTicks.set(key, {
+        ltp: typeof t.ltp === "number" ? t.ltp : undefined,
+        oi: typeof t.oi === "number" ? t.oi : undefined,
+        bid: typeof t.bid === "number" ? t.bid : undefined,
+        ask: typeof t.ask === "number" ? t.ask : undefined,
+      });
+      lastTickAt = Date.now();
+      live = lastTickAt !== null && now - lastTickAt <= LIVE_MS;
+      return;
+    }
     const c = contracts[entry.rowIdx];
     if (!c) return;
 
     const ltp = typeof t.ltp === "number" ? t.ltp : undefined;
-    if (ltp !== undefined) {
-      const prev = prevLtp.get(key) ?? c.ltp;
-      if (ltp !== prev) {
-        // Price convention (configurable): direction is the tick-vs-previous-tick move.
-        const dir: Dir = ltp > prev ? "up" : "down";
-        dirMap.set(key, dir);
-        scheduleFlash(key, dir);
-      }
-      prevLtp.set(key, ltp);
-      c.ltp = ltp;
-    }
+    if (ltp !== undefined) applyLiveLtp(c, key, ltp);
     if (typeof t.iv === "number") c.iv = t.iv;
     if (typeof t.oi === "number") c.oi = t.oi;
     if (typeof t.bid === "number") c.bid = t.bid;
     if (typeof t.ask === "number") c.ask = t.ask;
     lastTickAt = Date.now();
-    live = now - lastTickAt <= LIVE_MS;
+    live = lastTickAt !== null && now - lastTickAt <= LIVE_MS;
   }
 
   function scheduleFlash(key: string, dir: Dir): void {
@@ -241,6 +288,20 @@
 
   function applyResponse(resp: OptionsResponse): void {
     contracts = resp.contracts ?? [];
+    if (pendingTicks.size > 0) {
+      // Apply ticks that raced this load (they couldn't match an empty grid).
+      for (let i = 0; i < contracts.length; i++) {
+        const c = contracts[i];
+        const key = contractKey(c.strike, sideOf(c.option_type));
+        const pending = pendingTicks.get(key);
+        if (!pending) continue;
+        if (pending.ltp !== undefined) applyLiveLtp(c, key, pending.ltp);
+        if (pending.oi !== undefined) c.oi = pending.oi;
+        if (pending.bid !== undefined) c.bid = pending.bid;
+        if (pending.ask !== undefined) c.ask = pending.ask;
+      }
+      pendingTicks.clear();
+    }
     if (resp.expiry) {
       if (!expiries.includes(resp.expiry)) expiries = [...expiries, resp.expiry].sort();
       expiry = resp.expiry;
@@ -251,6 +312,11 @@
         snapshot = { symbol: snapshot.symbol, expiry: resp.expiry };
       }
     }
+    // REST-fresh data is fresh data: a quiet feed (data socket down, market
+    // closed) must not read as "no live data" while the API is serving
+    // (watchlist-fix pattern — never-ticked ≠ stale).
+    lastTickAt = Date.now();
+    live = lastTickAt !== null && now - lastTickAt <= LIVE_MS;
   }
 
   // Quiet 15s poll: refreshes LTP/IV/OI numbers without flashing or touching
@@ -265,6 +331,10 @@
       if (resp.expiry && !expiries.includes(resp.expiry)) {
         expiries = [...expiries, resp.expiry].sort();
       }
+      // The poll delivered fresh data — keep the LIVE chip honest on feeds
+      // that are quiet but still serving (watchlist-fix pattern).
+      lastTickAt = Date.now();
+      live = lastTickAt !== null && now - lastTickAt <= LIVE_MS;
     } catch {
       /* silent — the committed load path surfaces errors */
     }
@@ -272,6 +342,13 @@
 
   function commit(): void {
     const sym = symbol.trim().toUpperCase() || "NIFTY";
+    if (sym !== snapshot.symbol) {
+      // New symbol: drop the previous symbol's expiry + chain — the stale
+      // pair is invalid and would render "No chain data" with an expiry
+      // still selected. The calendar fetch re-selects the policy default;
+      // when the calendar is unavailable the server resolves its own.
+      resetForSymbolChange();
+    }
     snapshot = { symbol: sym, expiry: expiry.trim() };
     void fetchExpiryCalendar(sym);
   }
@@ -281,6 +358,8 @@
       const cal = await get<ExpiryCalendarResponse>(
         `/api/intelligence/expiry-calendar?symbol=${encodeURIComponent(sym)}`
       );
+      // Stale response — a newer commit (different symbol) superseded this.
+      if (sym !== snapshot.symbol) return;
       if (cal.expiries && cal.expiries.length > 0) {
         const newExpiries: string[] = [];
         const newKinds: Record<string, string> = {};
@@ -290,7 +369,9 @@
         }
         expiries = newExpiries;
         expiryKinds = newKinds;
-        // Auto-select the policy default if no expiry is chosen
+        // Auto-select the policy default when no expiry is chosen — the case
+        // right after a symbol change, when the old symbol's expiry was
+        // deliberately cleared. (Same-symbol commits keep the user's choice.)
         if (cal.default && !expiry) {
           expiry = cal.default;
           snapshot = { symbol: sym, expiry: cal.default };
@@ -405,7 +486,7 @@
           onkeydown={(e) => e.key === "Enter" && commit()}
         />
       {/if}
-      <span class="live-chip" class:on={live} title={live ? "Live: watchlisted contracts tick in; chain refreshes every 15s" : "Synchronizing — no recent ticks"}>
+      <span class="live-chip" class:on={live} title={live ? "Live: chain refreshes via feed ticks and the 15s REST poll" : "Synchronizing — no fresh chain data in the last 60s"}>
         <span class="live-dot" aria-hidden="true"></span>
         <span class="live-label">{live ? "LIVE" : "SYNC"}</span>
       </span>
