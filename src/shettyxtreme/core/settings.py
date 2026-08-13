@@ -200,6 +200,40 @@ def _validate_stop_cooldown_minutes(value: Any) -> float:
     return _validate_pct(value, "stop_cooldown_minutes", 0, 240)
 
 
+def _validate_scanner_thresholds(value: Any) -> dict[str, dict[str, float]]:
+    """Validate ``scanner_thresholds``: scanner_type → param → number.
+
+    Shape-only validation (core must not import ``intelligence`` — the
+    per-scanner param names are validated against ``SCANNER_THRESHOLD_SPECS``
+    in the settings router, which sits above the layer wall).
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise SettingsError("scanner_thresholds must be a mapping of scanner_type → params")
+    normalized: dict[str, dict[str, float]] = {}
+    for scanner_type, params in value.items():
+        if not isinstance(params, dict):
+            raise SettingsError(
+                f"scanner_thresholds[{scanner_type}] must be a mapping of param → value"
+            )
+        param_map: dict[str, float] = {}
+        for param_name, param_value in params.items():
+            try:
+                v = float(param_value)
+            except (TypeError, ValueError) as exc:
+                raise SettingsError(
+                    f"scanner_thresholds[{scanner_type}][{param_name}] must be a number"
+                ) from exc
+            if not math.isfinite(v):
+                raise SettingsError(
+                    f"scanner_thresholds[{scanner_type}][{param_name}] must be a finite number"
+                )
+            param_map[str(param_name)] = v
+        normalized[str(scanner_type)] = param_map
+    return normalized
+
+
 @dataclass(frozen=True)
 class _Spec:
     """Schema entry: safe default + validator for one setting key."""
@@ -226,6 +260,7 @@ _SPECS: dict[str, _Spec] = {
     "max_sector_pct": _Spec(DEFAULT_MAX_SECTOR_PCT, _validate_max_sector_pct),
     "max_direction_pct": _Spec(DEFAULT_MAX_DIRECTION_PCT, _validate_max_direction_pct),
     "stop_cooldown_minutes": _Spec(DEFAULT_STOP_COOLDOWN_MINUTES, _validate_stop_cooldown_minutes),
+    "scanner_thresholds": _Spec({}, _validate_scanner_thresholds),
 }
 
 
@@ -308,6 +343,14 @@ class SettingsStore:
 
     def stop_cooldown_minutes(self) -> float:
         return self.get("stop_cooldown_minutes")
+
+    def scanner_thresholds(self) -> dict[str, dict[str, float]]:
+        """Per-scanner threshold overrides (scanner_type → param → value).
+
+        Empty dict by default — scanners run with their built-in defaults
+        until the operator configures thresholds via the settings API.
+        """
+        return self.get("scanner_thresholds")
 
     # ── writes ─────────────────────────────────────────────────────────────
     def update(self, updates: Mapping[str, Any]) -> dict[str, Any]:

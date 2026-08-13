@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from shettyxtreme.core.settings import get_settings_store
@@ -389,6 +389,27 @@ async def get_portfolio_greeks(request: Request) -> PortfolioGreeksResponse:
         net_vega=net_vega,
         positions=enriched,
     )
+
+
+@router.get("/greeks-history")
+async def get_greeks_history(
+    request: Request,
+    days: int = Query(7, ge=1, le=365),
+) -> list[dict[str, Any]]:
+    """Return recorded portfolio greeks snapshots for charting (3A.4).
+
+    Entries: ``{timestamp, net_delta, net_gamma, net_theta, net_vega,
+    position_count}``, oldest first, covering the last ``days`` days.
+    Returns an empty list when the greeks store is not initialized.
+    """
+    store = getattr(request.app.state, "greeks_store", None)
+    if store is None:
+        return []
+    try:
+        return store.get_history(days=days)
+    except Exception:
+        logger.exception("greeks-history read failed")
+        return []
 
 
 @router.get("/risk/heatmap", response_model=RiskHeatmapResponse)

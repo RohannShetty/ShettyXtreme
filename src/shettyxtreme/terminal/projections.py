@@ -13,7 +13,9 @@ from typing import Any
 from shettyxtreme.core.data_models import Tick
 from shettyxtreme.core.event_bus.event_bus import Event, EventBus, Topic
 from shettyxtreme.core.settings import get_settings_store
+from shettyxtreme.options.max_pain import compute_max_pain
 from shettyxtreme.terminal.api import ws_bridge
+from shettyxtreme.terminal.api.greeks_store import GreeksStore
 
 logger = logging.getLogger(__name__)
 
@@ -140,12 +142,32 @@ class WatchlistProjection:
 
 # ── Position Projection ──────────────────────────────────────────────────────
 
+# Greeks history store wiring (3A.4): set by the app lifespan, consumed by
+# PositionProjection to persist portfolio greeks snapshots on position changes.
+_greeks_store: GreeksStore | None = None
+
+
+def set_greeks_store(store: GreeksStore | None) -> None:
+    """Wire the greeks history store into the projections (app lifespan)."""
+    global _greeks_store
+    _greeks_store = store
+
+
 class PositionProjection:
     """Subscribes to POSITION_CHANGED, updates positions list."""
 
     def __init__(self) -> None:
         self._positions: list[dict[str, Any]] = []
         self._index: dict[str, int] = {}  # symbol -> list index
+        self._hint_store: Any = None  # optional HintStore (3A.2 outcome hook)
+
+    def set_hint_store(self, store: Any) -> None:
+        """Attach the hint outcome store (3A.2).
+
+        Once attached, closing positions record their outcome against any
+        matching recorded hint (win/loss + actual PnL).
+        """
+        self._hint_store = store
 
     async def on_position_update(self, event: Event) -> None:
         d = event.data
@@ -183,6 +205,147 @@ class PositionProjection:
             "m2m": pos["m2m"],
             "pnl": pos["pnl"],
         })
+        # 3A.2: when this update closes the position, score any matching
+        # hint (win/loss + actual PnL) in the hint outcome store.
+        self._maybe_record_hint_outcome(d, pos)
+        self._record_greeks_snapshot()
+
+    def _maybe_record_hint_outcome(
+        self, raw: dict[str, Any], pos: dict[str, Any],
+    ) -> None:
+        """Record the outcome for a matching hint when this position closes.
+
+        A position counts as closed when the event says so explicitly
+        (status CLOSED) or its quantity/net_quantity has flattened to zero.
+        The outcome is ``win`` when the actual PnL is positive, else
+        ``loss``. Recording is best-effort and idempotent — the hint store
+        only accepts the first outcome per hint, so repeated close events
+        never double-count. Requires a hint store attached via
+        ``set_hint_store``; otherwise this is a no-op.
+        """
+        store = self._hint_store
+        if store is None:
+            return
+        if not self._is_closed(raw):
+            return
+        symbol = str(pos.get("symbol", ""))
+        if not symbol:
+            return
+        pnl = self._close_pnl(raw, pos)
+        outcome = "win" if pnl > 0 else "loss"
+        for direction in self._closing_directions(raw, pos):
+            try:
+                hint_id = store.find_hint(symbol, direction)
+            except Exception:
+                logger.debug(
+                    "hint lookup failed for %s/%s", symbol, direction, exc_info=True,
+                )
+                continue
+            if hint_id is None:
+                continue
+            try:
+                store.record_outcome(hint_id, outcome, pnl)
+            except Exception:
+                logger.debug(
+                    "hint outcome recording failed for %s", symbol, exc_info=True,
+                )
+            return  # first matching hint wins
+
+    @staticmethod
+    def _is_closed(raw: dict[str, Any]) -> bool:
+        """True when the event explicitly reports a closed/flat position."""
+        if str(raw.get("status", "")).upper() == "CLOSED":
+            return True
+        if raw.get("net_quantity") is not None and int(raw.get("net_quantity", 0)) == 0:
+            return True
+        if raw.get("quantity") is not None and int(raw.get("quantity", 0)) == 0:
+            return True
+        return False
+
+    def _closing_directions(
+        self, raw: dict[str, Any], pos: dict[str, Any],
+    ) -> list[str]:
+        """Candidate hint directions for a closing position.
+
+        A closing fill's side is the *opposite* of the position's side
+        (SELL closes a long → bullish hint; BUY closes a short → bearish
+        hint). Falls back to the net-quantity sign, then to both
+        directions when the event carries no directional signal.
+        """
+        side = str(raw.get("side", "")).upper()
+        candidates: list[str] = []
+        if side == "SELL":
+            candidates.append("bullish")  # closing a long
+        elif side == "BUY":
+            candidates.append("bearish")  # closing a short
+        net = int(pos.get("net_quantity", 0) or 0)
+        if net > 0:
+            candidates.append("bullish")
+        elif net < 0:
+            candidates.append("bearish")
+        if not candidates:
+            candidates = ["bullish", "bearish"]
+        return list(dict.fromkeys(candidates))
+
+    @staticmethod
+    def _close_pnl(raw: dict[str, Any], pos: dict[str, Any]) -> float:
+        """Actual PnL from the close event; 0.0 when absent/junk."""
+        pnl = raw.get("pnl", pos.get("pnl"))
+        try:
+            return float(pnl or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _record_greeks_snapshot(self) -> None:
+        """Record the portfolio net greeks into the history store (3A.4).
+
+        Called after every position update. Uses the same IV-cache based
+        per-position computation as the execution router; when IV/spot data
+        is unavailable the snapshot is skipped (greeks unknown — never
+        fabricated). An empty book is recorded as a zeroed snapshot so the
+        chart reflects a flat portfolio.
+        """
+        store = _greeks_store
+        if store is None:
+            return
+        try:
+            if not self._positions:
+                store.record(0.0, 0.0, 0.0, 0.0, 0)
+                return
+            from shettyxtreme.integration.fyers.symbols import from_fyers
+            from shettyxtreme.terminal.api.execution_router import (
+                _compute_position_greeks,
+            )
+
+            net_delta = net_gamma = net_theta = net_vega = 0.0
+            enriched = 0
+            for p in self._positions:
+                symbol = p.get("symbol", "")
+                net_qty = p.get("net_quantity", 0)
+                try:
+                    parsed = from_fyers(symbol)
+                except (ValueError, ImportError):
+                    continue
+                if parsed.get("instrument_type") != "OPTION":
+                    continue
+                strike = parsed.get("strike")
+                option_type = parsed.get("option_type")
+                expiry = parsed.get("expiry")
+                if strike is None or not option_type or expiry is None:
+                    continue
+                greeks = _compute_position_greeks(strike, option_type, expiry, net_qty)
+                if greeks is None:
+                    continue
+                net_delta += greeks.delta
+                net_gamma += greeks.gamma
+                net_theta += greeks.theta
+                net_vega += greeks.vega
+                enriched += 1
+            if enriched == 0:
+                return
+            store.record(net_delta, net_gamma, net_theta, net_vega, len(self._positions))
+        except Exception:
+            logger.exception("greeks snapshot recording failed")
 
     def get(self) -> list[dict[str, Any]]:
         return list(self._positions)
@@ -285,9 +448,16 @@ class AlertProjection:
 # ── Intelligence Projection ─────────────────────────────────────────────────
 
 class IntelligenceProjection:
-    """Subscribes to REGIME_CHANGED / SIGNAL_V2, maintains current regime + signal."""
+    """Subscribes to REGIME_CHANGED / SIGNAL_V2, maintains current regime + signal.
 
-    def __init__(self) -> None:
+    Phase 3A.3: when an ``analytics_store`` is wired (via constructor or
+    :meth:`set_analytics_store`), regime changes are persisted for the
+    regime-history chart and option-chain payloads on ``MARKET_DATA_BAR`` are
+    reduced to max-pain snapshots for the max-pain chart. Recording failures
+    are logged, never raised — analytics must not break live intelligence.
+    """
+
+    def __init__(self, analytics_store: Any = None) -> None:
         self._regime: dict[str, Any] = {
             "regime": "range_bound",
             "confidence": 0.5,
@@ -307,6 +477,11 @@ class IntelligenceProjection:
         }
         self._has_data = False
         self._last_update: datetime | None = None
+        self._analytics_store = analytics_store
+
+    def set_analytics_store(self, store: Any) -> None:
+        """Wire the analytics store used for max-pain / regime recording."""
+        self._analytics_store = store
 
     async def on_regime_changed(self, event: Event) -> None:
         d = event.data
@@ -316,8 +491,61 @@ class IntelligenceProjection:
         for key in ("regime", "confidence", "transition", "adx", "di_plus", "di_minus"):
             if key in values:
                 self._regime[key] = values[key]
+        self._record_regime()
         self._mark_received(event.timestamp)
         await ws_bridge.broadcast("regime", dict(self._regime))
+
+    def _record_regime(self) -> None:
+        """Persist the current regime snapshot for the regime-history chart."""
+        if self._analytics_store is None:
+            return
+        try:
+            self._analytics_store.record_regime(
+                regime=str(self._regime.get("regime", "")),
+                confidence=float(self._regime.get("confidence", 0.0) or 0.0),
+                adx=self._regime.get("adx"),
+                di_plus=self._regime.get("di_plus"),
+                di_minus=self._regime.get("di_minus"),
+            )
+        except Exception:
+            logger.exception("Regime history recording failed")
+
+    async def on_market_data(self, event: Event) -> None:
+        """Persist max pain when an option-chain payload arrives.
+
+        Chain pollers publish ``{symbol, expiry, contracts, spot?}`` dicts on
+        ``MARKET_DATA_BAR``; the max pain strike is computed and recorded for
+        the max-pain history chart. Non-chain payloads (plain bars, ticks)
+        are ignored.
+        """
+        if self._analytics_store is None:
+            return
+        data = event.data
+        if not isinstance(data, dict):
+            return
+        contracts = data.get("contracts")
+        symbol = data.get("symbol", "")
+        if not contracts or not symbol:
+            return
+        try:
+            max_pain = compute_max_pain(contracts)
+            if max_pain is None:
+                return
+            spot_raw = data.get("spot")
+            spot_price: float | None = None
+            if spot_raw not in (None, ""):
+                try:
+                    spot_price = float(spot_raw)
+                except (TypeError, ValueError):
+                    spot_price = None
+            self._analytics_store.record_max_pain(
+                symbol=symbol,
+                expiry=str(data.get("expiry", "")),
+                max_pain=max_pain,
+                spot_price=spot_price,
+            )
+        except Exception:
+            logger.exception("Max pain history recording failed")
 
     async def on_signal_v2(self, event: Event) -> None:
         d = event.data
@@ -359,9 +587,21 @@ class IntelligenceProjection:
         bus.subscribe(Topic.REGIME_CHANGED, self.on_regime_changed)
         bus.subscribe(Topic.SIGNAL_V2, self.on_signal_v2)
         bus.subscribe(Topic.SIGNAL_GENERATED, self.on_signal_v2)
+        bus.subscribe(Topic.MARKET_DATA_BAR, self.on_market_data)
 
 
 # ── Scanner Projection ─────────────────────────────────────────────────────
+
+#: Persistent findings store, wired by the lifespan (Phase 3A.1). None when
+#: no store exists (unit tests) — recording is skipped silently.
+_scanner_store: Any | None = None
+
+
+def set_scanner_store(store: Any | None) -> None:
+    """Attach/detach the persistent scanner-findings store (lifespan wires it)."""
+    global _scanner_store
+    _scanner_store = store
+
 
 class ScannerProjection:
     """Subscribes to SCANNER_FINDING, stores capped per-type finding lists.
@@ -370,6 +610,9 @@ class ScannerProjection:
     values), ``symbol``, ``severity``, ``detail``, and ``timestamp``.
     The projection groups findings by scanner_type so the REST endpoint
     can filter by type.
+
+    Each finding is also pushed to WS clients (topic ``scanner_finding``)
+    and recorded in the persistent SQLite store when one is wired.
     """
 
     MAX_PER_TYPE = 100
@@ -384,15 +627,26 @@ class ScannerProjection:
         scanner_type = d.get("scanner_type", "unknown")
         if scanner_type not in self._findings:
             self._findings[scanner_type] = []
-        self._findings[scanner_type].append({
+        stored = {
             "scanner_type": scanner_type,
             "symbol": d.get("symbol", ""),
             "severity": d.get("severity", "MEDIUM"),
             "detail": d.get("detail", {}),
             "timestamp": d.get("timestamp", event.timestamp),
-        })
+        }
+        self._findings[scanner_type].append(stored)
         if len(self._findings[scanner_type]) > self.MAX_PER_TYPE:
             self._findings[scanner_type] = self._findings[scanner_type][-self.MAX_PER_TYPE:]
+        # Phase 3A.1: real-time alert push + durable history record.
+        try:
+            await ws_bridge.broadcast("scanner_finding", stored)
+        except Exception:
+            logger.exception("scanner_finding WS broadcast failed")
+        if _scanner_store is not None:
+            try:
+                _scanner_store.record(stored)
+            except Exception:
+                logger.exception("scanner finding store record failed")
 
     def get(self, scanner_type: str | None = None) -> list[dict[str, Any]]:
         """Return findings, optionally filtered by scanner_type."""

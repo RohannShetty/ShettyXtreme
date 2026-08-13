@@ -2,12 +2,17 @@
 
 Assembles session, research-decision, and calibration data into the scorecard.
 All DB opens degrade to available:false metrics and empty payloads — never 500.
+Phase 3A.3 adds the time-series history endpoints (IV rank, PCR, max pain,
+regime) and the combined data export.
 """
 from __future__ import annotations
 
+import csv
+import io
 import logging
 
 from fastapi import APIRouter, Query, Request
+from fastapi.responses import JSONResponse, Response
 
 from shettyxtreme.learning.sessions import SessionLog
 from shettyxtreme.research.store import ResearchStore
@@ -289,3 +294,203 @@ async def ledger(
         return LedgerResponse()
     finally:
         store.close()
+
+
+# ── Phase 3A.3: time-series history endpoints ────────────────────────────────
+# All history endpoints degrade to an empty list when the backing calculator /
+# store is missing or raises — never 500 (same contract as the scorecard).
+
+
+def _days_query() -> int:
+    """Reusable days query param (1..365, default 30)."""
+    return Query(30, ge=1, le=365)
+
+
+@router.get("/iv-rank-history")
+async def iv_rank_history(
+    request: Request,
+    symbol: str = Query("NIFTY"),
+    days: int = _days_query(),
+) -> list[dict]:
+    """IV rank history from the in-memory IVRankCalculator snapshots.
+
+    Returns ``[{timestamp, iv_rank_percent, iv_classification}]`` for the
+    given symbol, filtered to the last ``days`` days.
+    """
+    calc = getattr(request.app.state, "iv_rank_calculator", None)
+    if calc is None or not hasattr(calc, "get_history"):
+        return []
+    try:
+        return calc.get_history(symbol, days)
+    except Exception as exc:
+        logger.warning("IV rank history read failed: %s", exc)
+        return []
+
+
+@router.get("/pcr-history")
+async def pcr_history(
+    request: Request,
+    symbol: str = Query("NIFTY"),
+    days: int = _days_query(),
+) -> list[dict]:
+    """PCR (put/call OI ratio) history from the OITracker snapshots.
+
+    Returns ``[{timestamp, pcr, total_call_oi, total_put_oi}]`` for the given
+    symbol, filtered to the last ``days`` days.
+    """
+    tracker = getattr(request.app.state, "oi_tracker", None)
+    if tracker is None or not hasattr(tracker, "get_pcr_history"):
+        return []
+    try:
+        return tracker.get_pcr_history(symbol, days)
+    except Exception as exc:
+        logger.warning("PCR history read failed: %s", exc)
+        return []
+
+
+@router.get("/max-pain-history")
+async def max_pain_history(
+    request: Request,
+    symbol: str = Query("NIFTY"),
+    days: int = _days_query(),
+) -> list[dict]:
+    """Max pain history from the analytics store (SQLite).
+
+    Returns ``[{timestamp, max_pain, spot_price}]`` for the given symbol,
+    filtered to the last ``days`` days.
+    """
+    store = getattr(request.app.state, "analytics_store", None)
+    if store is None or not hasattr(store, "get_max_pain_history"):
+        return []
+    try:
+        return store.get_max_pain_history(symbol, days)
+    except Exception as exc:
+        logger.warning("Max pain history read failed: %s", exc)
+        return []
+
+
+@router.get("/regime-history")
+async def regime_history(
+    request: Request,
+    days: int = _days_query(),
+) -> list[dict]:
+    """Regime history from the analytics store (SQLite).
+
+    Returns ``[{timestamp, regime, confidence, adx}]`` filtered to the last
+    ``days`` days.
+    """
+    store = getattr(request.app.state, "analytics_store", None)
+    if store is None or not hasattr(store, "get_regime_history"):
+        return []
+    try:
+        return store.get_regime_history(days)
+    except Exception as exc:
+        logger.warning("Regime history read failed: %s", exc)
+        return []
+
+
+async def _export_payload(request: Request, symbol: str, days: int) -> dict:
+    """Gather every exportable analytics section (degrades, never raises)."""
+    sections: dict = {}
+
+    scorecard_metrics: list[dict] = []
+    try:
+        sc = await scorecard(request)
+        scorecard_metrics = [
+            {"key": m.key, "label": m.label, "value": m.value, "available": m.available}
+            for m in sc.metrics
+        ]
+    except Exception as exc:
+        logger.warning("Scorecard export section failed: %s", exc)
+    sections["scorecard_metrics"] = scorecard_metrics
+
+    calc = getattr(request.app.state, "iv_rank_calculator", None)
+    if calc is not None and hasattr(calc, "get_history"):
+        try:
+            sections["iv_rank_history"] = [
+                {"symbol": symbol, **row} for row in calc.get_history(symbol, days)
+            ]
+        except Exception as exc:
+            logger.warning("IV rank export section failed: %s", exc)
+    sections.setdefault("iv_rank_history", [])
+
+    tracker = getattr(request.app.state, "oi_tracker", None)
+    if tracker is not None and hasattr(tracker, "get_pcr_history"):
+        try:
+            sections["pcr_history"] = [
+                {"symbol": symbol, **row} for row in tracker.get_pcr_history(symbol, days)
+            ]
+        except Exception as exc:
+            logger.warning("PCR export section failed: %s", exc)
+    sections.setdefault("pcr_history", [])
+
+    store = getattr(request.app.state, "analytics_store", None)
+    if store is not None and hasattr(store, "get_max_pain_history"):
+        try:
+            sections["max_pain_history"] = [
+                {"symbol": symbol, **row} for row in store.get_max_pain_history(symbol, days)
+            ]
+        except Exception as exc:
+            logger.warning("Max pain export section failed: %s", exc)
+    sections.setdefault("max_pain_history", [])
+
+    if store is not None and hasattr(store, "get_regime_history"):
+        try:
+            sections["regime_history"] = store.get_regime_history(days)
+        except Exception as exc:
+            logger.warning("Regime export section failed: %s", exc)
+    sections.setdefault("regime_history", [])
+
+    return sections
+
+
+_CSV_SECTIONS: list[tuple[str, list[str]]] = [
+    ("scorecard_metrics", ["key", "label", "value", "available"]),
+    ("regime_history", ["timestamp", "regime", "confidence", "adx"]),
+    ("iv_rank_history", ["symbol", "timestamp", "iv_rank_percent", "iv_classification"]),
+    ("pcr_history", ["symbol", "timestamp", "pcr", "total_call_oi", "total_put_oi"]),
+    ("max_pain_history", ["symbol", "timestamp", "max_pain", "spot_price"]),
+]
+
+
+def _sections_to_csv(sections: dict) -> str:
+    """Render export sections to a CSV document (stdlib csv, section headers)."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    for name, columns in _CSV_SECTIONS:
+        writer.writerow([f"# {name}"])
+        writer.writerow(columns)
+        for row in sections.get(name, []):
+            writer.writerow([row.get(col) for col in columns])
+    return buf.getvalue()
+
+
+@router.get("/export")
+async def export_analytics(
+    request: Request,
+    format: str = Query("csv", pattern="^(csv|json)$"),
+    symbol: str = Query("NIFTY"),
+    days: int = _days_query(),
+) -> Response:
+    """Export analytics time series (scorecard, regime, IV rank, PCR, max pain).
+
+    Args:
+        format: ``csv`` (default) or ``json``.
+        symbol: Underlying symbol for the per-symbol sections.
+        days: How many days of history to include (default 30).
+
+    Returns:
+        A file download: ``analytics_export.csv`` (text/csv) or a JSON array
+        payload with ``Content-Disposition: attachment``.
+    """
+    sections = await _export_payload(request, symbol, days)
+    if format == "json":
+        return JSONResponse(
+            content=sections,
+            headers={"Content-Disposition": 'attachment; filename="analytics_export.json"'},
+        )
+    return Response(
+        content=_sections_to_csv(sections),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="analytics_export.csv"'},
+    )

@@ -93,6 +93,7 @@ class OptionsChainResponse(BaseModel):
 
 class StrategyHintResponse(BaseModel):
     direction: str
+    strategy: str | None = None
     strike: float | None = None
     premium: float | None = None
     ev_after_cost: float | None = None
@@ -105,6 +106,37 @@ class StrategyHintResponse(BaseModel):
     stop_loss: float | None = None
     target: float | None = None
     confidence: float | None = None
+
+
+class ProposeFromHintRequest(BaseModel):
+    """Payload for one-click proposal generation from a hint (3A.2).
+
+    Mirrors the StrategyHintResponse fields the hints panel displays; the
+    endpoint builds a SignalV2-shaped signal and queues a PENDING proposal.
+    """
+    symbol: str
+    direction: str  # bullish / bearish (UP / DOWN accepted)
+    strike: float | None = None
+    premium: float | None = None
+    expiry: str | None = None
+    option_type: str | None = None  # CE / PE (derived from direction when absent)
+    lot_size: int | None = None
+    lots: int | None = None
+    stop_loss: float | None = None
+    target: float | None = None
+    rationale: str | None = None
+    confidence: float | None = None
+    conviction: float | None = None
+    quantity: int | None = None
+
+
+class HintStatsResponse(BaseModel):
+    """Hint accuracy statistics over the trailing window (3A.2)."""
+    win_rate: float | None = None
+    avg_pnl: float | None = None
+    sample_size: int = 0
+    total_hints: int = 0
+    days: int = 30
 
 
 # ── Market data ────────────────────────────────────────────────────────────

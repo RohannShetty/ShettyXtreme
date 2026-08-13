@@ -6,21 +6,28 @@ Option-chain rows come from the Fyers ``/data/options-chain-v3`` endpoint
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from shettyxtreme.core.data_models import OrderType, ProductType
 from shettyxtreme.integration.fyers._util import IST
 from shettyxtreme.intelligence.hints.strategy_hints import StrategyHints
+from shettyxtreme.intelligence.signals.signal_engine import Signal, SignalDirection
 from shettyxtreme.options.greeks import GreeksCalculator
 from shettyxtreme.options.max_pain import compute_max_pain
+from shettyxtreme.options.strategy_analyzer import StrategyAnalyzer
 from shettyxtreme.terminal.api.models import (
     ExpiryCalendarItem,
     ExpiryCalendarResponse,
+    HintStatsResponse,
     OptionsChainItem,
     OptionsChainResponse,
     OptionsSummaryResponse,
+    ProposeFromHintRequest,
+    ProposalResponse,
     RegimeResponse,
     SignalResponse,
     StrategyHintResponse,
@@ -511,6 +518,7 @@ async def get_strategy_hint(request: Request) -> StrategyHintResponse:
     hint = StrategyHints(signal=signal, chain=chain, current_price=current_price).generate()
     return StrategyHintResponse(
         direction=hint.direction,
+        strategy=hint.strategy,
         strike=hint.strike,
         premium=hint.premium,
         ev_after_cost=hint.ev_after_cost,
@@ -572,3 +580,138 @@ async def get_options_summary(
         iv_rank_percent=iv_rank_val,
         iv_classification=iv_class_val,
     )
+
+
+def _hint_direction(value: str) -> SignalDirection | None:
+    """Map a hint direction onto a SignalDirection; None for neutral/unknown.
+
+    Accepts both the hint vocabulary (bullish / bearish) and the signal
+    vocabulary (UP / DOWN). Neutral or unrecognized directions return None —
+    callers reject them, since a neutral hint must never become a proposal.
+    """
+    v = str(value or "").strip().upper()
+    if v in ("UP", "BULLISH"):
+        return SignalDirection.UP
+    if v in ("DOWN", "BEARISH"):
+        return SignalDirection.DOWN
+    return None
+
+
+@router.post("/propose-from-hint", response_model=ProposalResponse)
+async def propose_from_hint(
+    request: Request, payload: ProposeFromHintRequest,
+) -> ProposalResponse:
+    """One-click proposal generation from a strategy hint (3A.2).
+
+    Builds a SignalV2-shaped signal from the hint payload and queues a
+    PENDING proposal on the ExecutionEngine — OBSERVER-first (D10): the
+    human always approves before anything is placed. The response uses the
+    same ``ProposalResponse`` as the execution router, with ``source`` set
+    to ``manual_hint`` so hint-generated proposals are distinguishable from
+    pipeline-driven ones. The hint is also recorded in the hint store so
+    its outcome can be scored when the position closes.
+    """
+    engine = getattr(request.app.state, "execution_engine", None)
+    if engine is None:
+        raise HTTPException(
+            status_code=503, detail="execution engine not available",
+        )
+
+    direction = _hint_direction(payload.direction)
+    if direction is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "direction must be bullish/bearish (or UP/DOWN) — "
+                "neutral hints cannot become proposals"
+            ),
+        )
+
+    bullish = direction == SignalDirection.UP
+    option_type = str(payload.option_type or ("CE" if bullish else "PE")).upper()
+
+    lot_size = int(payload.lot_size or 0)
+    lots = int(payload.lots or 1)
+    quantity = payload.quantity
+    if quantity is None:
+        quantity = lot_size * lots if lot_size > 0 else None
+    if quantity == 0:
+        quantity = None
+
+    conviction = payload.conviction
+    if conviction is None:
+        conviction = payload.confidence or 0.0
+
+    signal = Signal(
+        direction=direction,
+        conviction=float(conviction),
+        voters=[],
+        timestamp=datetime.now(UTC),
+        D=0.0,
+        P=1.0,
+        G="contested",
+    )
+
+    premium = payload.premium
+    hint: dict[str, Any] = {
+        "symbol": payload.symbol,
+        "exchange": "NFO",
+        "quantity": quantity,
+        "lot_size": lot_size or None,
+        "lots": lots,
+        "price": premium,
+        "order_type": OrderType.LIMIT if premium is not None else OrderType.MARKET,
+        "product": ProductType.MIS,
+        "tag": "manual_hint",
+        "hint_kind": "manual_hint",
+        "source": "manual_hint",
+        "strike": payload.strike,
+        "expiry": payload.expiry,
+        "option_type": option_type,
+        "entry_premium": premium,
+        "stop_loss": payload.stop_loss,
+        "target": payload.target,
+        "rationale": payload.rationale,
+        "confidence": payload.confidence,
+        "strategy": StrategyAnalyzer.display_name(
+            "long_call" if bullish else "long_put"
+        ),
+        "underlying": payload.symbol,
+    }
+
+    approval_id = engine.submit_signal(signal, hint, signal_id=uuid4().hex)
+    approval = engine.get_approval(approval_id)
+
+    # Best-effort hint tracking (3A.2): record the hint so a closing
+    # position can later resolve its outcome. Never fails the request.
+    store = getattr(request.app.state, "hint_store", None)
+    if store is not None:
+        try:
+            hint["hint_id"] = store.record_hint(payload.model_dump())
+        except Exception:
+            logger.debug(
+                "hint record failed for %s/%s",
+                payload.symbol, payload.direction, exc_info=True,
+            )
+
+    from shettyxtreme.terminal.api.execution_router import _proposal_response
+
+    response = _proposal_response(approval)
+    response.source = "manual_hint"
+    return response
+
+
+@router.get("/hint-stats", response_model=HintStatsResponse)
+async def get_hint_stats(
+    request: Request, days: int = Query(30, ge=1, le=365),
+) -> HintStatsResponse:
+    """Return hint accuracy stats over the trailing ``days`` window (3A.2).
+
+    Win rate and average PnL are computed over hints that resolved (a
+    matching position closed); ``total_hints`` counts every hint recorded
+    in the window regardless of resolution.
+    """
+    store = getattr(request.app.state, "hint_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="hint store not available")
+    return HintStatsResponse(**store.get_stats(days=days))

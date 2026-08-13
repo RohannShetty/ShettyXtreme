@@ -62,12 +62,18 @@ from shettyxtreme.intelligence.pipeline import IntelligencePipeline
 from shettyxtreme.terminal.api import postback_router
 from shettyxtreme.terminal.api import ws_bridge
 from shettyxtreme.terminal.api.analytics_router import router as analytics_router
+from shettyxtreme.terminal.api.greeks_store import GreeksStore
 from shettyxtreme.terminal.api.knowledge_router import init_knowledge
 from shettyxtreme.terminal.api.knowledge_router import router as knowledge_router
 from shettyxtreme.terminal.api.v2 import router as v2_router
 from shettyxtreme.terminal.api.scanner_data import GapDetector, LogCollector, ClusterDetector
-from shettyxtreme.terminal.api.scanner_router import init_scanner_data
+from shettyxtreme.terminal.api.scanner_router import init_scanner_data, init_scanner_store
 from shettyxtreme.terminal.api.scanner_router import router as scanner_router
+from shettyxtreme.terminal.api.scanner_poller import (
+    _SCANNER_POLL_CADENCE_SECONDS,
+    _scanner_poll_loop,
+)
+from shettyxtreme.terminal.api.scanner_store import ScannerStore
 from shettyxtreme.intelligence.scanners import instantiate_scanners, SCANNER_REGISTRY
 from shettyxtreme.intelligence.scanners.base_scanner import BaseScanner
 from shettyxtreme.terminal.api.settings_router import init_settings
@@ -83,6 +89,8 @@ from shettyxtreme.terminal.projections import (
     RiskProjection,
     ScannerProjection,
     WatchlistProjection,
+    set_greeks_store,
+    set_scanner_store,
 )
 
 logger = logging.getLogger(__name__)
@@ -249,6 +257,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scanner_proj.subscribe(_event_bus)
     app.state.scanner_projection = scanner_proj
 
+    # ── Persistent scanner findings store (Phase 3A.1) ─────────────────────
+    # ScannerProjection broadcasts findings to WS and records them here so
+    # /api/scanner/findings/history survives restarts.
+    scanner_store = ScannerStore("data/scanner_findings.db")
+    app.state.scanner_store = scanner_store
+    init_scanner_store(scanner_store)
+    set_scanner_store(scanner_store)
+
     # ── Regime & Risk EventBus bridges ──────────────────────────────────────
     regime_bridge = RegimeBusBridge(_event_bus)
     risk_bridge = RiskBusBridge(_event_bus)
@@ -291,6 +307,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.intelligence_projection = intel_proj
     app.state.health_projection = health_proj
 
+    # ── Hint outcome store (3A.2) ──────────────────────────────────────────
+    # Tracks hints that became proposals and records outcomes when the
+    # resulting position closes (win rate / avg PnL on the hints panel).
+    from shettyxtreme.terminal.api.hint_store import HintStore
+
+    hint_store = HintStore(db_path="data/hints.db")
+    app.state.hint_store = hint_store
+    position_proj.set_hint_store(hint_store)
+
+    # ── Greeks history store (3A.4) ─────────────────────────────────────────
+    # Records portfolio greeks snapshots on every position change (hooked in
+    # PositionProjection) so the frontend can render greeks history charts.
+    greeks_store = GreeksStore("data/greeks.db")
+    app.state.greeks_store = greeks_store
+    set_greeks_store(greeks_store)
+
     # ── Options analytics calculators (IV rank, OI tracker) ────────────────
     from shettyxtreme.options.iv_rank import IVRankCalculator
     from shettyxtreme.options.oi_tracker import OITracker
@@ -300,6 +332,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.iv_rank_calculator = iv_rank_calc
     app.state.oi_tracker = oi_tracker
 
+    # ── Analytics history store (max pain / regime charts, Phase 3A.3) ─────
+    from shettyxtreme.terminal.api.analytics_store import AnalyticsStore
+
+    analytics_store = AnalyticsStore("data/analytics.db")
+    app.state.analytics_store = analytics_store
+    intel_proj.set_analytics_store(analytics_store)
+
     # ── 11-type opportunity scanners ───────────────────────────────────────
     _scanners: list[BaseScanner] = []
     _scanner_poller_task: asyncio.Task | None = None
@@ -308,11 +347,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             event_bus=_event_bus,
             iv_rank_calculator=iv_rank_calc,
             oi_tracker=oi_tracker,
+            thresholds=settings_store.scanner_thresholds(),
         )
         for scanner in _scanners:
             await scanner.start()
         app.state.scanners = _scanners
-        logger.info("Opportunity scanners started: %d scanners", len(_scanners))
+        # Phase 3A.1: Tier-B poller — 8 of 11 scanners are snapshot-driven
+        # and never ran before; this loop drives them from the chain cache.
+        _scanner_poller_task = asyncio.create_task(_scanner_poll_loop(app))
+        app.state.scanner_poller_task = _scanner_poller_task
+        logger.info(
+            "Opportunity scanners started: %d scanners (poller cadence %ss)",
+            len(_scanners),
+            _SCANNER_POLL_CADENCE_SECONDS,
+        )
     except Exception:
         logger.exception("Scanner startup failed — scanners degraded")
         app.state.scanners = []
@@ -661,6 +709,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.exception("shadow loop close failed")
         knowledge_store.close()
         trade_ledger.close()
+        greeks_store = getattr(app.state, "greeks_store", None)
+        if greeks_store is not None:
+            try:
+                greeks_store.close()
+            except Exception:
+                logger.exception("greeks store close failed")
+        analytics_store.close()
+        hint_store = getattr(app.state, "hint_store", None)
+        if hint_store is not None:
+            try:
+                hint_store.close()
+            except Exception:
+                logger.exception("hint store close failed")
         bar_builder = getattr(app.state, "bar_builder", None)
         data_adapter = getattr(app.state, "data_adapter", None)
         trading_adapter = getattr(app.state, "trading_adapter", None)
@@ -676,6 +737,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await _health_monitor.stop()
         if _margin_poller_task:
             _margin_poller_task.cancel()
+        if _scanner_poller_task:
+            _scanner_poller_task.cancel()
+        try:
+            scanner_store.close()
+        except Exception:
+            logger.exception("scanner store close failed")
+        init_scanner_store(None)
+        set_scanner_store(None)
         if _event_bus:
             await _event_bus.stop()
         if _event_bus_task:

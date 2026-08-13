@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from shettyxtreme.core.data_models import Bar
@@ -316,6 +316,51 @@ class OITracker:
             List of OI values observed from bar events, empty if none.
         """
         return list(self._symbol_oi.get(symbol, []))
+
+    def get_pcr_history(self, symbol: str = "NIFTY", days: int = 30) -> list[dict[str, Any]]:
+        """Return a per-poll put/call OI ratio time series.
+
+        Phase 3A.3: exposes the per-contract snapshot list as a PCR history
+        for the PCR chart. Contracts from the same chain poll are bucketed by
+        their timestamp truncated to the second (one poll lands within a
+        single second), summed per option side, and the PCR is computed per
+        bucket, oldest first.
+
+        Args:
+            symbol: Underlying symbol to compute PCR for.
+            days: How many days of history to return (default 30). Clamped
+                to >= 1.
+
+        Returns:
+            Chronological list of ``{timestamp, pcr, total_call_oi,
+            total_put_oi}`` dicts; empty when no snapshots exist for the
+            symbol within the window.
+        """
+        if not self._snapshots:
+            return []
+        cutoff = datetime.now(UTC) - timedelta(days=max(1, days))
+        buckets: dict[datetime, list[int]] = {}
+        for snap in self._snapshots:
+            if snap.symbol != symbol or snap.timestamp < cutoff:
+                continue
+            bucket_ts = snap.timestamp.replace(microsecond=0)
+            counts = buckets.setdefault(bucket_ts, [0, 0])
+            if snap.option_type == "CE":
+                counts[0] += snap.oi
+            elif snap.option_type == "PE":
+                counts[1] += snap.oi
+
+        result: list[dict[str, Any]] = []
+        for ts in sorted(buckets):
+            total_call_oi, total_put_oi = buckets[ts]
+            pcr = round(total_put_oi / total_call_oi, 4) if total_call_oi > 0 else 0.0
+            result.append({
+                "timestamp": ts.isoformat(),
+                "pcr": pcr,
+                "total_call_oi": total_call_oi,
+                "total_put_oi": total_put_oi,
+            })
+        return result
 
     async def _on_market_data(self, event: Event) -> None:
         """Handle MARKET_DATA_BAR events from EventBus.

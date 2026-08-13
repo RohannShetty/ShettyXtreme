@@ -98,6 +98,14 @@ class ColorConventionUpdate(BaseModel):
     color_convention: str
 
 
+class ScannerThresholdsResponse(BaseModel):
+    scanner_thresholds: dict[str, dict[str, float]]
+
+
+class ScannerThresholdsUpdate(BaseModel):
+    scanner_thresholds: dict[str, dict[str, float]]
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 def _scheduler_snapshot(store: SettingsStore) -> SchedulerResponse:
     """Stored config overlaid with live handle status (honest intent+reality)."""
@@ -269,6 +277,38 @@ async def update_color_convention(payload: ColorConventionUpdate) -> ColorConven
     conv = store.color_convention()
     await ws_bridge.broadcast("color-convention", {"color_convention": conv})
     return ColorConventionResponse(color_convention=conv)
+
+
+# ── Scanner thresholds (Phase 3A.1) ────────────────────────────────────────
+@router.get("/scanner-thresholds", response_model=ScannerThresholdsResponse)
+async def get_scanner_thresholds() -> ScannerThresholdsResponse:
+    """Return current per-scanner threshold overrides.
+
+    Empty dict means every scanner runs with its built-in defaults.
+    """
+    return ScannerThresholdsResponse(scanner_thresholds=get_settings_store().scanner_thresholds())
+
+
+@router.put("/scanner-thresholds", response_model=ScannerThresholdsResponse)
+async def update_scanner_thresholds(
+    payload: ScannerThresholdsUpdate,
+    request: Request,
+) -> ScannerThresholdsResponse:
+    """Set per-scanner threshold overrides and broadcast them via WS.
+
+    Shape is validated by the store (scanner_type → param → number); the
+    param names are checked against ``SCANNER_THRESHOLD_SPECS`` when the
+    scanners are next (re)instantiated. Invalid shape → 400, store untouched.
+    """
+    store = get_settings_store()
+    try:
+        store.update({"scanner_thresholds": payload.scanner_thresholds})
+    except SettingsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    thresholds = store.scanner_thresholds()
+    await _announce_changes(request, {"scanner_thresholds": thresholds}, store)
+    await ws_bridge.broadcast("scanner-thresholds", {"scanner_thresholds": thresholds})
+    return ScannerThresholdsResponse(scanner_thresholds=thresholds)
 
 
 # ── Research scheduler ─────────────────────────────────────────────────────

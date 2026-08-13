@@ -13,6 +13,7 @@ from shettyxtreme.terminal.api.models import (
     ScannerFindingResponse,
 )
 from shettyxtreme.terminal.api.scanner_data import GapDetector, LogCollector, ClusterDetector
+from shettyxtreme.terminal.api.scanner_store import ScannerStore
 
 router = APIRouter(prefix="/api/scanner", tags=["scanner"])
 
@@ -21,12 +22,24 @@ _gap_detector: GapDetector | None = None
 _log_collector: LogCollector | None = None
 _cluster_detector: ClusterDetector | None = None
 
+# ── Persistent findings store (set via init_scanner_store in lifespan) ──────
+_scanner_store: ScannerStore | None = None
+
 
 def init_scanner_data(gap_detector: GapDetector, log_collector: LogCollector, cluster_detector: ClusterDetector) -> None:
     global _gap_detector, _log_collector, _cluster_detector
     _gap_detector = gap_detector
     _log_collector = log_collector
     _cluster_detector = cluster_detector
+
+
+def init_scanner_store(store: ScannerStore | None) -> None:
+    """Wire the persistent findings store (the lifespan calls this).
+
+    Pass ``None`` to detach (test isolation / shutdown).
+    """
+    global _scanner_store
+    _scanner_store = store
 
 
 @router.get("/gaps", response_model=list[GapResponse])
@@ -114,4 +127,31 @@ async def get_findings(
             timestamp=f.get("timestamp"),
         )
         for f in raw
+    ]
+
+
+@router.get("/findings/history", response_model=list[ScannerFindingResponse])
+async def get_findings_history(
+    scanner_type: str | None = Query(None, description="Filter by scanner type (e.g. gamma_spike, gap_fill)"),
+    limit: int = Query(100, ge=1, le=500),
+    since: str | None = Query(None, description="Only findings at/after this ISO timestamp"),
+) -> list[ScannerFindingResponse]:
+    """Return persistent scanner finding history from the SQLite store.
+
+    Newest first. Filterable by ``scanner_type`` and ``since`` (ISO
+    timestamp). Degrades to an empty list when no store is wired (e.g.
+    tests that don't run the full lifespan).
+    """
+    if _scanner_store is None:
+        return []
+    rows = _scanner_store.list(scanner_type=scanner_type, limit=limit, since=since)
+    return [
+        ScannerFindingResponse(
+            scanner_type=f.get("scanner_type", "unknown"),
+            symbol=f.get("symbol", ""),
+            severity=f.get("severity", "MEDIUM"),
+            detail=f.get("detail", {}),
+            timestamp=f.get("timestamp"),
+        )
+        for f in rows
     ]
