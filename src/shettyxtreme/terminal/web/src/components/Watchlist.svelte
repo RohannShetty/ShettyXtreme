@@ -61,11 +61,23 @@
     error = "";
     try {
       items = await get<WatchItem[]>("/api/watchlist");
+      // Seed the staleness tracker from the REST snapshot. A row's own
+      // timestamp wins when present; a row carrying a real price (ltp > 0)
+      // was just refreshed by the API (hydration TTL 10s) even when the feed
+      // is idle, so treat the fetch moment as its last-seen time — REST-fresh
+      // rows must not be painted STALE just because no live tick has landed
+      // this session. Rows with no data (ltp 0 / halted / no credentials)
+      // stay unseeded → honest STALE. (Task 2.1)
+      const fetchedAt = Date.now();
       for (const it of items) {
         if (it.timestamp) {
           const ts = Date.parse(it.timestamp);
-          if (!Number.isNaN(ts)) lastSeenMs.set(it.symbol, ts);
+          if (!Number.isNaN(ts)) {
+            lastSeenMs.set(it.symbol, ts);
+            continue;
+          }
         }
+        if (it.ltp > 0) lastSeenMs.set(it.symbol, fetchedAt);
       }
       if (selected && !items.some((i) => i.symbol === selected)) selected = "";
     } catch (err) {
@@ -78,6 +90,10 @@
   function applyTick(data: unknown): void {
     const tick = data as Partial<WatchItem>;
     if (!tick || typeof tick.symbol !== "string") return;
+    // Mark the symbol as seen even before its REST row lands — a tick that
+    // races the initial load must not leave that row painted STALE forever
+    // (Task 2.1). The row itself is patched below once `items` has it.
+    lastSeenMs.set(tick.symbol, Date.now());
     const existing = items.find((i) => i.symbol === tick.symbol);
     if (existing) {
       if (typeof tick.ltp === "number") {
@@ -93,8 +109,11 @@
       }
       if (typeof tick.change_pct === "number") existing.change_pct = tick.change_pct;
       if (typeof tick.volume === "number") existing.volume = tick.volume;
-      lastSeenMs.set(tick.symbol, Date.now());
       items = items.slice();
+    } else if (typeof tick.ltp === "number") {
+      // Row not loaded yet — remember the LTP so the first flash after the
+      // row appears compares against this pre-load tick, not a stale price.
+      prevLtp.set(tick.symbol, tick.ltp);
     }
   }
 
@@ -243,7 +262,7 @@
               onkeydown={(e) => onRowKeydown(e, i)}
               role="button"
               tabindex="0"
-              title={isStale(item) ? "No tick in the last 60s" : ""}
+              title={isStale(item) ? "No fresh data in the last 60s" : ""}
             >
               <div class="sym-cell">
                 <span class="ticker">{item.symbol}</span>

@@ -15,7 +15,7 @@ import json
 import logging
 import re
 import time
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -164,6 +164,20 @@ def _record(query: str, info: dict[str, Any]) -> None:
     )
 
 
+def _stamp_hydrated(info: dict[str, Any]) -> None:
+    """Stamp when a row's price was last refreshed from REST.
+
+    The frontend's STALE chip keys on data freshness: rows backfilled by
+    hydration carry ``timestamp=None`` otherwise, so a REST-fresh watchlist
+    was painted STALE for every symbol whose feed was idle (Task 2.1).
+    Live ticks overwrite the stamp on the next MARKET_DATA_TICK. Only rows
+    that actually carry a price are stamped — a halted security (ltp 0)
+    keeps an honest null timestamp.
+    """
+    if (info.get("ltp") or 0) > 0:
+        info["timestamp"] = datetime.now(UTC).isoformat()
+
+
 async def _hydrate_from_rest(proj_rows: dict[str, dict[str, Any]], request: Request) -> None:
     """Backfill ltp/change_pct from Fyers REST when the live feed is idle.
 
@@ -195,6 +209,7 @@ async def _hydrate_from_rest(proj_rows: dict[str, dict[str, Any]], request: Requ
             cached = _hydration_cache.get(query)
             if cached is not None and now - cached[0] < _HYDRATION_TTL:
                 info["ltp"], info["change_pct"] = cached[1], cached[2]
+                _stamp_hydrated(info)
                 continue
             queries.append((symbol, info, query))
         if not queries:
@@ -206,6 +221,7 @@ async def _hydrate_from_rest(proj_rows: dict[str, dict[str, Any]], request: Requ
                 quotes = {}
             for _, info, query in queries:
                 _apply_quote(info, quotes.get(query))
+                _stamp_hydrated(info)
                 _record(query, info)
         else:
             for _, info, query in queries:
@@ -224,6 +240,7 @@ async def _hydrate_from_rest(proj_rows: dict[str, dict[str, Any]], request: Requ
                             )
                         else:
                             info["change_pct"] = 0.0
+                _stamp_hydrated(info)
                 _record(query, info)
     except Exception:
         logger.warning("watchlist REST hydration failed — keeping stored values", exc_info=True)

@@ -303,6 +303,56 @@ async def test_halted_security_no_data_leaves_row_unchanged(client: AsyncClient)
 
 
 @pytest.mark.asyncio
+async def test_hydration_stamps_refresh_timestamp(client: AsyncClient) -> None:
+    """A REST-hydrated row reports when its price was refreshed.
+
+    Task 2.1: without a stamp the API returns timestamp=None for every row
+    whose feed is idle, and the frontend STALE chip (which keys on data
+    freshness) paints a freshly-hydrated watchlist as fully stale.
+    """
+    proj = app.state.watchlist_projection
+    proj.add("RELIANCE", "NSE", security_id="RELIANCE")
+    app.state.data_adapter = FakeDataAdapter(
+        ohlc_map={"RELIANCE": _ohlc(2901.35, 2840.25)},
+    )
+
+    resp = await client.get("/api/watchlist")
+
+    assert resp.status_code == 200
+    (row,) = resp.json()
+    assert row["ltp"] == 2901.35
+    assert row["timestamp"] is not None
+
+
+@pytest.mark.asyncio
+async def test_halted_row_keeps_null_timestamp(client: AsyncClient) -> None:
+    """Rows with no data are NOT stamped — an honest null, never freshness."""
+    proj = app.state.watchlist_projection
+    proj.add("RELIANCE", "NSE", security_id="RELIANCE")
+    app.state.data_adapter = FakeDataAdapter()  # halted -> no quotes
+
+    resp = await client.get("/api/watchlist")
+
+    assert resp.status_code == 200
+    (row,) = resp.json()
+    assert row["ltp"] == 0.0
+    assert row["timestamp"] is None
+
+
+@pytest.mark.asyncio
+async def test_no_adapter_rows_keep_null_timestamp(client: AsyncClient) -> None:
+    proj = app.state.watchlist_projection
+    proj.add("RELIANCE", "NSE", security_id="RELIANCE")
+
+    resp = await client.get("/api/watchlist")
+
+    assert resp.status_code == 200
+    (row,) = resp.json()
+    assert row["ltp"] == 0.0
+    assert row["timestamp"] is None
+
+
+@pytest.mark.asyncio
 async def test_adapter_raising_never_breaks_response(client: AsyncClient) -> None:
     proj = app.state.watchlist_projection
     proj.add("RELIANCE", "NSE", security_id="RELIANCE")
