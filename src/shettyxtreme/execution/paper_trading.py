@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import random
 import uuid
+from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
 
@@ -155,6 +156,7 @@ class PaperTradingEngine:
             if o.order_id == order_id:
                 o.status = "CANCELLED"
                 break
+        await self._emit_order_cancelled(order)
         return True
 
     def get_positions(self) -> list[Position]:
@@ -311,6 +313,7 @@ class PaperTradingEngine:
                     if o.order_id == oid:
                         o.status = "CANCELLED"
                         break
+                await self._emit_order_cancelled(order)
 
         for oid in to_fill:
             order = self._pending_orders.pop(oid, None)
@@ -570,6 +573,16 @@ class PaperTradingEngine:
         """Generate a unique order ID."""
         return f"PAPER{uuid.uuid4().hex[:8].upper()}"
 
+    @staticmethod
+    def _order_event_data(order: "Order") -> dict[str, Any]:
+        """Full order record for ORDER_* bus events (P4: order WS topic).
+
+        Carries every Order field so the OrderWSProjection can serialize a
+        complete OrderResponse without a broker round-trip. Extra keys the
+        projection does not need (none today) are simply ignored.
+        """
+        return asdict(order)
+
     async def _emit_order_placed(self, order: Order) -> None:
         """Emit ORDER_PLACED event."""
         if self._event_bus:
@@ -577,6 +590,7 @@ class PaperTradingEngine:
                 "order_id": order.order_id, "symbol": order.symbol,
                 "side": order.side, "order_type": order.order_type,
                 "quantity": order.quantity, "price": order.price,
+                **self._order_event_data(order),
             }, source="paper_trading"))
 
     async def _emit_order_filled(self, order: Order) -> None:
@@ -586,6 +600,7 @@ class PaperTradingEngine:
                 "order_id": order.order_id, "symbol": order.symbol,
                 "side": order.side, "quantity": order.quantity,
                 "price": order.price,
+                **self._order_event_data(order),
             }, source="paper_trading"))
 
     async def _emit_order_rejected(self, result: OrderResult, symbol: str) -> None:
@@ -594,4 +609,17 @@ class PaperTradingEngine:
             await self._event_bus.publish(Event(Topic.ORDER_REJECTED, {
                 "order_id": result.order_id, "symbol": symbol,
                 "reason": result.message,
+                # P4: minimal full-record shape so OrderWSProjection can build
+                # an OrderResponse (unknown fields stay honest empties).
+                "exchange": "", "side": "", "order_type": "",
+                "quantity": 0, "price": 0.0, "status": "REJECTED",
+                "filled_quantity": 0, "average_price": 0.0,
+                "created_at": datetime.now(UTC),
+            }, source="paper_trading"))
+
+    async def _emit_order_cancelled(self, order: Order) -> None:
+        """Emit ORDER_CANCELLED event (P4: order WS topic)."""
+        if self._event_bus:
+            await self._event_bus.publish(Event(Topic.ORDER_CANCELLED, {
+                **self._order_event_data(order),
             }, source="paper_trading"))

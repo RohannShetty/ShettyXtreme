@@ -3,6 +3,12 @@
   import { get } from "../lib/api";
   import { onMessage } from "../lib/ws";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
+  import {
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
+  } from "$lib/components/ui/collapsible";
+  import { ChevronDown } from "@lucide/svelte";
   import EmptyState from "./state/EmptyState.svelte";
   import LoadingState from "./state/LoadingState.svelte";
   import ErrorState from "./state/ErrorState.svelte";
@@ -28,9 +34,15 @@
     lopsided_warning: string | null;
   };
 
+  type ScenarioPosition = {
+    symbol: string;
+    pnl: number;
+  };
+
   type ScenarioPnl = {
     shift_pct: number;
     total_pnl: number;
+    per_position?: ScenarioPosition[];
   };
 
   type Stress = {
@@ -62,6 +74,7 @@
   let loading = $state(true);
   let error = $state("");
   let refreshTimer: number | undefined;
+  let expandedScenarios = $state<Set<number>>(new Set());
 
   onMount(() => {
     void load();
@@ -87,6 +100,11 @@
   function fmtMoney(value: number): string {
     const sign = value > 0 ? "+" : "";
     return `${sign}${value.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  }
+
+  function fmtMoneyFull(value: number): string {
+    const sign = value > 0 ? "+" : "";
+    return `${sign}${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
 
   function fmtNum(value: number, decimals = 2): string {
@@ -146,6 +164,21 @@
       Math.abs(g.vega.long_val), Math.abs(g.vega.short_val),
       0.001
     );
+  }
+
+  function scenarioMaxAbs(positions: ScenarioPosition[] | undefined): number {
+    if (!positions || positions.length === 0) return 1;
+    return Math.max(...positions.map((p) => Math.abs(p.pnl)), 1);
+  }
+
+  function toggleScenario(shiftPct: number): void {
+    const next = new Set(expandedScenarios);
+    if (next.has(shiftPct)) {
+      next.delete(shiftPct);
+    } else {
+      next.add(shiftPct);
+    }
+    expandedScenarios = next;
   }
 </script>
 
@@ -219,34 +252,75 @@
         </div>
 
         <!-- 3. Stress Test -->
-        <div class="block">
+        <div class="block stress-block">
           <h3>STRESS TEST</h3>
           {#if data.stress.scenarios.length === 0}
             <p class="empty-text">No stress data.</p>
           {:else}
-            <table class="stress-table">
-              <thead>
-                <tr>
-                  <th>SHIFT</th>
-                  <th class="text-right">P&L</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each data.stress.scenarios as sc (sc.shift_pct)}
-                  <tr class:worst-row={sc.shift_pct === data.stress.worst_case_shift}>
-                    <td class="mono shift-cell">
-                      {sc.shift_pct > 0 ? "+" : ""}{sc.shift_pct}%
-                    </td>
-                    <td class="mono text-right {pnlClass(sc.total_pnl)}">
-                      {fmtMoney(sc.total_pnl)}
-                      {#if sc.shift_pct === data.stress.worst_case_shift}
-                        <span class="worst-badge">WORST</span>
-                      {/if}
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
+            <div class="stress-rows">
+              {#each data.stress.scenarios as sc (sc.shift_pct)}
+                {@const isWorst = sc.shift_pct === data.stress.worst_case_shift}
+                {@const hasPositions = Array.isArray(sc.per_position) && sc.per_position.length > 0}
+                {@const posMaxAbs = scenarioMaxAbs(sc.per_position)}
+                <Collapsible open={expandedScenarios.has(sc.shift_pct)}>
+                  <CollapsibleTrigger
+                    class="stress-row-trigger"
+                    onclick={() => toggleScenario(sc.shift_pct)}
+                    aria-label={`Stress scenario ${sc.shift_pct}% — ${hasPositions ? "expand for per-position P&L" : "no position breakdown"}`}
+                  >
+                    <div class="stress-main" class:worst-row={isWorst}>
+                      <div class="stress-cell shift-cell">
+                        {#if hasPositions}
+                          {@const expanded = expandedScenarios.has(sc.shift_pct)}
+                          <ChevronDown class="chevron size-3.5 {expanded ? 'open' : ''}" />
+                        {:else}
+                          <span class="chevron-placeholder"></span>
+                        {/if}
+                        <span class="mono">{sc.shift_pct > 0 ? "+" : ""}{sc.shift_pct}%</span>
+                      </div>
+                      <div class="stress-cell pnl-cell">
+                        <span class="mono {pnlClass(sc.total_pnl)}">{fmtMoney(sc.total_pnl)}</span>
+                        {#if isWorst}
+                          <span class="worst-badge">WORST</span>
+                        {/if}
+                      </div>
+                    </div>
+                  </CollapsibleTrigger>
+                  {#if hasPositions}
+                    <CollapsibleContent>
+                      <div class="positions-table-wrap">
+                        <table class="positions-table">
+                          <thead>
+                            <tr>
+                              <th>SYMBOL</th>
+                              <th class="text-right">P&L</th>
+                              <th class="impact-col">IMPACT</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {#each sc.per_position as pos (pos.symbol)}
+                              {@const width = barWidth(pos.pnl, posMaxAbs)}
+                              <tr>
+                                <td class="mono">{pos.symbol}</td>
+                                <td class="mono text-right {pnlClass(pos.pnl)}">{fmtMoneyFull(pos.pnl)}</td>
+                                <td class="impact-col">
+                                  <div class="impact-bar">
+                                    <div
+                                      class="impact-fill {pnlClass(pos.pnl)}"
+                                      style="width: {width}%"
+                                    ></div>
+                                  </div>
+                                </td>
+                              </tr>
+                            {/each}
+                          </tbody>
+                        </table>
+                      </div>
+                    </CollapsibleContent>
+                  {/if}
+                </Collapsible>
+              {/each}
+            </div>
           {/if}
         </div>
 
@@ -424,38 +498,124 @@
     margin-top: 4px;
   }
 
-  /* Stress table */
-  .stress-table {
+  /* Stress rows */
+  .stress-block {
+    min-width: 0;
+  }
+  .stress-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .stress-row-trigger {
     width: 100%;
-    border-collapse: collapse;
-    font-size: 11px;
-  }
-  .stress-table th {
-    font-size: 9px;
-    font-weight: 600;
-    color: var(--muted);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    padding: 2px 6px;
-    border-bottom: 1px solid var(--hairline-strong);
     text-align: left;
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    border-radius: 4px;
   }
-  .stress-table td {
-    padding: 3px 6px;
+  .stress-row-trigger:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: -2px;
+  }
+  .stress-main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 6px;
     border-bottom: 1px solid var(--hairline);
-  }
-  .shift-cell {
-    font-weight: 500;
+    border-radius: 4px;
+    transition: background 120ms ease-out;
   }
   .worst-row {
     background: rgba(229, 72, 77, 0.08);
+  }
+  :global(.stress-row-trigger:hover .stress-main) {
+    background: var(--row-hover);
+  }
+  :global(.stress-row-trigger:hover .worst-row) {
+    background: rgba(229, 72, 77, 0.12);
+  }
+  .stress-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .shift-cell {
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .pnl-cell {
+    font-size: 11px;
+    justify-content: flex-end;
+  }
+  .chevron {
+    color: var(--muted);
+    transition: transform 150ms ease-out;
+  }
+  .chevron.open {
+    transform: rotate(180deg);
+  }
+  .chevron-placeholder {
+    display: inline-block;
+    width: 14px;
   }
   .worst-badge {
     font-size: 8px;
     font-weight: 700;
     color: var(--danger);
-    margin-left: 4px;
     letter-spacing: 0.04em;
+  }
+
+  /* Per-position drill-down */
+  .positions-table-wrap {
+    padding: 4px 6px 8px;
+  }
+  .positions-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10px;
+  }
+  .positions-table th {
+    font-size: 8px;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 3px 4px;
+    border-bottom: 1px solid var(--hairline-strong);
+    text-align: left;
+  }
+  .positions-table td {
+    padding: 3px 4px;
+    border-bottom: 1px solid var(--hairline);
+    color: var(--body);
+  }
+  .impact-col {
+    width: 60px;
+    padding-left: 6px;
+  }
+  .impact-bar {
+    width: 100%;
+    height: 4px;
+    background: var(--surface-elevated);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .impact-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 120ms ease-out;
+  }
+  .impact-fill.price-up {
+    background: var(--price-up);
+  }
+  .impact-fill.price-down {
+    background: var(--price-down);
   }
 
   /* Margin gauge */

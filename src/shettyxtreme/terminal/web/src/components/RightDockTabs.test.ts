@@ -1,6 +1,7 @@
 import { cleanup, render } from "@testing-library/svelte";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import RightDockTabs from "./RightDockTabs.svelte";
+import { rightDockTab } from "$lib/rightDockTab.svelte";
 
 // All right-dock panels fetch via ../lib/api and subscribe via ../lib/ws;
 // mock both so only the tab-selection behavior under test stays real.
@@ -25,6 +26,7 @@ const drawer = (container: HTMLElement) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  rightDockTab.value = "proposals";
 });
 
 afterEach(() => {

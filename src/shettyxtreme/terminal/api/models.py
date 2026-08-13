@@ -373,6 +373,29 @@ class OrderResponse(BaseModel):
     confidence: float | None = None
 
 
+class CancelOrderResponse(BaseModel):
+    """Outcome of an order cancellation request (Phase 4)."""
+    order_id: str
+    cancelled: bool
+    status: str = ""  # CANCELLED on success; terminal state on failure
+    message: str = ""
+
+
+class PositionHistoryItem(BaseModel):
+    """One closed position reconstructed from ledger fills (Phase 4).
+
+    Produced by FIFO-pairing opposite-side fills per symbol (entry/exit).
+    Only fully paired (closed) fills appear — open remainder stays hidden.
+    """
+    symbol: str
+    entry_price: float = 0.0
+    exit_price: float = 0.0
+    quantity: int = 0
+    realized_pnl: float = 0.0
+    opened_at: datetime | None = None
+    closed_at: datetime | None = None
+
+
 # ── Scanner ────────────────────────────────────────────────────────────────
 class GapResponse(BaseModel):
     symbol: str

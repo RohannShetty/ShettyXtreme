@@ -1,15 +1,46 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getOrders, type OrderRecord } from "../lib/api";
+  import { toast } from "svelte-sonner";
+  import {
+    getOrders,
+    cancelOrder,
+    exportOrders,
+    type OrderRecord,
+    type ExportFormat,
+  } from "../lib/api";
+  import { onMessage, isWsConnected } from "../lib/ws";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
-  import { RotateCw } from "@lucide/svelte";
+  import { RotateCw, Download, X } from "@lucide/svelte";
+  import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+  } from "$lib/components/ui/dialog";
+  import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+  } from "$lib/components/ui/select";
 
   let orders = $state<OrderRecord[]>([]);
   let error = $state("");
   let loading = $state(true);
   let filter = $state<string | null>(null);
+
+  // Export state
+  let exportFormat = $state<ExportFormat>("csv");
+  let exportDays = $state<number>(30);
+  let exporting = $state(false);
+
+  // Cancel dialog state
+  let cancelTarget = $state<OrderRecord | null>(null);
+  let cancelBusy = $state(false);
 
   const FILTERS = [
     { id: null, label: "ALL" },
@@ -19,8 +50,19 @@
     { id: "OPEN", label: "OPEN" },
   ];
 
+  const EXPORT_DAYS = [7, 30, 90];
+  const POLL_MS = 10_000;
+
   onMount(() => {
     void load();
+    const unsub = onMessage("order", handleOrderMessage);
+    const poll = window.setInterval(() => {
+      if (!isWsConnected()) void load();
+    }, POLL_MS);
+    return () => {
+      unsub();
+      window.clearInterval(poll);
+    };
   });
 
   async function load(): Promise<void> {
@@ -35,6 +77,109 @@
     }
   }
 
+  function handleOrderMessage(data: unknown): void {
+    const frame = data as { action?: string; order?: Partial<OrderRecord> & { order_id?: string } };
+    const update = frame?.order ?? (data as Partial<OrderRecord> & { order_id?: string });
+    const action = frame?.action || "updated";
+    if (!update?.order_id) return;
+
+    const statusFromAction =
+      action === "placed" ? "OPEN" :
+      action === "filled" ? "FILLED" :
+      action === "rejected" ? "REJECTED" :
+      action === "cancelled" ? "CANCELLED" :
+      update.status || "OPEN";
+
+    const idx = orders.findIndex((o) => o.order_id === update.order_id);
+    if (idx >= 0) {
+      orders[idx] = { ...orders[idx], ...update, status: update.status || statusFromAction };
+    } else {
+      // Newly placed order: synthesize a minimal record so it appears immediately.
+      const placed: OrderRecord = {
+        order_id: update.order_id,
+        symbol: update.symbol || "",
+        exchange: update.exchange || "",
+        side: update.side || "",
+        order_type: update.order_type || "",
+        quantity: update.quantity ?? 0,
+        price: update.price ?? 0,
+        status: update.status || statusFromAction,
+        filled_quantity: update.filled_quantity ?? 0,
+        average_price: update.average_price ?? 0,
+        tag: (update as { tag?: string | null }).tag ?? null,
+        created_at: update.created_at || new Date().toISOString(),
+        strike: update.strike ?? null,
+        expiry: update.expiry ?? null,
+        option_type: update.option_type ?? null,
+        lot_size: update.lot_size ?? null,
+        stop_loss: update.stop_loss ?? null,
+        target: update.target ?? null,
+        rationale: update.rationale ?? null,
+        confidence: update.confidence ?? null,
+      };
+      orders = [placed, ...orders];
+    }
+    toast.info(`Order ${update.order_id} ${action}`);
+  }
+
+  function canCancel(status: string): boolean {
+    const s = status.toUpperCase();
+    return s === "OPEN" || s === "PARTIALLY_FILLED";
+  }
+
+  function confirmCancel(order: OrderRecord): void {
+    cancelTarget = order;
+  }
+
+  async function doCancel(): Promise<void> {
+    if (!cancelTarget) return;
+    cancelBusy = true;
+    try {
+      const result = await cancelOrder(cancelTarget.order_id);
+      if (result.cancelled) {
+        const idx = orders.findIndex((o) => o.order_id === result.order_id);
+        if (idx >= 0) {
+          orders[idx] = { ...orders[idx], status: "CANCELLED" };
+        }
+        toast.success(`Order ${result.order_id} cancelled`);
+      } else {
+        toast.error(result.message || "Cancel failed");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(msg);
+    } finally {
+      cancelBusy = false;
+      cancelTarget = null;
+    }
+  }
+
+  async function doExport(): Promise<void> {
+    exporting = true;
+    try {
+      const file = await exportOrders(exportFormat, exportDays);
+      const url = URL.createObjectURL(file);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = file.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast.success(`Downloaded ${file.name}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(`Export failed: ${msg}`);
+    } finally {
+      exporting = false;
+    }
+  }
+
+  function setFilter(f: string | null): void {
+    filter = f;
+    void load();
+  }
+
   function fmtMoney(v: number | null | undefined): string {
     if (v === null || v === undefined || !isFinite(v)) return "—";
     return v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -44,6 +189,12 @@
     if (!ts) return "—";
     const d = new Date(ts);
     return isNaN(d.getTime()) ? "—" : d.toLocaleTimeString("en-IN", { hour12: false });
+  }
+
+  function dateStr(ts: string | null): string {
+    if (!ts) return "—";
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-IN");
   }
 
   function statusBadgeClass(status: string): string {
@@ -56,11 +207,6 @@
       default: return "";
     }
   }
-
-  function setFilter(f: string | null): void {
-    filter = f;
-    void load();
-  }
 </script>
 
 <section class="panel orders">
@@ -70,6 +216,38 @@
       <h2>Order History</h2>
     </div>
     <div class="head-right">
+      <div class="export-bar">
+        <Select type="single" value={exportFormat} onValueChange={(v) => (exportFormat = v as ExportFormat)}>
+          <SelectTrigger class="h-7 w-[70px] text-[11px]" aria-label="Export format">
+            <span class="uppercase">{exportFormat}</span>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="csv" label="CSV">CSV</SelectItem>
+            <SelectItem value="json" label="JSON">JSON</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select type="single" value={String(exportDays)} onValueChange={(v) => (exportDays = Number(v))}>
+          <SelectTrigger class="h-7 w-[90px] text-[11px]" aria-label="Export range">
+            <span>Last {exportDays}d</span>
+          </SelectTrigger>
+          <SelectContent>
+            {#each EXPORT_DAYS as d}
+              <SelectItem value={String(d)} label="Last {d} days">Last {d} days</SelectItem>
+            {/each}
+          </SelectContent>
+        </Select>
+        <Button
+          variant="secondary"
+          size="sm"
+          class="h-7 gap-1 text-[11px]"
+          onclick={doExport}
+          disabled={exporting || loading}
+          aria-label="Export orders"
+        >
+          <Download class="size-3.5" />
+          Export
+        </Button>
+      </div>
       <Button
         variant="ghost"
         size="icon"
@@ -146,12 +324,69 @@
                 <div class="order-line3" title={o.rationale}>{o.rationale}</div>
               {/if}
             </div>
+            <div class="order-actions">
+              {#if canCancel(o.status)}
+                <Button
+                  variant="danger"
+                  size="sm"
+                  class="h-6 gap-1 px-2 text-[11px]"
+                  onclick={() => confirmCancel(o)}
+                  aria-label={`Cancel order ${o.order_id}`}
+                >
+                  <X class="size-3" />
+                  Cancel
+                </Button>
+              {:else}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  class="h-6 px-2 text-[11px]"
+                  disabled
+                >
+                  {o.status}
+                </Button>
+              {/if}
+            </div>
           </div>
         {/each}
       </div>
     </ScrollArea>
   {/if}
 </section>
+
+<!-- Cancel confirmation dialog -->
+<Dialog open={cancelTarget !== null} onOpenChange={(open) => { if (!open) cancelTarget = null; }}>
+  <DialogContent class="sm:max-w-[420px]">
+    <DialogHeader>
+      <DialogTitle>Cancel order?</DialogTitle>
+      <DialogDescription>
+        {#if cancelTarget}
+          This will cancel <span class="mono font-semibold">{cancelTarget.order_id}</span>
+          for <span class="mono font-semibold">{cancelTarget.symbol}</span>
+          ({cancelTarget.side} {cancelTarget.quantity} @ {fmtMoney(cancelTarget.price || cancelTarget.average_price)}).
+        {/if}
+      </DialogDescription>
+    </DialogHeader>
+    <DialogFooter>
+      <Button
+        variant="secondary"
+        size="sm"
+        onclick={() => (cancelTarget = null)}
+        disabled={cancelBusy}
+      >
+        Keep order
+      </Button>
+      <Button
+        variant="danger"
+        size="sm"
+        onclick={doCancel}
+        disabled={cancelBusy}
+      >
+        {cancelBusy ? "Cancelling…" : "Cancel order"}
+      </Button>
+    </DialogFooter>
+  </DialogContent>
+</Dialog>
 
 <style>
   .orders {
@@ -170,6 +405,7 @@
     justify-content: space-between;
     padding: 8px 10px;
     border-bottom: 1px solid var(--hairline);
+    gap: 8px;
   }
   .titles {
     display: flex;
@@ -190,6 +426,13 @@
     color: var(--ink);
   }
   .head-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .export-bar {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -238,11 +481,16 @@
     flex-direction: column;
     gap: 4px;
     min-width: 0;
+    flex: 1;
+  }
+  .order-actions {
+    flex-shrink: 0;
   }
   .order-line1 {
     display: flex;
     align-items: center;
     gap: 6px;
+    flex-wrap: wrap;
   }
   .sym {
     color: var(--ink);
@@ -255,6 +503,7 @@
     font-size: 11px;
     color: var(--muted);
     white-space: nowrap;
+    flex-wrap: wrap;
   }
   .order-line2 b {
     color: var(--ink);

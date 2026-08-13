@@ -5,6 +5,18 @@
  * changes) this client sends a subscribe frame declaring its topics:
  * `{ "type": "subscribe", "topics": [...] }`. Pings keep the connection
  * warm; pong frames are consumed here and never forwarded.
+ *
+ * Live topics (subscribe via onMessage(topic, handler)):
+ *   tick              — watchlist LTP updates (WatchlistProjection)
+ *   position          — position updates + live P&L (PositionProjection)
+ *   risk              — risk summary changes (RiskProjection)
+ *   alert             — risk/system alerts (RiskProjection/AlertProjection)
+ *   regime, signal    — intelligence updates (IntelligenceProjection)
+ *   connection        — data-socket connection state (HealthProjection)
+ *   scanner_finding   — opportunity findings (ScannerProjection)
+ *   proposal          — proposal lifecycle: {action, proposal} (P4)
+ *   order             — order lifecycle: {action, order} (P4)
+ *   research, knowledge, theme, color-convention, scanner-thresholds
  */
 
 export type WsMessageHandler = (data: unknown) => void;
@@ -30,6 +42,52 @@ export type TickPayload = {
   oi: number | null;
   strike: number | null;
   option_type: string | null;
+};
+
+/** P4: proposal lifecycle frame on the `proposal` topic (ProposalProjection).
+ *
+ * `action` is one of "created" | "approved" | "rejected" | "expired";
+ * `proposal` mirrors the REST /api/execution/proposals shape. */
+export type ProposalPayload = {
+  action: "created" | "approved" | "rejected" | "expired" | string;
+  proposal: {
+    id: string;
+    symbol: string;
+    exchange: string;
+    side: string;
+    quantity: number;
+    status: string; // PENDING / APPROVED / REJECTED / EXPIRED
+    reason: string;
+    timestamp: string | null;
+    confidence?: number | null;
+    entry_premium?: number | null;
+    stop_loss?: number | null;
+    target?: number | null;
+    rationale?: string | null;
+    [key: string]: unknown;
+  };
+};
+
+/** P4: order lifecycle frame on the `order` topic (OrderWSProjection).
+ *
+ * `action` is one of "placed" | "filled" | "rejected" | "cancelled";
+ * `order` mirrors the REST /api/execution/orders shape. */
+export type OrderPayload = {
+  action: "placed" | "filled" | "rejected" | "cancelled" | string;
+  order: {
+    order_id: string;
+    symbol: string;
+    exchange: string;
+    side: string;
+    order_type: string;
+    quantity: number;
+    price: number;
+    status: string;
+    filled_quantity?: number;
+    average_price?: number;
+    created_at?: string | null;
+    [key: string]: unknown;
+  };
 };
 
 /** Reconnect policy: exponential backoff (2s → 4s → 8s → 16s → 30s cap)

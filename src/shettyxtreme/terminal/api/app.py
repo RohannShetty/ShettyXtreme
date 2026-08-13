@@ -11,7 +11,9 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,6 +43,9 @@ from shettyxtreme.terminal.api.execution_router import (
     get_mode_value,
     is_kill_switch_armed,
     router as execution_router,
+)
+from shettyxtreme.terminal.api.execution_orders_router import (
+    router as execution_orders_router,
 )
 from shettyxtreme.terminal.api.health_router import router as health_router
 from shettyxtreme.terminal.api.terminal_init import (
@@ -85,11 +90,14 @@ from shettyxtreme.terminal.projections import (
     AlertProjection,
     HealthProjection,
     IntelligenceProjection,
+    OrderWSProjection,
     PositionProjection,
+    ProposalProjection,
     RiskProjection,
     ScannerProjection,
     WatchlistProjection,
     set_greeks_store,
+    set_scanner_bridge_config,
     set_scanner_store,
 )
 
@@ -102,6 +110,7 @@ _event_bus_task: asyncio.Task | None = None
 _health_monitor: TokenHealthMonitor | None = None
 _intelligence_pipeline: IntelligencePipeline | None = None
 _margin_poller_task: asyncio.Task | None = None
+_position_refresh_task: asyncio.Task | None = None
 
 # Brokers disagree on the available-balance key name in get_margin() payloads;
 # accept any known one (fix #2 — real margin, never a hardcoded stand-in).
@@ -198,10 +207,37 @@ async def _margin_poll_loop(app: FastAPI) -> None:
         await asyncio.sleep(_MARGIN_POLL_CADENCE_SECONDS)
 
 
+# P4: positions refresh cadence — re-broadcast/sync the position projection
+# so clients that missed an event re-sync and broker-sourced positions stay
+# fresh even when no fill events flow.
+_POSITION_REFRESH_CADENCE_SECONDS = 5.0
+
+
+async def _position_refresh_loop(app: FastAPI) -> None:
+    """Every 5s, re-sync + re-broadcast positions from the projection.
+
+    In PAPER mode the projection's broker provider pulls the paper engine's
+    positions (P&L already recalculated engine-side). In OBSERVER there is
+    no broker book — the loop just re-broadcasts the current projection
+    state. Live mode keeps its event-driven POSITION_CHANGED flow; the
+    refresh loop only re-broadcasts what the projection already holds.
+    """
+    while True:
+        try:
+            proj = getattr(app.state, "position_projection", None)
+            if proj is not None:
+                await proj.refresh()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("position refresh iteration failed")
+        await asyncio.sleep(_POSITION_REFRESH_CADENCE_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown lifecycle."""
-    global _event_bus, _event_bus_task, _health_monitor, _intelligence_pipeline, _margin_poller_task
+    global _event_bus, _event_bus_task, _health_monitor, _intelligence_pipeline, _margin_poller_task, _position_refresh_task
     logger.info("ShettyXtreme Terminal starting up...")
 
     store = CredentialStore.load() or CredentialStore()
@@ -235,6 +271,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     alert_proj = AlertProjection()
     intel_proj = IntelligenceProjection()
     health_proj = HealthProjection()
+    # P4: real-time proposal/order WS topics (proposal + order).
+    proposal_proj = ProposalProjection()
+    order_ws_proj = OrderWSProjection()
 
     watchlist_proj.subscribe(_event_bus)
     position_proj.subscribe(_event_bus)
@@ -242,6 +281,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     alert_proj.subscribe(_event_bus)
     intel_proj.subscribe(_event_bus)
     health_proj.subscribe(_event_bus)
+    proposal_proj.subscribe(_event_bus)
+    order_ws_proj.subscribe(_event_bus)
 
     # ── Scanner data pipeline ────────────────────────────────────────────────
     gap_det = GapDetector()
@@ -306,6 +347,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.alert_projection = alert_proj
     app.state.intelligence_projection = intel_proj
     app.state.health_projection = health_proj
+    app.state.proposal_projection = proposal_proj
+    app.state.order_ws_projection = order_ws_proj
 
     # ── Hint outcome store (3A.2) ──────────────────────────────────────────
     # Tracks hints that became proposals and records outcomes when the
@@ -569,6 +612,38 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.execution_engine = execution_engine
 
+    # ── P4: scanner→proposal bridge (config-gated, OFF by default) ──────────
+    # Actionable HIGH-severity findings auto-generate an OBSERVER proposal
+    # through the same submit_signal flow the signal bridge uses; the
+    # operator still approves before anything is placed (D10).
+    from shettyxtreme.terminal.projections import (
+        make_scanner_proposal_bridge,
+    )
+    bridge_cfg = getattr(cfg, "scanner_proposal_bridge", None)
+    set_scanner_bridge_config(bridge_cfg if isinstance(bridge_cfg, dict) else None)
+    scanner_proj.set_proposal_bridge(make_scanner_proposal_bridge(execution_engine))
+
+    # ── P4: position refresh loop (5s) + PAPER-mode broker source ───────────
+    # The projection re-broadcasts its state every cadence so clients that
+    # missed an event re-sync; in PAPER mode the paper engine is the broker
+    # book (engine-side _recalculate_pnl keeps m2m fresh).
+    def _paper_position_provider() -> list[dict[str, Any]]:
+        if get_mode_value().upper() != "PAPER":
+            return []
+        paper = getattr(app.state, "paper_engine", None)
+        if paper is None:
+            return []
+        try:
+            from dataclasses import asdict
+            return [asdict(p) for p in paper.get_positions()]
+        except Exception:
+            logger.exception("paper position provider failed")
+            return []
+
+    position_proj._broker_provider = _paper_position_provider
+    if _position_refresh_task is None:
+        _position_refresh_task = asyncio.create_task(_position_refresh_loop(app))
+
     # P3-4.3: wire the chain hint builder so proposals carry full leg detail
     # (strike, expiry, CE/PE, lot size, premium, SL, target, rationale, EV).
     # The chain/spot providers pull from app.state.options_chain (populated by
@@ -737,6 +812,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await _health_monitor.stop()
         if _margin_poller_task:
             _margin_poller_task.cancel()
+        if _position_refresh_task:
+            _position_refresh_task.cancel()
         if _scanner_poller_task:
             _scanner_poller_task.cancel()
         try:
@@ -787,6 +864,7 @@ app.include_router(watchlist_router)
 app.include_router(symbols_router)
 app.include_router(intelligence_router)
 app.include_router(execution_router)
+app.include_router(execution_orders_router)
 app.include_router(scanner_router)
 app.include_router(health_router)
 app.include_router(auth_router)

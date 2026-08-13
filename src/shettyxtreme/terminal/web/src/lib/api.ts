@@ -467,6 +467,25 @@ export type OrderRecord = {
   confidence: number | null;
 };
 
+// Phase 4: order cancellation response.
+export type CancelOrderResponse = {
+  order_id: string;
+  cancelled: boolean;
+  status: string;
+  message: string;
+};
+
+// Phase 4: closed position reconstructed from the trade ledger.
+export type ClosedPositionRecord = {
+  symbol: string;
+  entry_price: number;
+  exit_price: number;
+  quantity: number;
+  realized_pnl: number;
+  opened_at: string | null;
+  closed_at: string | null;
+};
+
 export type ExecutionMode = { mode: string; csrf_token: string | null };
 export type RiskSummary = {
   daily_pnl: number;
@@ -492,9 +511,24 @@ export async function approveProposal(
   );
 }
 
-export async function getProposals(status?: string): Promise<Proposal[]> {
-  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
-  return get<Proposal[]>(`/api/execution/proposals${qs}`);
+export type ProposalStatus = "PENDING" | "APPROVED" | "REJECTED" | "EXPIRED";
+
+export type ProposalsQuery = {
+  status?: ProposalStatus | ProposalStatus[];
+  start?: string;
+  end?: string;
+};
+
+export async function getProposals(query?: ProposalsQuery): Promise<Proposal[]> {
+  const q = new URLSearchParams();
+  if (query?.status) {
+    const statuses = Array.isArray(query.status) ? query.status : [query.status];
+    for (const s of statuses) q.append("status", s);
+  }
+  if (query?.start) q.set("start", query.start);
+  if (query?.end) q.set("end", query.end);
+  const qs = q.toString();
+  return get<Proposal[]>(`/api/execution/proposals${qs ? "?" + qs : ""}`);
 }
 
 export async function rejectProposal(id: string, reason = ""): Promise<Proposal> {
@@ -542,9 +576,15 @@ export type RiskGreeksConcentration = {
   lopsided_warning: string | null;
 };
 
+export type RiskScenarioPosition = {
+  symbol: string;
+  pnl: number;
+};
+
 export type RiskScenarioPnl = {
   shift_pct: number;
   total_pnl: number;
+  per_position?: RiskScenarioPosition[];
 };
 
 export type RiskStress = {
@@ -584,6 +624,46 @@ export async function getRiskHeatmap(): Promise<RiskHeatmapData> {
 export async function getOrders(status?: string): Promise<OrderRecord[]> {
   const qs = status ? `?status=${encodeURIComponent(status)}` : "";
   return get<OrderRecord[]>(`/api/execution/orders${qs}`);
+}
+
+// Phase 4: cancel an order.
+export async function cancelOrder(orderId: string): Promise<CancelOrderResponse> {
+  return post<CancelOrderResponse>(`/api/execution/orders/${encodeURIComponent(orderId)}/cancel`);
+}
+
+// Phase 4: export orders as CSV/JSON.
+export async function exportOrders(
+  format: ExportFormat,
+  days: number = 30,
+  fileName?: string,
+): Promise<File> {
+  const path = `/api/execution/orders/export?format=${format}&days=${days}`;
+  let resp: Response;
+  try {
+    resp = await fetchWithTimeout(path, { method: "GET", credentials: "same-origin" });
+  } catch (err) {
+    if (isAbortError(err)) throw new Error("Request timeout");
+    throw new Error(`Network error reaching ${path}`);
+  }
+  if (!resp.ok) {
+    throw new Error(await describeError(resp));
+  }
+  const blob = await resp.blob();
+  // If the server supplies a filename, prefer it; otherwise fall back to the caller.
+  const disposition = resp.headers.get("content-disposition") || "";
+  const match = /filename="?([^";]+)"?/.exec(disposition);
+  const name = match?.[1] || fileName || `orders_export.${format}`;
+  return new File([blob], name, { type: blob.type });
+}
+
+// Phase 4: close an open position with an opposite-side market order.
+export async function closePosition(symbol: string): Promise<OrderRecord> {
+  return post<OrderRecord>(`/api/execution/positions/${encodeURIComponent(symbol)}/close`);
+}
+
+// Phase 4: closed position history from the trade ledger.
+export async function getPositionHistory(days: number = 30): Promise<ClosedPositionRecord[]> {
+  return get<ClosedPositionRecord[]>(`/api/execution/positions/history?days=${days}`);
 }
 
 // --- Intelligence: hints & proposals (Phase 3) ---

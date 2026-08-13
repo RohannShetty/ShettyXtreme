@@ -256,7 +256,14 @@ class ExecutionEngine:
             )
 
     def _load_approvals(self) -> None:
-        """Restore PENDING/APPROVED proposals from the DB into memory."""
+        """Restore ALL proposals (PENDING/APPROVED/REJECTED/EXPIRED) from the DB.
+
+        Phase 4: the proposal queue doubles as durable proposal history, so
+        every lifecycle status is restored on restart — rejected/expired
+        proposals must survive a restart to keep the audit trail intact.
+        Restored PENDING proposals that are past their timeout are marked
+        EXPIRED by ``expire_stale()`` on the next listing.
+        """
         if self._db_path is None:
             return
         try:
@@ -271,11 +278,7 @@ class ExecutionEngine:
             approval = _row_to_approval(row)
             if approval is None:
                 continue
-            if approval.status in (
-                ApprovalStatus.PENDING.value,
-                ApprovalStatus.APPROVED.value,
-            ):
-                self._approvals[approval.id] = approval
+            self._approvals[approval.id] = approval
         if self._approvals:
             logger.info(
                 "restored %d persisted proposals from %s",
@@ -317,6 +320,7 @@ class ExecutionEngine:
         )
         self._approvals[approval_id] = approval
         self._db_upsert(approval)
+        self._publish_proposal_event("created", approval)
         return approval_id
 
     async def approve(self, approval_id: str) -> OrderRequest:
@@ -355,6 +359,7 @@ class ExecutionEngine:
             approval.status = ApprovalStatus.REJECTED.value
             approval.failure_reason = decision.reason
             self._db_upsert(approval)
+            self._publish_proposal_event("rejected", approval)
             # Publish RISK_ALERT (subscribers exist; publisher was missing)
             self._publish_risk_alert(approval, decision)
             raise RuntimeError(f"pre-execution risk check rejected: {decision.reason}")
@@ -372,10 +377,12 @@ class ExecutionEngine:
                     getattr(result, "message", "") or "order placement rejected"
                 )
                 self._db_upsert(approval)
+                self._publish_proposal_event("rejected", approval)
                 raise RuntimeError(approval.failure_reason)
 
         approval.status = ApprovalStatus.APPROVED.value
         self._db_upsert(approval)
+        self._publish_proposal_event("approved", approval)
         return order
 
     def reject(self, approval_id: str, reason: str) -> None:
@@ -386,6 +393,7 @@ class ExecutionEngine:
         approval.status = ApprovalStatus.REJECTED.value
         approval.failure_reason = reason or "rejected by operator"
         self._db_upsert(approval)
+        self._publish_proposal_event("rejected", approval)
 
     def _publish_risk_alert(
         self, approval: PendingApproval, decision: RiskDecision,
@@ -413,6 +421,34 @@ class ExecutionEngine:
         except Exception:
             logger.debug("failed to publish RISK_ALERT", exc_info=True)
 
+    def _publish_proposal_event(
+        self, action: str, approval: PendingApproval,
+    ) -> None:
+        """Publish PROPOSAL_CHANGED (action: created/approved/rejected/expired).
+
+        Best-effort, mirroring ``_publish_risk_alert``: no-op when the event
+        bus is absent or no running loop is available (unit tests). The
+        ProposalProjection turns this into the ``proposal`` WS topic.
+        """
+        if self._event_bus is None:
+            return
+        try:
+            from shettyxtreme.core.event_bus.event_bus import Event, Topic
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._event_bus.publish(
+                    Event(
+                        topic=Topic.PROPOSAL_CHANGED,
+                        data={"action": action, "approval": approval},
+                        source="execution_engine",
+                    ),
+                ))
+            except RuntimeError:
+                pass
+        except Exception:
+            logger.debug("failed to publish PROPOSAL_CHANGED", exc_info=True)
+
     def expire_stale(self, now: datetime | None = None) -> int:
         """Mark PENDING approvals past their timeout as EXPIRED.
 
@@ -426,6 +462,7 @@ class ExecutionEngine:
             if approval.expires_at <= cutoff:
                 approval.status = ApprovalStatus.EXPIRED.value
                 self._db_upsert(approval)
+                self._publish_proposal_event("expired", approval)
                 count += 1
         return count
 

@@ -28,6 +28,10 @@ _SCHEMA: dict[str, type | tuple[type, ...]] = {
     "fyers_app_id": (str, type(None)),
     "fyers_secret_id": (str, type(None)),
     "paper_trading_margin": (int, float, type(None)),
+    # P4: scanner→proposal bridge section (configs/default.yaml). Dict of
+    # {enabled, min_severity, scanner_types, cooldown_seconds}; None when
+    # absent — the bridge then stays disabled.
+    "scanner_proposal_bridge": (dict, type(None)),
 }
 
 # Keys a config file must provide. Deliberately just ``mode``: the legacy
@@ -61,6 +65,10 @@ class Config:
 
     # Paper trading capital (₹) — used as available margin in PAPER mode
     paper_trading_margin: float | None = None
+
+    # P4: scanner→proposal bridge settings (dict from configs/default.yaml;
+    # None when the section is absent → bridge disabled)
+    scanner_proposal_bridge: dict | None = None
 
 class ConfigManager:
     def __init__(self, config_path: str | None = None):

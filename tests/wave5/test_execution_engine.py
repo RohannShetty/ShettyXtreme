@@ -1,6 +1,7 @@
 """Tests for ExecutionEngine (semi-auto approval flow)."""
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
@@ -221,26 +222,259 @@ def test_db_failure_does_not_abort_submit(tmp_path, monkeypatch) -> None:
     assert approval.status == ApprovalStatus.PENDING.value
 
 
-@pytest.mark.asyncio
-async def test_paper_mode_approve_succeeds_with_funded_portfolio() -> None:
-    """PAPER-mode approve() succeeds when portfolio has real available margin.
+    @pytest.mark.asyncio
+    async def test_paper_mode_approve_succeeds_with_funded_portfolio() -> None:
+        """PAPER-mode approve() succeeds when portfolio has real available margin.
 
-    This is the end-to-end scenario that was failing before the P0-1.3 fix:
-    paper engine provides available_margin=1_000_000 → MarginFilter allows.
-    """
-    from shettyxtreme.execution.paper_trading import PaperTradingEngine
+        This is the end-to-end scenario that was failing before the P0-1.3 fix:
+        paper engine provides available_margin=1_000_000 → MarginFilter allows.
+        """
+        from shettyxtreme.execution.paper_trading import PaperTradingEngine
 
-    paper_engine = PaperTradingEngine(initial_capital=1_000_000.0)
+        paper_engine = PaperTradingEngine(initial_capital=1_000_000.0)
 
-    def paper_portfolio():
-        return paper_engine.get_portfolio()
+        def paper_portfolio():
+            return paper_engine.get_portfolio()
 
-    executor = _make_executor()
+        executor = _make_executor()
+        engine = ExecutionEngine(
+            executor=executor, risk_engine=RiskEngine(),
+            portfolio_provider=paper_portfolio,
+        )
+        approval_id = engine.submit_signal(_make_signal(), _make_hint())
+        order = await engine.approve(approval_id)
+        assert isinstance(order, OrderRequest)
+        assert executor.place_order.await_count == 1
+
+
+# ── P4: Durable proposal history (all lifecycle statuses survive restarts) ─
+
+def test_rejected_proposal_survives_restart(tmp_path) -> None:
+    """A REJECTED proposal is restored from the DB — history, not just queue."""
+    db_path = str(tmp_path / "proposals.db")
     engine = ExecutionEngine(
-        executor=executor, risk_engine=RiskEngine(),
-        portfolio_provider=paper_portfolio,
+        executor=_make_executor(), risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio, db_path=db_path,
     )
     approval_id = engine.submit_signal(_make_signal(), _make_hint())
-    order = await engine.approve(approval_id)
-    assert isinstance(order, OrderRequest)
-    assert executor.place_order.await_count == 1
+    engine.reject(approval_id, "not today")
+
+    engine2 = ExecutionEngine(
+        executor=_make_executor(), risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio, db_path=db_path,
+    )
+    restored = engine2.get_approval(approval_id)
+    assert restored is not None
+    assert restored.status == ApprovalStatus.REJECTED.value
+    assert restored.failure_reason == "not today"
+    all_approvals = engine2.get_all_approvals()
+    assert any(a.id == approval_id for a in all_approvals)
+
+
+def test_expired_proposal_survives_restart(tmp_path) -> None:
+    """An EXPIRED proposal is restored from the DB."""
+    db_path = str(tmp_path / "proposals.db")
+    engine = ExecutionEngine(
+        executor=_make_executor(), risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio, db_path=db_path,
+        approval_timeout_seconds=1,
+    )
+    approval_id = engine.submit_signal(_make_signal(), _make_hint())
+    approval = engine.get_approval(approval_id)
+    assert approval is not None
+    approval.expires_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+    assert engine.expire_stale() == 1
+
+    engine2 = ExecutionEngine(
+        executor=_make_executor(), risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio, db_path=db_path,
+    )
+    restored = engine2.get_approval(approval_id)
+    assert restored is not None
+    assert restored.status == ApprovalStatus.EXPIRED.value
+
+
+@pytest.mark.asyncio
+async def test_approved_proposal_survives_restart(tmp_path) -> None:
+    """An APPROVED proposal is restored from the DB."""
+    db_path = str(tmp_path / "proposals.db")
+    engine = ExecutionEngine(
+        executor=_make_executor(), risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio, db_path=db_path,
+    )
+    approval_id = engine.submit_signal(_make_signal(), _make_hint())
+    await engine.approve(approval_id)
+
+    engine2 = ExecutionEngine(
+        executor=_make_executor(), risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio, db_path=db_path,
+    )
+    restored = engine2.get_approval(approval_id)
+    assert restored is not None
+    assert restored.status == ApprovalStatus.APPROVED.value
+
+
+def test_mixed_statuses_all_restored(tmp_path) -> None:
+    """Pending + rejected + expired coexist in the restored history."""
+    db_path = str(tmp_path / "proposals.db")
+    engine = ExecutionEngine(
+        executor=_make_executor(), risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio, db_path=db_path,
+    )
+    pending_id = engine.submit_signal(_make_signal(), _make_hint())
+    rejected_id = engine.submit_signal(_make_signal(), _make_hint())
+    engine.reject(rejected_id, "nope")
+    expired_id = engine.submit_signal(_make_signal(), _make_hint())
+    expired = engine.get_approval(expired_id)
+    assert expired is not None
+    expired.expires_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+    engine.expire_stale()
+
+    engine2 = ExecutionEngine(
+        executor=_make_executor(), risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio, db_path=db_path,
+    )
+    statuses = {a.id: a.status for a in engine2.get_all_approvals()}
+    assert statuses[pending_id] == ApprovalStatus.PENDING.value
+    assert statuses[rejected_id] == ApprovalStatus.REJECTED.value
+    assert statuses[expired_id] == ApprovalStatus.EXPIRED.value
+
+
+# ── P4: PROPOSAL_CHANGED events on the EventBus ─────────────────────────────
+
+@pytest.mark.asyncio
+async def test_submit_publishes_proposal_created_event() -> None:
+    """submit_signal() publishes PROPOSAL_CHANGED(action=created) via the bus."""
+    from shettyxtreme.core.event_bus.event_bus import EventBus, Topic
+
+    bus = EventBus()
+    captured: list[dict] = []
+
+    async def _capture(event) -> None:
+        captured.append(event.data)
+
+    bus.subscribe(Topic.PROPOSAL_CHANGED, _capture)
+    bus_task = asyncio.create_task(bus.start())
+    try:
+        engine = ExecutionEngine(
+            executor=_make_executor(), risk_engine=RiskEngine(),
+            portfolio_provider=_make_portfolio, event_bus=bus,
+        )
+        approval_id = engine.submit_signal(_make_signal(), _make_hint())
+        await asyncio.sleep(0.05)
+        assert len(captured) == 1
+        assert captured[0]["action"] == "created"
+        assert captured[0]["approval"].id == approval_id
+    finally:
+        bus_task.cancel()
+        try:
+            await bus_task
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_approve_publishes_approved_event() -> None:
+    """approve() publishes PROPOSAL_CHANGED(action=approved) via the bus."""
+    from shettyxtreme.core.event_bus.event_bus import EventBus, Topic
+
+    bus = EventBus()
+    captured: list[dict] = []
+
+    async def _capture(event) -> None:
+        captured.append(event.data)
+
+    bus.subscribe(Topic.PROPOSAL_CHANGED, _capture)
+    bus_task = asyncio.create_task(bus.start())
+    try:
+        engine = ExecutionEngine(
+            executor=_make_executor(), risk_engine=RiskEngine(),
+            portfolio_provider=_make_portfolio, event_bus=bus,
+        )
+        approval_id = engine.submit_signal(_make_signal(), _make_hint())
+        await engine.approve(approval_id)
+        await asyncio.sleep(0.05)
+        actions = [c["action"] for c in captured]
+        assert actions == ["created", "approved"]
+    finally:
+        bus_task.cancel()
+        try:
+            await bus_task
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_reject_publishes_rejected_event() -> None:
+    """reject() publishes PROPOSAL_CHANGED(action=rejected) via the bus."""
+    from shettyxtreme.core.event_bus.event_bus import EventBus, Topic
+
+    bus = EventBus()
+    captured: list[dict] = []
+
+    async def _capture(event) -> None:
+        captured.append(event.data)
+
+    bus.subscribe(Topic.PROPOSAL_CHANGED, _capture)
+    bus_task = asyncio.create_task(bus.start())
+    try:
+        engine = ExecutionEngine(
+            executor=_make_executor(), risk_engine=RiskEngine(),
+            portfolio_provider=_make_portfolio, event_bus=bus,
+        )
+        approval_id = engine.submit_signal(_make_signal(), _make_hint())
+        engine.reject(approval_id, "manual")
+        await asyncio.sleep(0.05)
+        actions = [c["action"] for c in captured]
+        assert actions == ["created", "rejected"]
+    finally:
+        bus_task.cancel()
+        try:
+            await bus_task
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_expire_publishes_expired_event() -> None:
+    """expire_stale() publishes PROPOSAL_CHANGED(action=expired) via the bus."""
+    from shettyxtreme.core.event_bus.event_bus import EventBus, Topic
+
+    bus = EventBus()
+    captured: list[dict] = []
+
+    async def _capture(event) -> None:
+        captured.append(event.data)
+
+    bus.subscribe(Topic.PROPOSAL_CHANGED, _capture)
+    bus_task = asyncio.create_task(bus.start())
+    try:
+        engine = ExecutionEngine(
+            executor=_make_executor(), risk_engine=RiskEngine(),
+            portfolio_provider=_make_portfolio, event_bus=bus,
+        )
+        approval_id = engine.submit_signal(_make_signal(), _make_hint())
+        approval = engine.get_approval(approval_id)
+        assert approval is not None
+        approval.expires_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+        engine.expire_stale()
+        await asyncio.sleep(0.05)
+        actions = [c["action"] for c in captured]
+        assert actions == ["created", "expired"]
+    finally:
+        bus_task.cancel()
+        try:
+            await bus_task
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_no_bus_no_proposal_events() -> None:
+    """Without an event bus the engine stays silent (no crash, no publish)."""
+    engine = ExecutionEngine(
+        executor=_make_executor(), risk_engine=RiskEngine(),
+        portfolio_provider=_make_portfolio,
+    )
+    approval_id = engine.submit_signal(_make_signal(), _make_hint())
+    assert engine.get_approval(approval_id) is not None  # flow intact
