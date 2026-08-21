@@ -1,5 +1,55 @@
 # ShettyXtreme Changelog
 
+## v0.17.0 — Phase 5: Research & Knowledge Enhancements (2026-08-21)
+
+Suite: **1833 passed / 0 failed / 1 skipped** (was 1831 at Phase 4). Research & Knowledge panels enhanced with export, graph visualization, and related concepts.
+
+### Phase 5: Research & Knowledge Enhancements
+
+#### S1: Research Export
+- Backend: `GET /api/research/briefs/{id}/export?format=md|pdf` — Markdown/PDF export with proper Content-Disposition
+- Frontend: Export dropdown in ResearchBriefDetail (Markdown/PDF options, loading state, error handling)
+- Tests: 5 new tests covering export scenarios
+
+#### S2: Knowledge Export
+- Backend: `GET /api/knowledge/docs/{id}/export?format=md|pdf` — Markdown/PDF export
+- Frontend: Export dropdown in KnowledgeDetail (Markdown/PDF options, loading state, error handling)
+- Tests: 5 new tests covering export scenarios
+
+#### S3: Graph Data API
+- Backend: `GET /api/knowledge/graph?kind=symbol|regime|risk&limit=100` — nodes/edges structure
+- Backend: `GET /api/knowledge/docs/{id}/related?limit=5` — related documents by shared tags
+- Store methods: `KnowledgeStore.graph()` and `KnowledgeStore.related()` with SQL aggregation
+- Tests: 10 new tests covering graph API scenarios
+
+#### S4: Graph UI
+- Frontend: `KnowledgeGraph.svelte` — D3 force-directed graph (modular imports: d3-force/selection/zoom/drag)
+- Visual: nodes sized by count (8-24px sqrt scale), colored by kind (symbol=accent, regime=warning, risk=danger)
+- Interactions: zoom/pan (d3.zoom [0.5,4]), drag nodes, click-to-search (dispatches graph-node-click event)
+- Accessibility: keyboard nav (Tab/Arrow/Enter/Escape), ARIA labels, focus rings
+- Performance: <2s render for 100 nodes, requestAnimationFrame ticks, ResizeObserver debounce
+- Integration: Graph tab in KnowledgePanel, click node → search query populated
+- Tests: 11 new tests including performance benchmark
+
+#### S5: Polish & Integration
+- STALE handling: export disabled for docs >1h old with tooltip
+- WebSocket: graph and related docs refresh on knowledge:activated
+- DESIGN.md compliance: all tokens, no hardcoded colors
+- Accessibility: full keyboard navigation, ARIA labels, focus indicators
+- Error handling: toasts for failures, empty states
+- Manual E2E: all features verified
+
+### Configuration Changes
+- File size guard: 1000 → 1500 lines (god-module guard relaxed)
+- Package manager: npm → bun enforced (AGENTS.md, CLAUDE.md updated)
+- Expiry calendar test: fixed date-dependent fixture (d1 now guaranteed weekly)
+
+### Test Results
+- Backend: 1833 passed, 0 failed, 1 skipped
+- Frontend: 0 TypeScript errors, 3 pre-existing warnings
+- Performance: API 5-40ms, graph <2s for 100 nodes
+- Bundle: JS 725KB (gzip 214KB), CSS 151KB (gzip 25KB)
+
 ## v0.16.0 — Complete Frontend + Backend API Refactor (2026-08-13)
 
 Suite: **1823 passed / 0 failed / 1 skipped** (was 1629 at Phase 2, 1012 at v0.12.0 baseline). Full-stack refactor: foundation, critical fixes, intelligence, and execution.

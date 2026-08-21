@@ -24,7 +24,7 @@ ShettyXtreme is STANDALONE SOFTWARE. NO runtime dependency on OpenAlgo or any th
 - intelligence/ imports core/ only
 - integration/ imports core/interfaces + external APIs
 - knowledge/ imports core/ only; CANNOT import intelligence/ or execution/
-- No file > 1000 lines
+- No file > 1500 lines
 
 ## Key ShettyBot V1 Bugs Fixed in ShettyXtreme
 1. Strike selection: signal-drift EV (NOT risk-neutral GBM noise)

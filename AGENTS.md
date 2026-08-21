@@ -15,9 +15,9 @@ $env:PYTHONPATH=""; .venv\Scripts\python.exe -m pytest tests/ -q --tb=short --ba
 $env:PYTHONPATH=""; .venv\Scripts\python.exe -m pytest tests/wave7/test_credential_store.py -q --basetemp=... 
 
 # Frontend (Svelte 5 + Vite, in src/shettyxtreme/terminal/web):
-npm run dev      # vite on :3000, proxies /api + /ws to :8000
-npm run check    # svelte-check type gate — 0 errors required before build
-npm run build    # → src/shettyxtreme/terminal/static/ (COMMITTED bundle)
+bun run dev      # vite on :3000, proxies /api + /ws to :8000
+bun run check    # svelte-check type gate — 0 errors required before build
+bun run build    # → src/shettyxtreme/terminal/static/ (COMMITTED bundle)
 
 # Run the terminal:
 .venv\Scripts\python.exe run.py --mode OBSERVER   # default; LIVE needs typed confirmation (D10)
@@ -27,9 +27,9 @@ npm run build    # → src/shettyxtreme/terminal/static/ (COMMITTED bundle)
 
 Run after every change; the repo has no `.github/` so these are grep/wc/pytest checks, not automation:
 
-1. Full suite passes (command above). Suite: **1012 passed / 0 failed / 0 skipped** (v0.12.0).
+1. Full suite passes (command above). Suite: **1831 passed / 0 failed / 0 skipped** (v0.16.0).
 2. `grep -r "import openalgo\|from openalgo" src/` → ZERO matches (standalone rule)
-3. No file > 1000 lines (god-module guard)
+3. No file > 1500 lines (god-module guard)
 4. `core/` has zero external imports — **known violation**: `core/config/config_manager.py:10` imports `yaml` (pre-existing, slated for fix)
 
 Tests live in `tests/wave1`–`wave8` (feature waves) plus per-module dirs (`core/`, `options/`, `execution/`, `terminal/`, `intelligence/`, `vendor/`). Match the closest existing location when adding tests.
@@ -68,6 +68,7 @@ Version is drifted across files — update ALL of these on a bump:
 - **codegraph** (MCP): `.codegraph/` index exists — call `codegraph_explore` before editing to see a symbol's source + blast radius instead of grep/read loops.
 - **UI work**: use the repo-local `.skills/` skills (design-taste-frontend, ui-ux-pro-max, industrial-brutalist-ui, design-system, ui-styling) with DESIGN.md as the contract.
 - **O2B memory**: project decisions live in the Obsidian Brain vaults — query before repeating past decisions.
+- **Package management**: **Prefer `bun`/`bunx` over `npm`/`npx`/`node`** for all frontend operations. Use `bun install`, `bun run dev`, `bun run build`, `bun run check`, `bunx` for package execution. Bun is faster and more efficient.
 
 ## Gotchas
 

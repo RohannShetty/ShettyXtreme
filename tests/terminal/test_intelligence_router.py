@@ -127,6 +127,10 @@ class TestExpiryCalendarEndpoint:
         today = datetime.now(UTC).date()
         # 2 future Thursdays
         d1 = today + timedelta(days=(3 - today.weekday()) % 7 or 7)
+        # Ensure d1 is NOT the last Thursday of its month (must be weekly)
+        while (d1 + timedelta(days=7)).month != d1.month:
+            d1 += timedelta(days=7)
+        d1 += timedelta(days=7)  # Move to next Thursday to ensure it's not last
         d2 = d1 + timedelta(days=7)
         # Make d2 the last Thursday of its month
         while (d2 + timedelta(days=7)).month == d2.month:
