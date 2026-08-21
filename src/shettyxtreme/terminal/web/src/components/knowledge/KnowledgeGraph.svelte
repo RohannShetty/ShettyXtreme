@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { createEventDispatcher } from "svelte";
   import { getKnowledgeGraph, type GraphEdge, type GraphNode } from "../../lib/api";
+  import { onMessage } from "../../lib/ws";
   import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide } from "d3-force";
   import { select } from "d3-selection";
   import { zoom } from "d3-zoom";
@@ -173,6 +174,7 @@
       .attr("stroke-width", 1)
       .attr("role", "button")
       .attr("tabindex", "0")
+      .attr("data-node-id", (d: SimNode) => d.id)
       .attr("aria-label", (d: SimNode) => `${d.label} (${d.kind}, ${d.count} docs)`)
       .style("cursor", "pointer")
       .on("mouseenter", (ev: MouseEvent, d: SimNode) => showTip(`${d.label} (${d.kind}, ${d.count})`, ev.clientX, ev.clientY))
@@ -309,8 +311,48 @@
     }
   }
 
+  // Keyboard nav for graph: Arrow keys cycle focused node, Enter selects, Escape clears.
+  let focusIdx = $state(-1);
+  function focusNode(idx: number): void {
+    if (dataNodes.length === 0) return;
+    const n = ((idx % dataNodes.length) + dataNodes.length) % dataNodes.length;
+    focusIdx = n;
+    const target = dataNodes[n];
+    const el = svgEl?.querySelector(`circle.node[data-node-id="${CSS.escape(target.id)}"]`) as HTMLElement | null;
+    el?.focus();
+  }
+  function onGraphKeydown(e: KeyboardEvent): void {
+    if (dataNodes.length === 0) return;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+      e.preventDefault();
+      focusNode(focusIdx < 0 ? 0 : focusIdx + 1);
+    } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      e.preventDefault();
+      focusNode(focusIdx < 0 ? dataNodes.length - 1 : focusIdx - 1);
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      if (focusIdx >= 0 && focusIdx < dataNodes.length) handleNodeClick(e, dataNodes[focusIdx]);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      selectedId = null;
+      focusIdx = -1;
+      updateHighlight();
+      svgEl?.focus();
+    } else if (e.key === "Home") {
+      e.preventDefault(); focusNode(0);
+    } else if (e.key === "End") {
+      e.preventDefault(); focusNode(dataNodes.length - 1);
+    }
+  }
+
+  let offKnowledge: (() => void) | null = null;
+
   onMount(() => {
     void load();
+    offKnowledge = onMessage("knowledge", (data) => {
+      const ev = data as { event: string; data: unknown };
+      if (ev.event === "activated") void load();
+    });
     if (wrapEl && typeof ResizeObserver !== "undefined") {
       ro = new ResizeObserver((entries) => {
         if (resizeTimer !== undefined) clearTimeout(resizeTimer);
@@ -350,6 +392,8 @@
     if (simulation) simulation.stop();
     simulation = null;
     ro?.disconnect();
+    offKnowledge?.();
+    offKnowledge = null;
     if (resizeTimer !== undefined) clearTimeout(resizeTimer);
     if (tipTimer !== undefined) clearTimeout(tipTimer);
   });
@@ -368,13 +412,15 @@
     <p class="empty">No data</p>
   {/if}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <svg
     bind:this={svgEl}
     role="img"
-    aria-label="Knowledge graph visualization"
+    aria-label="Knowledge graph visualization. Use Arrow keys to navigate nodes, Enter to select, Escape to reset."
     width={width}
     height={height}
     tabindex="0"
+    onkeydown={onGraphKeydown}
     style="display:{loading || !!error || empty ? 'none' : 'block'}; background: var(--canvas); border: 1px solid var(--hairline); border-radius: 6px;"
   ></svg>
   {#if tooltip.visible}

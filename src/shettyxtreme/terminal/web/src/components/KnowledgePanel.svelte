@@ -468,7 +468,7 @@
 
     <div class="col detail-col">
       <ScrollArea class="h-full">
-        <KnowledgeDetail {selected} {activating} onActivate={() => activate()} />
+        <KnowledgeDetail {selected} {activating} onActivate={() => activate()} onRelatedSelect={(id) => select(id)} />
       </ScrollArea>
     </div>
   </div>

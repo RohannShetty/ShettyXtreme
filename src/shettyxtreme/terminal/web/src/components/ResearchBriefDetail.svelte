@@ -19,6 +19,13 @@
 
   let exporting = $state(false);
 
+  const STALE_MS = 60 * 60 * 1000;
+  function isStale(asOf: string): boolean {
+    const t = Date.parse(asOf);
+    return !Number.isNaN(t) && Date.now() - t > STALE_MS;
+  }
+  let isBriefStale = $derived(isStale(brief.as_of));
+
   function dirBadgeClass(direction: number): string {
     return direction === 1 ? "price-up" : direction === -1 ? "price-down" : "dir-flat";
   }
@@ -97,30 +104,32 @@
       <Button variant="outline" class="flex-1 text-success border-success hover:border-success" onclick={() => onDecide("approved")} disabled={busy}>Approve</Button>
       <Button variant="danger" class="flex-1" onclick={() => onDecide("rejected")} disabled={busy}>Reject</Button>
     {/if}
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger
-        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[4px] text-[13px] font-semibold tracking-[0.02em] border border-hairline-strong bg-background hover:bg-surface-elevated hover:text-ink h-8 px-3 disabled:pointer-events-none disabled:opacity-50"
-        disabled={exporting}
-        aria-label="Export brief"
-      >
-        <Download class="size-3.5" />
-        {exporting ? "Exporting…" : "Export"}
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Content align="end" class="min-w-40">
-        <DropdownMenu.Item
-          onclick={() => doExport("md")}
-          disabled={exporting}
+    <span title={isBriefStale ? "Cannot export stale documents" : undefined}>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger
+          class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[4px] text-[13px] font-semibold tracking-[0.02em] border border-hairline-strong bg-background hover:bg-surface-elevated hover:text-ink h-8 px-3 disabled:pointer-events-none disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)] focus-visible:outline-offset-2"
+          disabled={exporting || isBriefStale}
+          aria-label={isBriefStale ? "Export brief (disabled — stale document)" : "Export brief"}
         >
-          Export Markdown
-        </DropdownMenu.Item>
-        <DropdownMenu.Item
-          onclick={() => doExport("pdf")}
-          disabled={exporting}
-        >
-          Export PDF
-        </DropdownMenu.Item>
-      </DropdownMenu.Content>
-    </DropdownMenu.Root>
+          <Download class="size-3.5" />
+          {exporting ? "Exporting…" : "Export"}
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Content align="end" class="min-w-40">
+          <DropdownMenu.Item
+            onclick={() => doExport("md")}
+            disabled={exporting || isBriefStale}
+          >
+            Export Markdown
+          </DropdownMenu.Item>
+          <DropdownMenu.Item
+            onclick={() => doExport("pdf")}
+            disabled={exporting || isBriefStale}
+          >
+            Export PDF
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Root>
+    </span>
   </div>
 </div>
 

@@ -1,6 +1,8 @@
 <script lang="ts">
-  import type { KnowledgeDoc } from "../../lib/api";
-  import { exportKnowledgeDoc } from "../../lib/api";
+  import { onMount } from "svelte";
+  import type { KnowledgeDoc, RelatedDoc } from "../../lib/api";
+  import { exportKnowledgeDoc, getRelatedDocs } from "../../lib/api";
+  import { onMessage } from "../../lib/ws";
   import { Button } from "$lib/components/ui/button";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
   import { Download } from "@lucide/svelte";
@@ -11,16 +13,29 @@
     selected = null,
     activating = false,
     onActivate = () => {},
+    onRelatedSelect = (_id: string) => {},
   }: {
     selected?: KnowledgeDoc | null;
     activating?: boolean;
     onActivate?: () => void;
+    onRelatedSelect?: (docId: string) => void;
   } = $props();
 
   let exporting: "md" | "pdf" | null = $state(null);
+  let related: RelatedDoc[] = $state([]);
+  let relatedLoading = $state(false);
+
+  const STALE_MS = 60 * 60 * 1000;
+  function isStale(ts: string | null): boolean {
+    if (!ts) return false;
+    const t = Date.parse(ts);
+    return !Number.isNaN(t) && Date.now() - t > STALE_MS;
+  }
+  let isDocStale = $derived(selected ? isStale(selected.created_at) : false);
+  let exportDisabled = $derived(exporting !== null || isDocStale);
 
   async function doExport(format: "md" | "pdf") {
-    if (!selected) return;
+    if (!selected || isDocStale) return;
     exporting = format;
     try {
       const blob = await exportKnowledgeDoc(selected.doc_id, format);
@@ -32,12 +47,47 @@
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      toast.success(`Downloaded doc-${selected.doc_id}.${format}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Export failed");
     } finally {
       exporting = null;
     }
   }
+
+  async function loadRelated(docId: string): Promise<void> {
+    relatedLoading = true;
+    try {
+      const res = await getRelatedDocs(docId, 5);
+      related = res.related ?? [];
+    } catch {
+      related = [];
+    } finally {
+      relatedLoading = false;
+    }
+  }
+
+  // Fetch related docs when selection changes.
+  let lastDocId: string | null = $state(null);
+  $effect(() => {
+    const id = selected?.doc_id ?? null;
+    if (id && id !== lastDocId) {
+      lastDocId = id;
+      void loadRelated(id);
+    } else if (!id) {
+      lastDocId = null;
+      related = [];
+    }
+  });
+
+  onMount(() => {
+    return onMessage("knowledge", (data) => {
+      const ev = data as { event: string; data: unknown };
+      if (ev.event !== "activated") return;
+      // A newly activated doc may introduce edges / shared tags → refresh.
+      if (selected?.doc_id) void loadRelated(selected.doc_id);
+    });
+  });
 </script>
 
 {#if selected}
@@ -82,22 +132,43 @@
       {selected.status === "activated" ? "Activated" : activating ? "Activating..." : "Activate"}
     </Button>
     {#if selected.status === "proposed" || selected.status === "activated"}
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger>
-          {#snippet child({ props })}
-            <Button {...props} variant="outline" size="sm" disabled={exporting !== null}>
-              <Download class="size-3.5" />
-              {exporting ? `Exporting ${exporting.toUpperCase()}...` : "Export"}
-            </Button>
-          {/snippet}
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Content align="start">
-          <DropdownMenu.Item onSelect={() => doExport("md")}>Export Markdown</DropdownMenu.Item>
-          <DropdownMenu.Item onSelect={() => doExport("pdf")}>Export PDF</DropdownMenu.Item>
-        </DropdownMenu.Content>
-      </DropdownMenu.Root>
+      <span title={isDocStale ? "Cannot export stale documents" : undefined}>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
+            {#snippet child({ props })}
+              <Button {...props} variant="outline" size="sm" disabled={exportDisabled} aria-label={isDocStale ? "Export doc (disabled — stale document)" : "Export doc"}>
+                <Download class="size-3.5" />
+                {exporting ? `Exporting ${exporting.toUpperCase()}...` : "Export"}
+              </Button>
+            {/snippet}
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content align="start">
+            <DropdownMenu.Item onSelect={() => doExport("md")} disabled={exportDisabled}>Export Markdown</DropdownMenu.Item>
+            <DropdownMenu.Item onSelect={() => doExport("pdf")} disabled={exportDisabled}>Export PDF</DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
+      </span>
     {/if}
   </div>
+  {#if related.length > 0 || relatedLoading}
+    <div class="related-section" aria-label="Related documents">
+      <h4>Related</h4>
+      {#if relatedLoading}
+        <p class="related-loading mono">Loading related…</p>
+      {:else}
+        <ul class="related-list">
+          {#each related as r (r.doc_id)}
+            <li>
+              <button type="button" class="related-btn" onclick={() => onRelatedSelect(r.doc_id)} aria-label="Open related doc {r.title}">
+                <span class="related-title">{r.title}</span>
+                <span class="related-meta mono">{r.shared_tags.join(", ")} · score {r.score.toFixed(1)}</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+  {/if}
 {:else}
   <p class="empty">Select a result to review it.</p>
 {/if}
@@ -191,6 +262,55 @@
     color: var(--body);
   }
   .ev-source {
+    color: var(--faint);
+    font-size: 9px;
+  }
+  .related-section {
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top: 1px solid var(--hairline);
+  }
+  .related-loading {
+    color: var(--faint);
+    font-size: 10px;
+  }
+  .related-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .related-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 1px solid var(--hairline);
+    border-radius: 4px;
+    padding: 6px 8px;
+    cursor: pointer;
+    transition: border-color 120ms, background-color 120ms;
+  }
+  .related-btn:hover {
+    border-color: var(--hairline-strong);
+    background: var(--row-hover);
+  }
+  .related-btn:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  .related-title {
+    color: var(--ink);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 14px;
+  }
+  .related-meta {
     color: var(--faint);
     font-size: 9px;
   }
