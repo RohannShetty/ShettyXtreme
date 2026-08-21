@@ -1,6 +1,10 @@
 <script lang="ts">
   import type { KnowledgeDoc } from "../../lib/api";
+  import { exportKnowledgeDoc } from "../../lib/api";
   import { Button } from "$lib/components/ui/button";
+  import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
+  import { Download } from "@lucide/svelte";
+  import { toast } from "svelte-sonner";
   import { evidenceItems, fmtTs, statusTagClass, strField } from "./knowledge-shared";
 
   let {
@@ -12,6 +16,28 @@
     activating?: boolean;
     onActivate?: () => void;
   } = $props();
+
+  let exporting: "md" | "pdf" | null = $state(null);
+
+  async function doExport(format: "md" | "pdf") {
+    if (!selected) return;
+    exporting = format;
+    try {
+      const blob = await exportKnowledgeDoc(selected.doc_id, format);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `doc-${selected.doc_id}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      exporting = null;
+    }
+  }
 </script>
 
 {#if selected}
@@ -51,14 +77,39 @@
       {/each}
     </ul>
   {/if}
-  <Button size="sm" class="self-start" onclick={onActivate} disabled={selected.status === "activated" || activating}>
-    {selected.status === "activated" ? "Activated" : activating ? "Activating…" : "Activate"}
-  </Button>
+  <div class="detail-actions">
+    <Button size="sm" class="self-start" onclick={onActivate} disabled={selected.status === "activated" || activating}>
+      {selected.status === "activated" ? "Activated" : activating ? "Activating..." : "Activate"}
+    </Button>
+    {#if selected.status === "proposed" || selected.status === "activated"}
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger>
+          {#snippet child({ props })}
+            <Button {...props} variant="outline" size="sm" disabled={exporting !== null}>
+              <Download class="size-3.5" />
+              {exporting ? `Exporting ${exporting.toUpperCase()}...` : "Export"}
+            </Button>
+          {/snippet}
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Content align="start">
+          <DropdownMenu.Item onSelect={() => doExport("md")}>Export Markdown</DropdownMenu.Item>
+          <DropdownMenu.Item onSelect={() => doExport("pdf")}>Export PDF</DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Root>
+    {/if}
+  </div>
 {:else}
   <p class="empty">Select a result to review it.</p>
 {/if}
 
 <style>
+  .detail-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+  }
   .tags {
     display: flex;
     flex-wrap: wrap;

@@ -11,7 +11,7 @@ import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 
 from shettyxtreme.knowledge.ingest import ingest_decided_briefs
 from shettyxtreme.knowledge.notes import ingest_note
@@ -74,6 +74,145 @@ def _doc_response(doc) -> KnowledgeDocResponse:
         activated_at=doc.activated_at,
         tags=[KnowledgeTagResponse(**t) for t in doc.tags],
     )
+
+
+def _build_markdown(doc) -> str:
+    """Render a KnowledgeDoc to the S2 markdown template (pure Python, no deps)."""
+    payload = doc.payload or {}
+    title = str(payload.get("thesis") or payload.get("title") or doc.doc_id)
+    # Body: prefer body, then rationale, then thesis (avoid duplicating title)
+    body_parts: list[str] = []
+    if payload.get("body"):
+        body_parts.append(str(payload["body"]))
+    if payload.get("rationale"):
+        body_parts.append(str(payload["rationale"]))
+    if payload.get("thesis") and str(payload["thesis"]) != title:
+        body_parts.append(str(payload["thesis"]))
+    if not body_parts:
+        body_parts.append(str(payload.get("thesis") or payload.get("body") or ""))
+    body = "\n\n".join(p for p in body_parts if p) or "No content"
+    # Tags
+    tags = doc.tags or []
+    if tags:
+        tags_block = "\n".join(f"- {t.get('tag', '')} ({t.get('kind', '')})" for t in tags)
+    else:
+        tags_block = "- None"
+    # Evidence
+    evidence = payload.get("evidence") or []
+    ev_lines: list[str] = []
+    for item in evidence:
+        if isinstance(item, dict):
+            text = str(item.get("item", "") or item.get("text", "") or "")
+            source = str(item.get("source", "") or "")
+            if source:
+                ev_lines.append(f"- {text} — {source}" if text else f"- {source}")
+            elif text:
+                ev_lines.append(f"- {text}")
+        elif isinstance(item, str) and item.strip():
+            ev_lines.append(f"- {item.strip()}")
+    evidence_block = "\n".join(ev_lines) if ev_lines else "- None"
+    created = doc.created_at or "Unknown"
+    activated = doc.activated_at or "Not activated"
+    lines = [
+        f"# Knowledge Document: {title}",
+        "",
+        f"**Kind:** {doc.kind}  ",
+        f"**Status:** {doc.status}  ",
+        f"**Source:** {doc.source_ref}  ",
+        f"**Created:** {created}  ",
+        f"**Activated:** {activated}",
+        "",
+        "## Tags",
+        tags_block,
+        "",
+        "## Content",
+        body,
+        "",
+        "## Evidence",
+        evidence_block,
+        "",
+        "## Metadata",
+        f"- **Document ID:** {doc.doc_id}",
+        "- **BM25 Score:** N/A",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _markdown_to_pdf_bytes(markdown_text: str) -> bytes:
+    """Convert markdown text to a minimal PDF (no external deps).
+
+    Produces a single-page PDF with Helvetica; truncated to ~60 lines to fit.
+    The output always starts with %PDF- and is sufficient for the S2 contract
+    (valid PDF header, non-empty). Styled as clean/monospace where applicable
+    is approximated by the fixed-width wrapping.
+    """
+    import textwrap
+
+    raw_lines = markdown_text.splitlines()
+    wrapped: list[str] = []
+    for line in raw_lines:
+        if not line:
+            wrapped.append("")
+        else:
+            # Wrap long lines at 90 chars to stay within 612pt page width.
+            chunks = textwrap.wrap(line, width=90, replace_whitespace=False, drop_whitespace=False)
+            if not chunks:
+                wrapped.append("")
+            else:
+                wrapped.extend(chunks)
+    # Single page ~55 lines at 13pt leading fits 720pt height.
+    if len(wrapped) > 60:
+        wrapped = wrapped[:60]
+        wrapped.append("... (truncated)")
+
+    # Build content stream: one BT/ET block with Td moves.
+    stream_lines: list[str] = ["BT", "/F1 9 Tf", "72 720 Td"]
+    for i, line in enumerate(wrapped):
+        # ASCII-safe + escape PDF string delimiters.
+        esc = line.encode("ascii", "replace").decode("ascii")
+        esc = esc.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        if i == 0:
+            stream_lines.append(f"({esc}) Tj")
+        else:
+            stream_lines.append("0 -13 Td")
+            stream_lines.append(f"({esc}) Tj")
+    stream_lines.append("ET")
+    stream = "\n".join(stream_lines).encode("utf-8")
+
+    # PDF objects (catalog, pages, page, contents). Offsets computed dynamically.
+    header = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
+    obj1 = b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+    obj2 = b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+    obj3 = (
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Contents 4 0 R /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>\nendobj\n"
+    )
+    obj4_head = f"4 0 obj\n<< /Length {len(stream)} >>\nstream\n".encode("utf-8")
+    obj4_tail = b"\nendstream\nendobj\n"
+
+    parts: list[bytes] = [header, obj1, obj2, obj3, obj4_head, stream, obj4_tail]
+    # Compute xref offsets: each object's byte offset from start of file.
+    offsets: list[int] = []
+    off = 0
+    # Objects start at offsets of obj1..obj4 (header is not an object)
+    # We need offsets for objects 1..4.
+    obj_starts: list[bytes] = [obj1, obj2, obj3, obj4_head + stream + obj4_tail]
+    cur = len(header)
+    for ob in obj_starts:
+        offsets.append(cur)
+        cur += len(ob)
+
+    xref_offset = len(header) + sum(len(o) for o in obj_starts)
+    # Build xref table (object 0 + 1..4)
+    xref = [b"xref\n0 5\n0000000000 65535 f \n"]
+    for off in offsets:
+        xref.append(f"{off:010d} 00000 n \n".encode("ascii"))
+    trailer = b"trailer\n<< /Size 5 /Root 1 0 R >>\n"
+    startxref = f"startxref\n{xref_offset}\n%%EOF\n".encode("ascii")
+
+    pdf = b"".join(parts + xref + [trailer, startxref])
+    return pdf
 
 
 @router.get("/search", response_model=KnowledgeSearchResponse)
@@ -210,3 +349,40 @@ async def create_note(req: KnowledgeNoteRequest) -> KnowledgeDocResponse:
         logger.warning("Knowledge note failed: %s", exc)
         raise HTTPException(status_code=500, detail="note ingest failed") from exc
     return _doc_response(doc)
+
+
+@router.get("/docs/{doc_id}/export")
+async def export_doc(
+    doc_id: str,
+    format: str = Query("md"),
+) -> Response:
+    """Export a knowledge document as Markdown or PDF (S2).
+
+    Query ``format`` is ``md`` (default) or ``pdf``. Returns 404 if the doc
+    is missing, 400 if the format is unsupported, and 500 only on genuine
+    PDF generation failures (logged). The response carries
+    Content-Disposition: attachment so browsers trigger a download.
+    """
+    doc = _store().get(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    if format not in ("md", "pdf"):
+        raise HTTPException(status_code=400, detail="unsupported format; use md or pdf")
+    markdown_text = _build_markdown(doc)
+    if format == "md":
+        return Response(
+            content=markdown_text,
+            media_type="text/markdown",
+            headers={"Content-Disposition": f'attachment; filename="doc-{doc_id}.md"'},
+        )
+    # PDF branch
+    try:
+        pdf_bytes = _markdown_to_pdf_bytes(markdown_text)
+    except Exception as exc:
+        logger.exception("knowledge export PDF generation failed for %s", doc_id)
+        raise HTTPException(status_code=500, detail="PDF generation failed") from exc
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="doc-{doc_id}.pdf"'},
+    )

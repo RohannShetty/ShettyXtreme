@@ -12,7 +12,8 @@ import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response
 
 from shettyxtreme.intelligence.signals.signal_engine import (
     Signal,
@@ -326,6 +327,167 @@ def _record_brief_outcome(brief: ResearchBrief) -> None:
         logger.warning("learning outcome recording failed for %s: %s", brief.brief_id, exc)
 
 
+# ── S1: Export helpers ───────────────────────────────────────────────────────
+
+
+def _escape_md(value: str) -> str:
+    return value.replace("|", "\\|")
+
+
+def _brief_to_markdown(brief: ResearchBrief) -> str:
+    """Render a brief to the canonical export Markdown (spec S1).
+
+    Pure function — easy to unit test without an HTTP layer.
+    """
+    confidence_pct = f"{brief.confidence * 100:.0f}"
+    direction = str(brief.direction)
+    outcome = brief.outcome if brief.outcome else "Not decided"
+    decided_at = brief.decided_at if brief.decided_at else "N/A"
+    regime = brief.regime_at_decision if brief.regime_at_decision else "N/A"
+    lines: list[str] = []
+    lines.append(f"# Research Brief: {brief.brief_id}")
+    lines.append("")
+    lines.append(f"**Lens:** {brief.lens}  ")
+    lines.append(f"**Direction:** {direction}  ")
+    lines.append(f"**Confidence:** {confidence_pct}%  ")
+    lines.append(f"**Status:** {brief.status}  ")
+    lines.append(f"**Generated:** {brief.as_of}  ")
+    lines.append(f"**Valid Until:** {brief.validity_window_minutes} minutes")
+    lines.append("")
+    lines.append("## Thesis")
+    lines.append(brief.thesis or "")
+    lines.append("")
+    lines.append("## Rationale")
+    lines.append(brief.rationale or "")
+    lines.append("")
+    lines.append("## Evidence")
+    lines.append("| Item | Source |")
+    lines.append("|------|--------|")
+    for ev in brief.evidence or []:
+        if isinstance(ev, dict):
+            item = str(ev.get("item", ""))
+            source = str(ev.get("source", ""))
+        else:
+            item = str(ev)
+            source = ""
+        lines.append(f"| {_escape_md(item)} | {_escape_md(source)} |")
+    lines.append("")
+    lines.append("## Risks")
+    if brief.risks:
+        for r in brief.risks:
+            lines.append(f"- {r}")
+    else:
+        lines.append("_No risks listed._")
+    lines.append("")
+    lines.append("## Metadata")
+    lines.append(f"- **Outcome:** {outcome}")
+    lines.append(f"- **Decided At:** {decided_at}")
+    lines.append(f"- **Regime at Decision:** {regime}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _markdown_to_pdf_bytes(md_text: str) -> bytes:
+    """Convert markdown to PDF bytes.
+
+    Strategy: markdown → HTML (optional) → weasyprint → PDF.  If either
+    optional dep is missing, try fpdf2.  If neither is installed, return a
+    minimal hand-rolled PDF (valid header, contains the md text as stream).
+    Any failure raises RuntimeError so the route can map to 500.
+    """
+    # Attempt weasyprint path (markdown + weasyprint)
+    try:
+        import markdown as md_lib  # type: ignore[import-untyped]
+
+        html_body = md_lib.markdown(md_text, extensions=["tables", "fenced_code"])
+        try:
+            from weasyprint import HTML  # type: ignore[import-untyped]
+
+            styled_html = (
+                "<html><head><meta charset='utf-8'><style>"
+                "body{font-family: ui-monospace, monospace; font-size: 11px; color: #111; line-height:1.5; margin: 24px;}"
+                "h1{font-size:18px; margin-bottom:8px;} h2{font-size:13px; margin-top:16px; color:#222;}"
+                "table{border-collapse:collapse; width:100%; margin:8px 0;}"
+                "th,td{border:1px solid #ccc; padding:4px 6px; text-align:left; font-size:10px;}"
+                "code,pre{font-family: ui-monospace, monospace; background:#f5f5f5; padding:2px 4px;}"
+                "</style></head><body>" + html_body + "</body></html>"
+            )
+            pdf_bytes = HTML(string=styled_html).write_pdf()
+            if pdf_bytes and pdf_bytes[:5] == b"%PDF-":
+                return pdf_bytes
+        except ImportError:
+            pass
+        except Exception as exc:  # weasyprint can fail on missing system libs
+            logger.warning("weasyprint PDF generation failed: %s", exc)
+            # fall through to fpdf2
+    except ImportError:
+        pass
+    except Exception as exc:
+        logger.warning("markdown conversion failed: %s", exc)
+
+    # Attempt fpdf2 path
+    try:
+        from fpdf import FPDF  # type: ignore[import-untyped]
+
+        pdf = FPDF(format="A4")
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.add_page()
+        pdf.set_font("Helvetica", size=10)
+        for line in md_text.splitlines():
+            # FPDF doesn't support markdown; dump as plain text
+            safe = line.encode("latin-1", errors="replace").decode("latin-1")
+            pdf.multi_cell(0, 5, safe)
+        out = pdf.output()
+        if isinstance(out, (bytes, bytearray)):
+            data = bytes(out)
+        else:
+            data = out.encode("latin-1")  # fpdf2 with dest='S' returns str in some versions
+        if data[:5] == b"%PDF-":
+            return data
+    except ImportError:
+        pass
+    except Exception as exc:
+        logger.warning("fpdf2 PDF generation failed: %s", exc)
+        raise RuntimeError(f"PDF generation failed: {exc}") from exc
+
+    # Minimal fallback — valid PDF header guaranteed for offline/CI without deps
+    def _pdf_escape(s: str) -> str:
+        return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    ops: list[str] = ["BT", "/F1 8 Tf", "72 750 Td"]
+    for idx, raw in enumerate(md_text.splitlines()[:180]):
+        safe = _pdf_escape(raw[:120])
+        if idx == 0:
+            ops.append(f"({safe}) Tj")
+        else:
+            ops.append("0 -12 Td")
+            ops.append(f"({safe}) Tj")
+        if idx * 12 > 700:
+            break
+    ops.append("ET")
+    stream = "\n".join(ops).encode("latin-1", errors="replace")
+    # Minimal PDF structure
+    header = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
+    # Objects
+    objs: list[bytes] = []
+    objs.append(b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n")
+    objs.append(b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n")
+    objs.append(b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</Font<</F1<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>>>>>/Contents 4 0 R>>endobj\n")
+    objs.append(b"4 0 obj<</Length " + str(len(stream)).encode() + b">>stream\n" + stream + b"\nendstream endobj\n")
+    # xref
+    offset = len(header)
+    offsets = []
+    for o in objs:
+        offsets.append(offset)
+        offset += len(o)
+    xref_pos = offset
+    xref = b"xref\n0 5\n0000000000 65535 f \n"
+    for off in offsets:
+        xref += f"{off:010d} 00000 n \n".encode()
+    trailer = b"trailer<</Size 5/Root 1 0 R>>\nstartxref\n" + str(xref_pos).encode() + b"\n%%EOF"
+    return header + b"".join(objs) + xref + trailer
+
+
 def _decide(request: Request, brief_id: str, decision: str) -> ResearchDecisionResponse:
     try:
         store = _open_store()
@@ -399,3 +561,48 @@ async def scoring() -> ResearchScoringResponse:
         return ResearchScoringResponse()
     finally:
         store.close()
+
+
+@router.get("/briefs/{brief_id}/export")
+async def export_brief(brief_id: str, format: str = Query("md")) -> Response:
+    """Export a brief as Markdown or PDF (spec S1).
+
+    Query `format` must be ``md`` or ``pdf``.  Missing brief -> 404,
+    unsupported format -> 400, PDF failure -> 500.
+    """
+    if format not in ("md", "pdf"):
+        raise HTTPException(status_code=400, detail="unsupported format: use md or pdf")
+    try:
+        store = _open_store()
+    except Exception as exc:
+        logger.warning("Research store unavailable: %s", exc)
+        raise HTTPException(status_code=404, detail="brief not found") from exc
+    try:
+        brief = store.get(brief_id)
+    finally:
+        try:
+            store.close()
+        except Exception:
+            pass
+    if brief is None:
+        raise HTTPException(status_code=404, detail="brief not found")
+    md_text = _brief_to_markdown(brief)
+    if format == "md":
+        return Response(
+            content=md_text,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="brief-{brief_id}.md"'},
+        )
+    try:
+        pdf_bytes = _markdown_to_pdf_bytes(md_text)
+    except RuntimeError as exc:
+        logger.exception("PDF generation failed for %s", brief_id)
+        raise HTTPException(status_code=500, detail="PDF generation failed") from exc
+    except Exception as exc:
+        logger.exception("PDF generation failed for %s: %s", brief_id, exc)
+        raise HTTPException(status_code=500, detail="PDF generation failed") from exc
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="brief-{brief_id}.pdf"'},
+    )

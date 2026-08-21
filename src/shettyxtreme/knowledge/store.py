@@ -247,6 +247,112 @@ class KnowledgeStore:
         ]
         return self._row_to_doc(row, tags)
 
+    # -- graph API (S3) -----------------------------------------------------
+
+    def related(self, doc_id: str, limit: int = 5) -> list[dict]:
+        """Return docs sharing >=1 tag with *doc_id* ranked by shared count."""
+
+        doc_id = str(doc_id)
+        if limit < 1:
+            limit = 5
+
+        # Quick existence check — avoids spurious rows when doc_id has no tags.
+        if self._conn.execute("SELECT 1 FROM docs WHERE doc_id = ?", (doc_id,)).fetchone() is None:
+            return []
+
+        rows = self._conn.execute(
+            "SELECT d.doc_id, d.title, COUNT(*) as shared_count, GROUP_CONCAT(t.tag, ',') as shared_tags "
+            "FROM docs d "
+            "JOIN tags t ON d.doc_id = t.doc_id "
+            "WHERE t.tag IN (SELECT tag FROM tags WHERE doc_id = ?) "
+            "AND d.doc_id != ? "
+            "AND d.status IN ('proposed', 'activated') "
+            "GROUP BY d.doc_id "
+            "ORDER BY shared_count DESC, d.created_at DESC "
+            "LIMIT ?",
+            (doc_id, doc_id, limit),
+        ).fetchall()
+
+        out: list[dict] = []
+        for other_id, title, shared_count, shared_tags_raw in rows:
+            tags = [t for t in (shared_tags_raw or "").split(",") if t]
+            out.append(
+                {
+                    "doc_id": other_id,
+                    "title": title or "",
+                    "shared_tags": sorted(tags),
+                    "score": int(shared_count),
+                }
+            )
+        return out
+
+    def graph(self, kind: str | None = None, limit: int = 100) -> dict:
+        """Build tag graph from ``tags``.
+
+        Nodes are unique tags with kind and distinct-document count. Edges
+        are co-occurrences (pair of tags appearing in the same document),
+        weighted by doc count. When *kind* is set, only nodes/edges of that
+        kind remain. When *limit* is given only the top-N nodes by count are
+        retained (edges among those nodes only).
+        """
+
+        # Nodes: one row per (tag, kind) with distinct-doc count.
+        if kind is not None:
+            node_rows = self._conn.execute(
+                "SELECT tag, kind, COUNT(DISTINCT doc_id) as cnt FROM tags "
+                "WHERE kind = ? GROUP BY tag, kind ORDER BY cnt DESC",
+                (kind,),
+            ).fetchall()
+        else:
+            node_rows = self._conn.execute(
+                "SELECT tag, kind, COUNT(DISTINCT doc_id) as cnt FROM tags "
+                "GROUP BY tag, kind ORDER BY cnt DESC"
+            ).fetchall()
+
+        all_nodes: list[dict] = [
+            {"id": tag, "label": tag, "kind": k, "count": int(cnt)} for tag, k, cnt in node_rows
+        ]
+
+        if limit is not None and len(all_nodes) > limit:
+            kept = set(n["id"] for n in all_nodes[:limit])
+            nodes = all_nodes[:limit]
+        else:
+            kept = set(n["id"] for n in all_nodes) if kind is not None else None
+            nodes = all_nodes
+
+        if not nodes:
+            return {"nodes": [], "edges": []}
+
+        # Edges via co-occurrence per doc.
+        # For each doc, order tags, emit pairs t1<t2 (lexicographic) and count.
+        if kind is not None:
+            doc_rows = self._conn.execute(
+                "SELECT doc_id, tag FROM tags WHERE kind = ? ORDER BY doc_id, tag", (kind,)
+            ).fetchall()
+        else:
+            doc_rows = self._conn.execute("SELECT doc_id, tag FROM tags ORDER BY doc_id, tag").fetchall()
+
+        from collections import defaultdict
+
+        doc_to_tags: dict[str, list[str]] = defaultdict(list)
+        for doc_id, tag in doc_rows:
+            if kept is None or tag in kept:
+                doc_to_tags[doc_id].append(tag)
+
+        pair_counts: dict[tuple[str, str], int] = defaultdict(int)
+        for tags in doc_to_tags.values():
+            uniq = sorted(set(tags))
+            for i in range(len(uniq)):
+                for j in range(i + 1, len(uniq)):
+                    pair_counts[(uniq[i], uniq[j])] += 1
+
+        edges = [
+            {"source": s, "target": t, "weight": int(w)}
+            for (s, t), w in sorted(pair_counts.items())
+        ]
+
+        return {"nodes": nodes, "edges": edges}
+
     def counts(self) -> dict[str, int]:
         docs = self._conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0]
         proposed = self._conn.execute(

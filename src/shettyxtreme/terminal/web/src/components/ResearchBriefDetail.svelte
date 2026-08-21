@@ -1,7 +1,11 @@
 <script lang="ts">
   import type { ResearchBrief } from "../lib/api";
+  import { exportResearchBrief } from "../lib/api";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
+  import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
+  import { Download } from "@lucide/svelte";
+  import { toast } from "svelte-sonner";
 
   let {
     brief,
@@ -13,6 +17,8 @@
     onDecide?: (status: "approved" | "rejected") => void;
   } = $props();
 
+  let exporting = $state(false);
+
   function dirBadgeClass(direction: number): string {
     return direction === 1 ? "price-up" : direction === -1 ? "price-down" : "dir-flat";
   }
@@ -23,6 +29,28 @@
 
   function statusVariant(status: string): "success" | "danger" | "warning" {
     return status === "approved" ? "success" : status === "rejected" ? "danger" : "warning";
+  }
+
+  async function doExport(format: "md" | "pdf"): Promise<void> {
+    if (exporting) return;
+    exporting = true;
+    try {
+      const blob = await exportResearchBrief(brief.brief_id, format);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `brief-${brief.brief_id}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast.success(`Downloaded brief-${brief.brief_id}.${format}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(`Export failed: ${msg}`);
+    } finally {
+      exporting = false;
+    }
   }
 </script>
 
@@ -64,12 +92,36 @@
       <span>decided {brief.decided_at.slice(0, 19)}</span>
     {/if}
   </div>
-  {#if brief.status === "proposed" && !brief.expired}
-    <div class="decision">
+  <div class="actions">
+    {#if brief.status === "proposed" && !brief.expired}
       <Button variant="outline" class="flex-1 text-success border-success hover:border-success" onclick={() => onDecide("approved")} disabled={busy}>Approve</Button>
       <Button variant="danger" class="flex-1" onclick={() => onDecide("rejected")} disabled={busy}>Reject</Button>
-    </div>
-  {/if}
+    {/if}
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger
+        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[4px] text-[13px] font-semibold tracking-[0.02em] border border-hairline-strong bg-background hover:bg-surface-elevated hover:text-ink h-8 px-3 disabled:pointer-events-none disabled:opacity-50"
+        disabled={exporting}
+        aria-label="Export brief"
+      >
+        <Download class="size-3.5" />
+        {exporting ? "Exporting…" : "Export"}
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content align="end" class="min-w-40">
+        <DropdownMenu.Item
+          onclick={() => doExport("md")}
+          disabled={exporting}
+        >
+          Export Markdown
+        </DropdownMenu.Item>
+        <DropdownMenu.Item
+          onclick={() => doExport("pdf")}
+          disabled={exporting}
+        >
+          Export PDF
+        </DropdownMenu.Item>
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
+  </div>
 </div>
 
 <style>
@@ -133,6 +185,12 @@
     color: var(--faint);
     font-size: 10px;
     margin-top: 8px;
+  }
+  .actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    align-items: center;
   }
   .decision {
     display: flex;

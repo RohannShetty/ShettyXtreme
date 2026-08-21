@@ -221,6 +221,23 @@ export type KnowledgeSyncResponse = {
   error: string | null;
 };
 
+// --- Research export (S1) ---
+
+export async function exportResearchBrief(id: string, format: "md" | "pdf"): Promise<Blob> {
+  const path = `/api/research/briefs/${encodeURIComponent(id)}/export?format=${format}`;
+  let resp: Response;
+  try {
+    resp = await fetchWithTimeout(path, { method: "GET", credentials: "same-origin" });
+  } catch (err) {
+    if (isAbortError(err)) throw new Error("Request timeout");
+    throw new Error(`Network error reaching ${path}`);
+  }
+  if (!resp.ok) {
+    throw new Error(await describeError(resp));
+  }
+  return resp.blob();
+}
+
 // --- Symbol Search (P1-2.3) ---
 
 export type SymbolSearchHit = {
@@ -864,6 +881,12 @@ export async function getScheduler(): Promise<SettingsScheduler> {
 
 export async function updateScheduler(update: SchedulerUpdate): Promise<SettingsScheduler> {
   return putBody<SettingsScheduler>("/api/settings/scheduler", update);
+}
+
+export async function exportKnowledgeDoc(id: string, format: 'md' | 'pdf'): Promise<Blob> {
+  const resp = await fetchWithTimeout(`/api/knowledge/docs/${id}/export?format=${format}`, { method: 'GET' });
+  if (!resp.ok) throw new Error(`Export failed: ${resp.status}`);
+  return resp.blob();
 }
 
 // ── V2 API types and functions ────────────────────────────────────────────
