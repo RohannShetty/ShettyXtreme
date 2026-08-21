@@ -883,10 +883,52 @@ export async function updateScheduler(update: SchedulerUpdate): Promise<Settings
   return putBody<SettingsScheduler>("/api/settings/scheduler", update);
 }
 
-export async function exportKnowledgeDoc(id: string, format: 'md' | 'pdf'): Promise<Blob> {
-  const resp = await fetchWithTimeout(`/api/knowledge/docs/${id}/export?format=${format}`, { method: 'GET' });
+export async function exportKnowledgeDoc(id: string, format: "md" | "pdf"): Promise<Blob> {
+  const resp = await fetchWithTimeout(`/api/knowledge/docs/${id}/export?format=${format}`, { method: "GET" });
   if (!resp.ok) throw new Error(`Export failed: ${resp.status}`);
   return resp.blob();
+}
+
+// --- Knowledge graph (Phase 5 S3/S4) ---
+
+export type GraphNode = {
+  id: string;
+  label: string;
+  kind: string;
+  count: number;
+};
+
+export type GraphEdge = {
+  source: string;
+  target: string;
+  weight: number;
+};
+
+export type GraphResponse = {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+};
+
+export async function getKnowledgeGraph(kind?: string, limit: number = 100): Promise<GraphResponse> {
+  const params = new URLSearchParams();
+  if (kind) params.set("kind", kind);
+  params.set("limit", limit.toString());
+  return get<GraphResponse>(`/api/knowledge/graph?${params}`);
+}
+
+export type RelatedDoc = {
+  doc_id: string;
+  title: string;
+  shared_tags: string[];
+  score: number;
+};
+
+export type RelatedResponse = {
+  related: RelatedDoc[];
+};
+
+export async function getRelatedDocs(doc_id: string, limit: number = 5): Promise<RelatedResponse> {
+  return get<RelatedResponse>(`/api/knowledge/docs/${encodeURIComponent(doc_id)}/related?limit=${limit}`);
 }
 
 // ── V2 API types and functions ────────────────────────────────────────────

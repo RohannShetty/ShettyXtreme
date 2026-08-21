@@ -12,6 +12,7 @@
   import { Textarea } from "$lib/components/ui/textarea";
   import { RefreshCw, RotateCw } from "@lucide/svelte";
   import KnowledgeDetail from "./knowledge/KnowledgeDetail.svelte";
+  import KnowledgeGraph from "./knowledge/KnowledgeGraph.svelte";
   import type {
     KnowledgeDoc,
     KnowledgeNoteRequest,
@@ -55,6 +56,7 @@
     { value: "strategy", label: "Strategies" },
     { value: "pattern", label: "Patterns" },
     { value: "note", label: "Notes" },
+    { value: "Graph", label: "Graph" },
   ];
 
   // doc_id → full doc, so hit rows can show created_at timestamps and the
@@ -298,8 +300,19 @@
   }
 
   let filteredHits = $derived(
-    kindFilter === "All" ? hits : hits.filter((h) => h.kind === kindFilter),
+    kindFilter === "All" || kindFilter === "Graph" ? hits : hits.filter((h) => h.kind === kindFilter),
   );
+
+  let graphKind = $derived(kindFilter === "All" || kindFilter === "Graph" ? undefined : kindFilter);
+
+  function onGraphNodeClick(event: Event): void {
+    const ce = event as CustomEvent<{ tag: string; kind: string; count: number }>;
+    const tag = ce.detail?.tag;
+    if (!tag) return;
+    query = tag;
+    kindFilter = "All";
+    void search();
+  }
 </script>
 
 <section class="panel knowledge">
@@ -376,7 +389,13 @@
         </TabsList>
       </Tabs>
 
-      <ScrollArea class="h-full">
+      {#if kindFilter === "Graph"}
+        <div class="graph-wrap" role="region" aria-label="Knowledge graph">
+          <!-- svelte-ignore event_directive_deprecated -->
+          <KnowledgeGraph kind={graphKind} limit={100} on:graph-node-click={onGraphNodeClick} />
+        </div>
+      {:else}
+        <ScrollArea class="h-full">
         {#if searching}
           <ul class="hit-list" aria-label="Knowledge search results loading">
             {#each { length: 4 } as _, i (i)}
@@ -444,6 +463,7 @@
           </ul>
         {/if}
       </ScrollArea>
+      {/if}
     </div>
 
     <div class="col detail-col">

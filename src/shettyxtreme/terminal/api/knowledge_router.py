@@ -351,6 +351,33 @@ async def create_note(req: KnowledgeNoteRequest) -> KnowledgeDocResponse:
     return _doc_response(doc)
 
 
+@router.get("/graph")
+async def graph(
+    kind: str | None = Query(None, pattern="^(symbol|regime|risk)$"),
+    limit: int = Query(100, ge=1, le=500),
+) -> dict:
+    """Tag co-occurrence graph (S3). Nodes are tags, edges are co-occurrences."""
+    try:
+        return _store().graph(kind=kind, limit=limit)
+    except Exception as exc:
+        logger.warning("Knowledge graph failed: %s", exc)
+        return {"nodes": [], "edges": []}
+
+
+@router.get("/docs/{doc_id}/related")
+async def related_docs(
+    doc_id: str,
+    limit: int = Query(5, ge=1, le=20),
+) -> dict:
+    """Docs sharing tags with *doc_id* ranked by shared tag count (S3)."""
+    try:
+        items = _store().related(doc_id, limit=limit)
+    except Exception as exc:
+        logger.warning("Knowledge related failed for %s: %s", doc_id, exc)
+        return {"related": []}
+    return {"related": items}
+
+
 @router.get("/docs/{doc_id}/export")
 async def export_doc(
     doc_id: str,
