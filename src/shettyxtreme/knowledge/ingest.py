@@ -22,15 +22,24 @@ from .tagger import tag_document
 class ResearchBriefLike(Protocol):
     """Structural contract for a decided research brief (spec 4A §3.3)."""
 
-    brief_id: str
-    lens: str
-    as_of: str
-    status: str
-    thesis: str
-    rationale: str
-    decided_at: str | None
-    outcome: str | None
-    evidence: list[dict[str, Any]]
+    @property
+    def brief_id(self) -> str: ...
+    @property
+    def lens(self) -> str: ...
+    @property
+    def as_of(self) -> str: ...
+    @property
+    def status(self) -> str: ...
+    @property
+    def thesis(self) -> str: ...
+    @property
+    def rationale(self) -> str: ...
+    @property
+    def decided_at(self) -> str | None: ...
+    @property
+    def outcome(self) -> str | None: ...
+    @property
+    def evidence(self) -> list[dict[str, Any]]: ...
 
 
 class AgentSignalLike(Protocol):

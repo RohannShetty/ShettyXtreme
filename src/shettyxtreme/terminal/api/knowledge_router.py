@@ -54,6 +54,15 @@ def _store() -> KnowledgeStore:
     return _STORE
 
 
+def _parse_iso_datetime(s: str | None) -> datetime | None:
+    if s is None:
+        return None
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+
 def _broadcast(event: dict) -> None:
     if _broadcast_fn is None:
         return
@@ -267,7 +276,7 @@ async def status() -> KnowledgeStatusResponse:
         counts = _store().counts()
         return KnowledgeStatusResponse(
             **counts,
-            last_sync_at=_store().get_last_sync(),
+            last_sync_at=_parse_iso_datetime(_store().get_last_sync()),
             last_sync_result=_store().get_last_sync_result(),
         )
     except Exception as exc:

@@ -18,7 +18,7 @@ async def client():
         yield ac
 
 
-@pytest_asyncio.fixture
+@pytest.fixture
 def kstore(tmp_path):
     store = KnowledgeStore(str(tmp_path / "k.db"))
     old = kr._STORE
