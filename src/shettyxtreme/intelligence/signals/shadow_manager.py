@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 
 from shettyxtreme.intelligence.regime import Regime
 from shettyxtreme.intelligence.signals.signal_engine import Vote, get_registry
-from shettyxtreme.learning.outcome_tracker import OutcomeLabel
+from shettyxtreme.core.data_models.outcomes import OutcomeLabel
 
 logger = logging.getLogger(__name__)
 

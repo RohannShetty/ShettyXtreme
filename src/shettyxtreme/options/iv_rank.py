@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import Literal
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
 
 IVClassification = Literal["LOW", "NORMAL", "HIGH"]
 
@@ -186,3 +186,39 @@ class IVRankCalculator:
         """Return the number of IV data points for a symbol."""
         hist = self._historical_iv.get(symbol)
         return len(hist) if hist else 0
+
+    def get_history(self, symbol: str, days: int = 30) -> list[dict[str, Any]]:
+        """Return timestamped IV snapshots for a symbol, filtered to N days.
+
+        Phase 3A.3: exposes the in-memory snapshot deque as a time series for
+        the IV-rank history chart. Each entry reports the IV rank (0-100
+        percent scale, F-INTEL-008) and classification of that snapshot's IV
+        against the full recorded history.
+
+        Args:
+            symbol: Instrument symbol to fetch history for.
+            days: How many days of history to return (default 30). Clamped
+                to >= 1.
+
+        Returns:
+            Chronological list of ``{timestamp, iv_rank_percent,
+            iv_classification}`` dicts; empty when the symbol has no recorded
+            IV data (or fewer than two data points, which cannot be ranked).
+        """
+        snapshots = self._snapshots.get(symbol)
+        if not snapshots:
+            return []
+        cutoff = datetime.now(UTC) - timedelta(days=max(1, days))
+        result: list[dict[str, Any]] = []
+        for snap in snapshots:
+            if snap.timestamp < cutoff:
+                continue
+            rank = self.compute_iv_rank_percent(symbol, current_iv=snap.iv)
+            if rank is None:
+                continue
+            result.append({
+                "timestamp": snap.timestamp.isoformat(),
+                "iv_rank_percent": rank.iv_rank_percent,
+                "iv_classification": rank.classification,
+            })
+        return result

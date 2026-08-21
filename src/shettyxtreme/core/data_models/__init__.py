@@ -13,9 +13,11 @@ from .orders import (
     Fill,
     Trade,
 )
+from .outcomes import OutcomeLabel
 __all__ = [
     "Bar", "Tick", "Quote", "OptionChain", "OptionContract",
     "Order", "OrderRequest", "OrderResult", "OrderSide", "OrderStatus",
     "OrderType", "ProductType", "Fill", "Position", "Trade",
     "Holding", "OrderBook",
+    "OutcomeLabel",
 ]

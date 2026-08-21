@@ -1,8 +1,10 @@
-/* design.css — component design tokens (DESIGN.md §2). Single source of truth
-   for the 14 legacy components. Theme is selected by `data-theme` on <html>;
-   the :root fallback block (dark) renders before JS applies the attribute. */
+/* design.css — component design tokens (DESIGN.md §2). Single source of truth.
+   Theme: `data-theme` on <html> (dark/light). Convention: `data-convention`
+   (international/indian). The :root fallback = dark + international (pre-JS). */
 
-/* Dark (pure black + warm amber) — DEFAULT. Also the no-JS fallback. */
+/* ── International convention (DEFAULT) — green = up, red = down ────────── */
+
+/* Dark + International */
 :root,
 :root[data-theme="dark"] {
   --canvas: #0a0a0a;
@@ -20,14 +22,14 @@
   --accent-active: #ffce6b;
   --accent-disabled: #5c4712;
   --on-accent: #1a1405;
-  --price-up: #f6525c;
-  --price-up-strong: #ff7a82;
-  --price-up-soft: rgba(246, 82, 92, 0.12);
-  --price-down: #2ebd85;
-  --price-down-strong: #3fd9a0;
-  --price-down-soft: rgba(46, 189, 133, 0.12);
-  --flash-up: rgba(246, 82, 92, 0.16);
-  --flash-down: rgba(46, 189, 133, 0.16);
+  --price-up: #2ebd85;
+  --price-up-strong: #3fd9a0;
+  --price-up-soft: rgba(46, 189, 133, 0.12);
+  --price-down: #f6525c;
+  --price-down-strong: #ff7a82;
+  --price-down-soft: rgba(246, 82, 92, 0.12);
+  --flash-up: rgba(46, 189, 133, 0.16);
+  --flash-down: rgba(246, 82, 92, 0.16);
   --success: #22c55e;
   --warning: #ffb020;
   --danger: #e5484d;
@@ -36,8 +38,14 @@
   --row-hover: #1f1f1f;
   --row-selected: #2a2a2a;
   --scrim: rgba(0, 0, 0, 0.6);
-  --candle-up: #f6525c;
-  --candle-down: #2ebd85;
+  --candle-up: #2ebd85;
+  --candle-down: #f6525c;
+  --option-call: #3b82f6;
+  --option-put: #f5b942;
+  --side-buy: #22c55e;
+  --side-sell: #e5484d;
+  --sl-level: #e5484d;
+  --tgt-level: #22c55e;
   --volume: #333333;
   --grid-line: #1f1f1f;
   --crosshair: #737373;
@@ -46,8 +54,7 @@
   --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
 }
 
-/* Light (pure white) — opt-in. Price law preserved: red = up, green = down.
-   Down-green darkened to #1e9e6b for AA on white; hue stays green. */
+/* Light + International — down hue darkened to #1e9e6b for AA on white. */
 :root[data-theme="light"] {
   --canvas: #ffffff;
   --canvas-raised: #fafafa;
@@ -64,14 +71,14 @@
   --accent-active: #b45309;
   --accent-disabled: #fde68a;
   --on-accent: #ffffff;
-  --price-up: #f6525c;
-  --price-up-strong: #f6525c;
-  --price-up-soft: rgba(246, 82, 92, 0.12);
-  --price-down: #1e9e6b;
-  --price-down-strong: #2ebd85;
-  --price-down-soft: rgba(30, 158, 107, 0.12);
-  --flash-up: rgba(246, 82, 92, 0.16);
-  --flash-down: rgba(30, 158, 107, 0.16);
+  --price-up: #1e9e6b;
+  --price-up-strong: #2ebd85;
+  --price-up-soft: rgba(30, 158, 107, 0.12);
+  --price-down: #f6525c;
+  --price-down-strong: #f6525c;
+  --price-down-soft: rgba(246, 82, 92, 0.12);
+  --flash-up: rgba(30, 158, 107, 0.16);
+  --flash-down: rgba(246, 82, 92, 0.16);
   --success: #15803d;
   --warning: #92400e;
   --danger: #c62828;
@@ -80,14 +87,51 @@
   --row-hover: #f5f5f5;
   --row-selected: #fef3c7;
   --scrim: rgba(0, 0, 0, 0.4);
-  --candle-up: #f6525c;
-  --candle-down: #1e9e6b;
+  --candle-up: #1e9e6b;
+  --candle-down: #f6525c;
+  --option-call: #1e40af;
+  --option-put: #d97706;
+  --side-buy: #15803d;
+  --side-sell: #c62828;
+  --sl-level: #c62828;
+  --tgt-level: #15803d;
   --volume: #d4d4d4;
   --grid-line: #e5e5e5;
   --crosshair: #737373;
   --watermark: #e5e5e5;
   --font-sans: Inter, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
+}
+
+/* ── Indian convention (legacy opt-in) — red = up, green = down ─────────── */
+
+/* Dark + Indian */
+:root[data-convention="indian"],
+:root[data-convention="indian"][data-theme="dark"] {
+  --price-up: #f6525c;
+  --price-up-strong: #ff7a82;
+  --price-up-soft: rgba(246, 82, 92, 0.12);
+  --price-down: #2ebd85;
+  --price-down-strong: #3fd9a0;
+  --price-down-soft: rgba(46, 189, 133, 0.12);
+  --flash-up: rgba(246, 82, 92, 0.16);
+  --flash-down: rgba(46, 189, 133, 0.16);
+  --candle-up: #f6525c;
+  --candle-down: #2ebd85;
+}
+
+/* Light + Indian — down-green darkened to #1e9e6b for AA on white. */
+:root[data-convention="indian"][data-theme="light"] {
+  --price-up: #f6525c;
+  --price-up-strong: #f6525c;
+  --price-up-soft: rgba(246, 82, 92, 0.12);
+  --price-down: #1e9e6b;
+  --price-down-strong: #2ebd85;
+  --price-down-soft: rgba(30, 158, 107, 0.12);
+  --flash-up: rgba(246, 82, 92, 0.16);
+  --flash-down: rgba(30, 158, 107, 0.16);
+  --candle-up: #f6525c;
+  --candle-down: #1e9e6b;
 }
 
 * { box-sizing: border-box; }

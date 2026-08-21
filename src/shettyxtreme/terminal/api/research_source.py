@@ -99,11 +99,53 @@ class ProjectionDataSource:
             return None
         chg = info.get("change_pct")
         chg_txt = f"{chg:+.2f}%" if isinstance(chg, (int, float)) else "n/a"
-        return f"{key} ltp={ltp} change={chg_txt}"
+        parts = [f"{key} ltp={ltp} change={chg_txt}"]
+
+        # Merge primed options_chain data (spot/IV/OI) when available
+        chain_cache = getattr(self._state, "options_chain", None)
+        if chain_cache and isinstance(chain_cache, dict):
+            cached = chain_cache.get(key)
+            if cached and isinstance(cached, dict):
+                spot = cached.get("spot")
+                if spot is not None:
+                    parts.append(f"spot={spot}")
+                contracts = cached.get("contracts") or []
+                call_oi = 0
+                put_oi = 0
+                iv_values: list[float] = []
+                for row in contracts:
+                    if not isinstance(row, dict):
+                        continue
+                    raw_type = row.get("option_type") or row.get("drv_option_type")
+                    opt_type = str(raw_type or "").upper()
+                    try:
+                        oi = int(row.get("oi", 0) or 0)
+                    except (TypeError, ValueError):
+                        oi = 0
+                    if opt_type == "CE":
+                        call_oi += oi
+                    elif opt_type == "PE":
+                        put_oi += oi
+                    try:
+                        iv = float(row.get("iv"))
+                        if iv > 0:
+                            iv_values.append(iv)
+                    except (TypeError, ValueError):
+                        pass
+                if call_oi or put_oi:
+                    pcr = put_oi / call_oi if call_oi > 0 else 0.0
+                    parts.append(f"pcr={pcr:.2f} call_oi={call_oi} put_oi={put_oi}")
+                if iv_values:
+                    iv_avg = sum(iv_values) / len(iv_values)
+                    parts.append(f"iv={iv_avg:.1f}%")
+
+        return " ".join(parts)
 
     def regime_summary(self) -> str | None:
         proj = getattr(self._state, "intelligence_projection", None)
         if proj is None:
+            return None
+        if not proj.has_data():
             return None
         try:
             regime = proj.get_regime() or {}

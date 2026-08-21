@@ -93,7 +93,6 @@
 
 <aside
   class="drawer"
-  class:open
   tabindex="-1"
   bind:this={drawerEl}
   aria-label="Logs drawer"
@@ -126,7 +125,11 @@
 <style>
   /* Docked panel — level-1 hairline card inside the right dock. The internal
      overlay mode (<1440px) was removed in Phase 3 S6: the right-col overlay
-     drawer in App.svelte is the single overlay affordance now. */
+     drawer in App.svelte is the single overlay affordance now. Task 2.3:
+     visibility is controlled by RightDockTabs (the panel renders whenever the
+     "Logs" tab is active — no display:none gating, so a direct tab click can
+     never land on a blank panel). `open` tracks the dock state and is used
+     only for focus-on-open and the Esc/X close affordances. */
   .drawer {
     display: flex;
     flex-direction: column;
@@ -137,9 +140,6 @@
     border: 1px solid var(--hairline);
     border-radius: 6px;
     overflow: hidden;
-  }
-  .drawer:not(.open) {
-    display: none;
   }
   .drawer-head {
     display: flex;

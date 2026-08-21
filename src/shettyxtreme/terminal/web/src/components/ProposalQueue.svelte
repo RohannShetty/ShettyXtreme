@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { toast } from "svelte-sonner";
   import {
     approveProposal,
     executionMode,
@@ -9,8 +10,10 @@
     type Proposal,
     type RiskSummary,
   } from "../lib/api";
+  import { onMessage } from "../lib/ws";
   import { Badge, type BadgeVariant } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
   import {
     Dialog,
@@ -20,14 +23,30 @@
     DialogHeader,
     DialogTitle,
   } from "$lib/components/ui/dialog";
+  import {
+    Tabs,
+    TabsContent,
+    TabsList,
+    TabsTrigger,
+  } from "$lib/components/ui/tabs";
   import { RotateCw } from "@lucide/svelte";
 
-  const POLL_MS = 5000;
   // Matches the backend staleness threshold (STALENESS_THRESHOLD_SEC = 30.0);
   // proposals older than this get a warning STALE chip (DESIGN §4).
   const STALE_MS = 30_000;
 
+  type ProposalEvent = {
+    action: "created" | "approved" | "rejected" | "expired";
+    proposal: Proposal;
+  };
+
   let proposals = $state<Proposal[]>([]);
+  let history = $state<Proposal[]>([]);
+  let historyLoading = $state(false);
+  let historyError = $state("");
+  let activeTab = $state<"active" | "history">("active");
+  let historyStart = $state("");
+  let historyEnd = $state("");
   let mode = $state("OBSERVER");
   let csrfToken = $state<string | null>(null);
   let risk: RiskSummary | null = $state(null);
@@ -36,8 +55,8 @@
   let target: Proposal | null = $state(null);
   let busy = $state(false);
   let now = $state(Date.now());
-  let timer: ReturnType<typeof setInterval> | undefined;
   let nowTimer: ReturnType<typeof setInterval> | undefined;
+  let unsubscribeWs: (() => void) | undefined;
 
   let isLive = $derived(mode === "LIVE");
   // The backend refuses approvals in OBSERVER ("OBSERVER mode never places
@@ -45,17 +64,54 @@
   let canApprove = $derived(mode !== "OBSERVER");
 
   onMount(() => {
-    refresh();
-    timer = setInterval(() => refresh(), POLL_MS);
+    void refresh();
     nowTimer = setInterval(() => (now = Date.now()), 1000);
     window.addEventListener("keydown", onWindowKey);
+    unsubscribeWs = onMessage("proposal", handleProposalEvent);
   });
 
   onDestroy(() => {
-    if (timer) clearInterval(timer);
     if (nowTimer) clearInterval(nowTimer);
     window.removeEventListener("keydown", onWindowKey);
+    if (unsubscribeWs) unsubscribeWs();
   });
+
+  function handleProposalEvent(data: unknown): void {
+    const ev = data as ProposalEvent;
+    if (!ev || typeof ev.action !== "string" || !ev.proposal) return;
+    const p = ev.proposal;
+    switch (ev.action) {
+      case "created":
+        if (!proposals.some((x) => x.id === p.id) && p.status === "PENDING") {
+          proposals = [p, ...proposals];
+          toast.info(`New proposal: ${p.side} ${p.symbol}`, {
+            description: p.rationale ?? undefined,
+          });
+        }
+        break;
+      case "approved":
+        proposals = proposals.filter((x) => x.id !== p.id);
+        toast.success(`Proposal approved: ${p.side} ${p.symbol}`, {
+          description: `${fmtLots(p)} → ${p.status}`,
+        });
+        break;
+      case "rejected":
+        proposals = proposals.filter((x) => x.id !== p.id);
+        toast.error(`Proposal rejected: ${p.side} ${p.symbol}`, {
+          description: p.reason || "Rejected by operator",
+        });
+        break;
+      case "expired":
+        proposals = proposals.filter((x) => x.id !== p.id);
+        toast.warning(`Proposal expired: ${p.side} ${p.symbol}`, {
+          description: p.reason || "Signal validity window closed",
+        });
+        break;
+    }
+    if (activeTab === "history") {
+      void loadHistory();
+    }
+  }
 
   // Keyboard: Enter approves the open confirm dialog (Esc closes it — the
   // dialog primitive handles Escape → onOpenChange(false)).
@@ -68,17 +124,34 @@
   async function refresh(): Promise<void> {
     try {
       const [p, m, r] = await Promise.all([
-        getProposals(),
+        getProposals({ status: "PENDING" }),
         executionMode(),
         riskSummary().catch(() => null),
       ]);
-      proposals = p.filter((x) => x.status === "PENDING");
+      proposals = p;
       mode = m.mode;
       csrfToken = m.csrf_token;
       risk = r;
       error = "";
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  async function loadHistory(): Promise<void> {
+    if (activeTab !== "history") return;
+    historyLoading = true;
+    historyError = "";
+    try {
+      history = await getProposals({
+        status: ["APPROVED", "REJECTED", "EXPIRED"],
+        start: historyStart || undefined,
+        end: historyEnd || undefined,
+      });
+    } catch (err) {
+      historyError = err instanceof Error ? err.message : String(err);
+    } finally {
+      historyLoading = false;
     }
   }
 
@@ -96,10 +169,29 @@
     return level.slice("conviction-".length).toUpperCase();
   }
 
+  function statusVariant(status: string): BadgeVariant {
+    switch (status) {
+      case "APPROVED":
+        return "success";
+      case "REJECTED":
+        return "danger";
+      case "EXPIRED":
+        return "warning";
+      default:
+        return "info";
+    }
+  }
+
   function timeStr(ts: string | null): string {
     if (!ts) return "—";
     const d = new Date(ts);
     return isNaN(d.getTime()) ? "—" : d.toLocaleTimeString("en-IN", { hour12: false });
+  }
+
+  function dateStr(ts: string | null): string {
+    if (!ts) return "—";
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-IN");
   }
 
   function isStale(ts: string | null): boolean {
@@ -162,6 +254,13 @@
     }
   }
 
+  function fmtLots(p: Proposal): string {
+    if (p.lot_size && p.lot_size > 0 && p.lots && p.lots > 0) {
+      return `${p.lots} ${p.lots === 1 ? "lot" : "lots"} (${p.quantity} qty)`;
+    }
+    return `${p.quantity}`;
+  }
+
   // Indian grouping for all monetary values (en-IN lakh/crore), DESIGN §7.
   function fmtMoney(v: number | null | undefined): string {
     if (v === null || v === undefined || !isFinite(v)) return "—";
@@ -192,97 +291,209 @@
     </div>
   </header>
 
-  {#if mode === "OBSERVER"}
-    <p class="observer-note">
-      OBSERVER — proposals only. Nothing is placed automatically; switch to PAPER or LIVE to
-      execute.
-    </p>
-  {/if}
+  <Tabs value={activeTab} onValueChange={(v) => { if (v === "active" || v === "history") { activeTab = v; if (v === "history") void loadHistory(); } }} class="flex flex-col min-h-0 flex-1">
+    <TabsList class="mx-2 mt-2 w-auto justify-start">
+      <TabsTrigger value="active">Active</TabsTrigger>
+      <TabsTrigger value="history">History</TabsTrigger>
+    </TabsList>
 
-  {#if error}
-    <p class="error">{error}</p>
-  {:else if proposals.length === 0}
-    <p class="empty">
-      No pending proposals.
+    <TabsContent value="active" class="flex flex-col min-h-0 flex-1 mt-0">
       {#if mode === "OBSERVER"}
-        Signals will queue here for approval — nothing is ever placed automatically.
+        <p class="observer-note">
+          OBSERVER — proposals only. Nothing is placed automatically; switch to PAPER or LIVE to
+          execute.
+        </p>
       {/if}
-    </p>
-  {:else}
-    <ScrollArea class="min-h-0">
-      <div class="rows">
-        {#each proposals as p (p.id)}
-          {@const stale = isStale(p.timestamp)}
-          {@const conv = convictionVariant(p.conviction)}
-          <div
-            class="row"
-            tabindex="0"
-            role="button"
-            aria-label={`${p.symbol} ${p.side} ${p.quantity} — press Enter to review and approve`}
-            onkeydown={(e) => {
-              if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
-                e.preventDefault();
-                openConfirm(p);
-              }
-            }}
-          >
-            <div class="row-main">
-              <div class="line1">
-                <span class="sym mono">{p.symbol}</span>
-                <Badge
-                  class={p.side === "BUY"
-                    ? "border-price-up text-price-up"
-                    : "border-price-down text-price-down"}
-                >
-                  {p.side}
-                </Badge>
-                <Badge variant={conv}>{convictionLabel(conv)}</Badge>
-                {#if stale}
-                  <Badge class="border-warning text-warning">STALE</Badge>
-                {/if}
-                {#if p.hint_kind === "default"}
-                  <Badge class="border-warning text-warning">DEFAULT HINT</Badge>
-                {/if}
-              </div>
-              <div class="line2 mono">
-                <span>QTY <b>{p.quantity}</b></span>
-                <span>PRICE <b>{p.price != null ? fmtMoney(p.price) : "MKT"}</b></span>
-                <span>TYPE <b>{p.order_type}</b></span>
-                {#if stale && ageSeconds(p.timestamp) !== null}
-                  <span class="stale-time">{ageSeconds(p.timestamp)}s</span>
-                {:else}
-                  <span>{timeStr(p.timestamp)}</span>
-                {/if}
-              </div>
-            </div>
-            <div class="row-actions">
-              <Button
-                variant="default"
-                size="sm"
-                class="min-w-16"
-                disabled={busy || !canApprove}
-                title={canApprove
-                  ? "Approve and place this proposal"
-                  : "OBSERVER never places orders — switch to PAPER or LIVE to approve"}
-                onclick={() => openConfirm(p)}
+
+      {#if error}
+        <p class="error">{error}</p>
+      {:else if proposals.length === 0}
+        <p class="empty">
+          No pending proposals.
+          {#if mode === "OBSERVER"}
+            Signals will queue here for approval — nothing is ever placed automatically.
+          {/if}
+        </p>
+      {:else}
+        <ScrollArea class="min-h-0 flex-1">
+          <div class="rows">
+            {#each proposals as p (p.id)}
+              {@const stale = isStale(p.timestamp)}
+              {@const conv = convictionVariant(p.conviction)}
+              <div
+                class="row"
+                tabindex="0"
+                role="button"
+                aria-label={`${p.symbol} ${p.side} ${fmtLots(p)}${p.strike ? ` ${p.strike}${p.option_type || ""}` : ""} — press Enter to review and approve`}
+                onkeydown={(e) => {
+                  if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+                    e.preventDefault();
+                    openConfirm(p);
+                  }
+                }}
               >
-                APPROVE
-              </Button>
-              <Button
-                variant="danger"
-                size="sm"
-                class="min-w-16"
-                disabled={busy}
-                onclick={() => doReject(p)}
-              >
-                REJECT
-              </Button>
-            </div>
+                <div class="row-main">
+                  <div class="line1">
+                    <span class="sym mono">{p.symbol}</span>
+                    {#if p.strike}
+                      <span class="mono leg-strike">{p.strike}</span>
+                    {/if}
+                    {#if p.option_type}
+                      <Badge class={p.option_type === "CE" ? "border-option-call text-option-call" : "border-option-put text-option-put"}>
+                        {p.option_type}
+                      </Badge>
+                    {/if}
+                    {#if p.expiry}
+                      <span class="leg-expiry">{p.expiry}</span>
+                    {/if}
+                    <Badge
+                      class={p.side === "BUY"
+                        ? "border-side-buy text-side-buy"
+                        : "border-side-sell text-side-sell"}
+                    >
+                      {p.side}
+                    </Badge>
+                    <Badge variant={conv}>{convictionLabel(conv)}</Badge>
+                    {#if stale}
+                      <Badge class="border-warning text-warning">STALE</Badge>
+                    {/if}
+                    {#if p.hint_kind === "default"}
+                      <Badge class="border-warning text-warning">DEFAULT HINT</Badge>
+                    {/if}
+                  </div>
+                  <div class="line2 mono">
+                    <span>QTY <b>{fmtLots(p)}</b></span>
+                    {#if p.entry_premium}
+                      <span>ENTRY <b>{fmtMoney(p.entry_premium)}</b></span>
+                    {/if}
+                    <span>PRICE <b>{p.price != null ? fmtMoney(p.price) : "MKT"}</b></span>
+                    <span>TYPE <b>{p.order_type}</b></span>
+                    {#if p.stop_loss || p.target}
+                      <span class="leg-sltp">
+                        SL <b class="sl-val">{p.stop_loss ? fmtMoney(p.stop_loss) : "—"}</b>
+                        TGT <b class="tgt-val">{p.target ? fmtMoney(p.target) : "—"}</b>
+                      </span>
+                    {/if}
+                    {#if p.confidence !== null && p.confidence !== undefined}
+                      <span>CONF <b>{(p.confidence * 100).toFixed(0)}%</b></span>
+                    {/if}
+                    {#if p.ev_after_cost !== null && p.ev_after_cost !== undefined}
+                      <span>EV <b class={p.ev_after_cost > 0 ? "price-up-val" : "price-down-val"}>{fmtMoney(p.ev_after_cost)}</b></span>
+                    {/if}
+                    {#if stale && ageSeconds(p.timestamp) !== null}
+                      <span class="stale-time">{ageSeconds(p.timestamp)}s</span>
+                    {:else}
+                      <span>{timeStr(p.timestamp)}</span>
+                    {/if}
+                  </div>
+                  {#if p.rationale}
+                    <div class="line3" title={p.rationale}>{p.rationale}</div>
+                  {/if}
+                </div>
+                <div class="row-actions">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    class="min-w-16"
+                    disabled={busy || !canApprove}
+                    title={canApprove
+                      ? "Approve and place this proposal"
+                      : "OBSERVER never places orders — switch to PAPER or LIVE to approve"}
+                    onclick={() => openConfirm(p)}
+                  >
+                    APPROVE
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    class="min-w-16"
+                    disabled={busy}
+                    onclick={() => doReject(p)}
+                  >
+                    REJECT
+                  </Button>
+                </div>
+              </div>
+            {/each}
           </div>
-        {/each}
+        </ScrollArea>
+      {/if}
+    </TabsContent>
+
+    <TabsContent value="history" class="flex flex-col min-h-0 flex-1 mt-0">
+      <div class="history-controls">
+        <Input
+          type="date"
+          bind:value={historyStart}
+          aria-label="From date"
+          class="w-36"
+        />
+        <span class="date-sep">to</span>
+        <Input
+          type="date"
+          bind:value={historyEnd}
+          aria-label="To date"
+          class="w-36"
+        />
+        <Button
+          variant="secondary"
+          size="sm"
+          onclick={() => loadHistory()}
+          disabled={historyLoading}
+        >
+          {historyLoading ? "Loading…" : "Apply"}
+        </Button>
       </div>
-    </ScrollArea>
-  {/if}
+
+      {#if historyError}
+        <p class="error">{historyError}</p>
+      {:else if historyLoading && history.length === 0}
+        <p class="empty">Loading history…</p>
+      {:else if history.length === 0}
+        <p class="empty">No closed proposals in this range.</p>
+      {:else}
+        <ScrollArea class="min-h-0 flex-1">
+          <div class="rows">
+            {#each history as h (h.id)}
+              <div class="row history-row">
+                <div class="row-main">
+                  <div class="line1">
+                    <span class="sym mono">{h.symbol}</span>
+                    {#if h.strike}
+                      <span class="mono leg-strike">{h.strike}</span>
+                    {/if}
+                    {#if h.option_type}
+                      <Badge class={h.option_type === "CE" ? "border-option-call text-option-call" : "border-option-put text-option-put"}>
+                        {h.option_type}
+                      </Badge>
+                    {/if}
+                    <Badge
+                      class={h.side === "BUY"
+                        ? "border-side-buy text-side-buy"
+                        : "border-side-sell text-side-sell"}
+                    >
+                      {h.side}
+                    </Badge>
+                    <Badge variant={statusVariant(h.status)}>{h.status}</Badge>
+                  </div>
+                  <div class="line2 mono">
+                    <span>QTY <b>{fmtLots(h)}</b></span>
+                    <span>PRICE <b>{h.price != null ? fmtMoney(h.price) : "MKT"}</b></span>
+                    <span>TYPE <b>{h.order_type}</b></span>
+                    <span>DATE <b>{dateStr(h.timestamp)}</b></span>
+                    <span>TIME <b>{timeStr(h.timestamp)}</b></span>
+                  </div>
+                  {#if h.reason}
+                    <div class="line3" title={h.reason}>{h.reason}</div>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+        </ScrollArea>
+      {/if}
+    </TabsContent>
+  </Tabs>
 
   {#if feedback}
     <p class="feedback" class:bad={feedback.includes("-> REJECTED") || feedback.length > 60}>{feedback}</p>
@@ -306,16 +517,43 @@
 
       <div class="summary mono">
         <div class="sum-row"><span>SYMBOL</span><b>{target.symbol}</b></div>
-        <div class="sum-row"><span>SIDE</span><b class={target.side === "BUY" ? "up" : "down"}>{target.side}</b></div>
-        <div class="sum-row"><span>QUANTITY</span><b>{target.quantity}</b></div>
+        {#if target.strike}
+          <div class="sum-row"><span>STRIKE</span><b class="mono">{target.strike}</b></div>
+        {/if}
+        {#if target.option_type}
+          <div class="sum-row"><span>TYPE</span><b class={target.option_type === "CE" ? "call-val" : "put-val"}>{target.option_type}</b></div>
+        {/if}
+        {#if target.expiry}
+          <div class="sum-row"><span>EXPIRY</span><b>{target.expiry}</b></div>
+        {/if}
+        <div class="sum-row"><span>SIDE</span><b class={target.side === "BUY" ? "buy-val" : "sell-val"}>{target.side}</b></div>
+        <div class="sum-row"><span>QUANTITY</span><b>{fmtLots(target)}</b></div>
+        {#if target.entry_premium}
+          <div class="sum-row"><span>ENTRY</span><b>{fmtMoney(target.entry_premium)}</b></div>
+        {/if}
         <div class="sum-row"><span>PRICE</span><b>{target.price != null ? fmtMoney(target.price) : "MARKET"}</b></div>
         <div class="sum-row"><span>ORDER TYPE</span><b>{target.order_type}</b></div>
         <div class="sum-row"><span>PRODUCT</span><b>{target.product}</b></div>
+        {#if target.stop_loss || target.target}
+          <div class="sum-row"><span>SL / TGT</span><b><span class="sl-val">{target.stop_loss ? fmtMoney(target.stop_loss) : "—"}</span> / <span class="tgt-val">{target.target ? fmtMoney(target.target) : "—"}</span></b></div>
+        {/if}
+        {#if target.confidence !== null && target.confidence !== undefined}
+          <div class="sum-row"><span>CONFIDENCE</span><b>{(target.confidence * 100).toFixed(0)}%</b></div>
+        {/if}
+        {#if target.ev_after_cost !== null && target.ev_after_cost !== undefined}
+          <div class="sum-row"><span>EV AFTER COST</span><b class={target.ev_after_cost > 0 ? "price-up-val" : "price-down-val"}>{fmtMoney(target.ev_after_cost)}</b></div>
+        {/if}
+        {#if target.strategy}
+          <div class="sum-row"><span>STRATEGY</span><b>{target.strategy}</b></div>
+        {/if}
+        {#if target.rationale}
+          <div class="sum-row"><span>RATIONALE</span><b class="rationale-text">{target.rationale}</b></div>
+        {/if}
       </div>
 
       {#if risk}
         <div class="summary mono risk">
-          <div class="sum-row"><span>DAILY P&L</span><b class={risk.daily_pnl >= 0 ? "up" : "down"}>{fmtMoney(risk.daily_pnl)}</b></div>
+          <div class="sum-row"><span>DAILY P&L</span><b class={risk.daily_pnl >= 0 ? "price-up-val" : "price-down-val"}>{fmtMoney(risk.daily_pnl)}</b></div>
           <div class="sum-row"><span>MARGIN USED</span><b>{fmtMoney(risk.margin_used)}</b></div>
           <div class="sum-row"><span>MARGIN AVAIL</span><b>{risk.margin_available !== null ? fmtMoney(risk.margin_available) : "—"}</b></div>
           <div class="sum-row"><span>LOSS LIMIT</span><b class={risk.loss_limit_hit ? "down" : ""}>{fmtMoney(risk.loss_limit)}</b></div>
@@ -335,7 +573,7 @@
           onclick={confirmApprove}
           disabled={busy}
         >
-          Confirm {target.side} {target.quantity} {target.symbol}
+          Confirm {target.side} {fmtLots(target)} {target.symbol}{target.strike ? ` ${target.strike}${target.option_type || ""}` : ""}
         </Button>
       </DialogFooter>
     </DialogContent>
@@ -434,6 +672,17 @@
     letter-spacing: 0.04em;
     padding: 6px 10px;
   }
+  .history-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .date-sep {
+    font-size: 12px;
+    color: var(--muted);
+  }
   .rows {
     display: flex;
     flex-direction: column;
@@ -447,6 +696,9 @@
     border-bottom: 1px solid var(--hairline);
     /* Keyboard-first: Enter/Space on a focused row opens its confirm dialog. */
     border-radius: 4px;
+  }
+  .history-row {
+    cursor: default;
   }
   .row:hover {
     background: var(--row-hover);
@@ -487,6 +739,40 @@
   .stale-time {
     color: var(--warning);
     font-weight: 600;
+  }
+  .leg-strike {
+    color: var(--ink);
+    font-weight: 600;
+    font-size: 11px;
+  }
+  .leg-expiry {
+    color: var(--muted);
+    font-size: 10px;
+  }
+  .leg-sltp {
+    display: inline-flex;
+    gap: 4px;
+  }
+  .leg-sltp b {
+    font-weight: 600;
+  }
+  .line3 {
+    font-size: 10px;
+    color: var(--faint);
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .rationale-text {
+    font-weight: 400;
+    font-size: 10px;
+    line-height: 1.4;
+    max-height: 2.8em;
+    overflow: hidden;
   }
   .row-actions {
     display: flex;
@@ -546,12 +832,14 @@
     font-weight: 500;
     font-variant-numeric: tabular-nums;
   }
-  .sum-row b.up {
-    color: var(--price-up);
-  }
-  .sum-row b.down {
-    color: var(--price-down);
-  }
+  .price-up-val { color: var(--price-up); }
+  .price-down-val { color: var(--price-down); }
+  .call-val { color: var(--option-call); }
+  .put-val { color: var(--option-put); }
+  .buy-val { color: var(--side-buy); }
+  .sell-val { color: var(--side-sell); }
+  .sl-val { color: var(--sl-level); }
+  .tgt-val { color: var(--tgt-level); }
   .risk-alert {
     margin: 0;
     background: color-mix(in srgb, var(--danger) 10%, var(--surface-card));

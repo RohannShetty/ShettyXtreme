@@ -50,6 +50,7 @@ class SettingsUpdate(BaseModel):
     loss_limit: float | None = None
     max_positions: int | None = None
     theme: str | None = None
+    color_convention: str | None = None
 
 
 class SchedulerUpdate(BaseModel):
@@ -77,6 +78,7 @@ class SettingsResponse(BaseModel):
     loss_limit: float
     max_positions: int
     theme: str
+    color_convention: str
     scheduler: SchedulerResponse
 
 
@@ -86,6 +88,22 @@ class ThemeResponse(BaseModel):
 
 class ThemeUpdate(BaseModel):
     theme: str
+
+
+class ColorConventionResponse(BaseModel):
+    color_convention: str
+
+
+class ColorConventionUpdate(BaseModel):
+    color_convention: str
+
+
+class ScannerThresholdsResponse(BaseModel):
+    scanner_thresholds: dict[str, dict[str, float]]
+
+
+class ScannerThresholdsUpdate(BaseModel):
+    scanner_thresholds: dict[str, dict[str, float]]
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -106,6 +124,7 @@ def _settings_response(store: SettingsStore) -> SettingsResponse:
         loss_limit=store.loss_limit(),
         max_positions=store.max_positions(),
         theme=store.theme(),
+        color_convention=store.color_convention(),
         scheduler=_scheduler_snapshot(store),
     )
 
@@ -238,6 +257,58 @@ async def update_theme(payload: ThemeUpdate) -> ThemeResponse:
     theme = store.theme()
     await ws_bridge.broadcast("theme", {"theme": theme})
     return ThemeResponse(theme=theme)
+
+
+# ── Color convention ──────────────────────────────────────────────────────
+@router.get("/color-convention", response_model=ColorConventionResponse)
+async def get_color_convention() -> ColorConventionResponse:
+    """Return the current color convention (indian / international)."""
+    return ColorConventionResponse(color_convention=get_settings_store().color_convention())
+
+
+@router.put("/color-convention", response_model=ColorConventionResponse)
+async def update_color_convention(payload: ColorConventionUpdate) -> ColorConventionResponse:
+    """Set the color convention and broadcast it to connected WS clients."""
+    store = get_settings_store()
+    try:
+        store.update({"color_convention": payload.color_convention})
+    except SettingsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    conv = store.color_convention()
+    await ws_bridge.broadcast("color-convention", {"color_convention": conv})
+    return ColorConventionResponse(color_convention=conv)
+
+
+# ── Scanner thresholds (Phase 3A.1) ────────────────────────────────────────
+@router.get("/scanner-thresholds", response_model=ScannerThresholdsResponse)
+async def get_scanner_thresholds() -> ScannerThresholdsResponse:
+    """Return current per-scanner threshold overrides.
+
+    Empty dict means every scanner runs with its built-in defaults.
+    """
+    return ScannerThresholdsResponse(scanner_thresholds=get_settings_store().scanner_thresholds())
+
+
+@router.put("/scanner-thresholds", response_model=ScannerThresholdsResponse)
+async def update_scanner_thresholds(
+    payload: ScannerThresholdsUpdate,
+    request: Request,
+) -> ScannerThresholdsResponse:
+    """Set per-scanner threshold overrides and broadcast them via WS.
+
+    Shape is validated by the store (scanner_type → param → number); the
+    param names are checked against ``SCANNER_THRESHOLD_SPECS`` when the
+    scanners are next (re)instantiated. Invalid shape → 400, store untouched.
+    """
+    store = get_settings_store()
+    try:
+        store.update({"scanner_thresholds": payload.scanner_thresholds})
+    except SettingsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    thresholds = store.scanner_thresholds()
+    await _announce_changes(request, {"scanner_thresholds": thresholds}, store)
+    await ws_bridge.broadcast("scanner-thresholds", {"scanner_thresholds": thresholds})
+    return ScannerThresholdsResponse(scanner_thresholds=thresholds)
 
 
 # ── Research scheduler ─────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ from shettyxtreme.core.settings import (
     DEFAULT_LOSS_LIMIT,
     DEFAULT_MAX_POSITIONS,
     DEFAULT_THEME,
+    DEFAULT_COLOR_CONVENTION,
     SettingsError,
     SettingsStore,
     get_settings_store,
@@ -76,6 +77,21 @@ class TestValidation:
             store.update({"theme": "blue"})
         store.update({"theme": "light"})
         assert store.theme() == "light"
+        store.close()
+
+    def test_color_convention_default_is_international(self, tmp_path) -> None:
+        store = SettingsStore(tmp_path / "settings.db")
+        assert store.color_convention() == DEFAULT_COLOR_CONVENTION == "international"
+        store.close()
+
+    def test_color_convention_must_be_indian_or_international(self, tmp_path) -> None:
+        store = SettingsStore(tmp_path / "settings.db")
+        with pytest.raises(SettingsError):
+            store.update({"color_convention": "murican"})
+        store.update({"color_convention": "indian"})
+        assert store.color_convention() == "indian"
+        store.update({"color_convention": "international"})
+        assert store.color_convention() == "international"
         store.close()
 
     def test_scheduler_interval_validated(self, tmp_path) -> None:

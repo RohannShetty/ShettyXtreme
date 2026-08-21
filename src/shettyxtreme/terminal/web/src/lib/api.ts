@@ -1,6 +1,7 @@
 /** Typed fetch helpers for the ShettyXtreme Terminal API. */
 
 import type { Theme } from "./theme";
+import type { ColorConvention } from "./color-convention";
 
 type JsonError = { detail?: unknown; message?: string };
 
@@ -220,6 +221,26 @@ export type KnowledgeSyncResponse = {
   error: string | null;
 };
 
+// --- Symbol Search (P1-2.3) ---
+
+export type SymbolSearchHit = {
+  internal_symbol: string;
+  fyers_symbol: string;
+  exchange: string;
+  instrument_type: string;
+  expiry: string | null;
+  strike: number | null;
+  option_type: string | null;
+  lot_size: number | null;
+  tick_size: number | null;
+};
+
+export type SymbolSearchResponse = {
+  query: string;
+  canonical: string;
+  hits: SymbolSearchHit[];
+};
+
 // --- Analytics (Phase 4) ---
 
 export type CalibrationPoint = {
@@ -249,6 +270,85 @@ export type ScorecardResponse = {
   calibration: CalibrationPoint[];
   current_regime: string | null;
 };
+
+// --- Analytics history (Phase 3B.3) ---
+
+export type IVRankHistoryPoint = {
+  timestamp: string;
+  iv_rank_percent: number;
+  iv_classification: string;
+};
+
+export type PCRHistoryPoint = {
+  timestamp: string;
+  pcr: number;
+  total_call_oi: number;
+  total_put_oi: number;
+};
+
+export type MaxPainHistoryPoint = {
+  timestamp: string;
+  max_pain: number;
+  spot_price: number | null;
+};
+
+export type RegimeHistoryPoint = {
+  timestamp: string;
+  regime: string;
+  confidence: number;
+  adx: number | null;
+};
+
+export type ExportFormat = "csv" | "json";
+
+export async function getIVRankHistory(
+  symbol: string,
+  days: number = 30,
+): Promise<IVRankHistoryPoint[]> {
+  const params = new URLSearchParams({ symbol, days: String(days) });
+  return get<IVRankHistoryPoint[]>(`/api/analytics/iv-rank-history?${params}`);
+}
+
+export async function getPCRHistory(
+  symbol: string,
+  days: number = 30,
+): Promise<PCRHistoryPoint[]> {
+  const params = new URLSearchParams({ symbol, days: String(days) });
+  return get<PCRHistoryPoint[]>(`/api/analytics/pcr-history?${params}`);
+}
+
+export async function getMaxPainHistory(
+  symbol: string,
+  days: number = 30,
+): Promise<MaxPainHistoryPoint[]> {
+  const params = new URLSearchParams({ symbol, days: String(days) });
+  return get<MaxPainHistoryPoint[]>(`/api/analytics/max-pain-history?${params}`);
+}
+
+export async function getRegimeHistory(days: number = 30): Promise<RegimeHistoryPoint[]> {
+  const params = new URLSearchParams({ days: String(days) });
+  return get<RegimeHistoryPoint[]>(`/api/analytics/regime-history?${params}`);
+}
+
+export async function exportAnalytics(
+  format: ExportFormat,
+  symbol: string,
+  days: number = 30,
+): Promise<Blob> {
+  const path = `/api/analytics/export?format=${format}&symbol=${encodeURIComponent(symbol)}&days=${days}`;
+  let resp: Response;
+  try {
+    resp = await fetchWithTimeout(path, { method: "GET", credentials: "same-origin" });
+  } catch (err) {
+    if (isAbortError(err)) throw new Error("Request timeout");
+    throw new Error(`Network error reaching ${path}`);
+  }
+  if (!resp.ok) {
+    throw new Error(await describeError(resp));
+  }
+  return resp.blob();
+}
+
 export type SessionRecord = {
   session_id: string;
   started_at: string;
@@ -326,6 +426,64 @@ export type Proposal = {
   status: string; // PENDING / APPROVED / REJECTED / EXPIRED
   reason: string;
   timestamp: string | null;
+  strike: number | null;
+  expiry: string | null;
+  option_type: string | null; // CE / PE
+  lot_size: number | null;
+  lots: number | null;
+  entry_premium: number | null;
+  stop_loss: number | null;
+  target: number | null;
+  rationale: string | null;
+  // Enriched fields (P3-4.3): strategy context from chain hint builder.
+  confidence: number | null;
+  ev_after_cost: number | null;
+  strategy: string | null;
+  underlying: string | null;
+};
+
+// P3-4.3: order history type for the Orders tab.
+export type OrderRecord = {
+  order_id: string;
+  symbol: string;
+  exchange: string;
+  side: string;
+  order_type: string;
+  quantity: number;
+  price: number;
+  status: string; // FILLED / REJECTED / CANCELLED / OPEN / PARTIALLY_FILLED
+  filled_quantity: number;
+  average_price: number;
+  tag: string | null;
+  created_at: string | null;
+  // Option identity + trade context (P3-4.3).
+  strike: number | null;
+  expiry: string | null;
+  option_type: string | null;
+  lot_size: number | null;
+  stop_loss: number | null;
+  target: number | null;
+  rationale: string | null;
+  confidence: number | null;
+};
+
+// Phase 4: order cancellation response.
+export type CancelOrderResponse = {
+  order_id: string;
+  cancelled: boolean;
+  status: string;
+  message: string;
+};
+
+// Phase 4: closed position reconstructed from the trade ledger.
+export type ClosedPositionRecord = {
+  symbol: string;
+  entry_price: number;
+  exit_price: number;
+  quantity: number;
+  realized_pnl: number;
+  opened_at: string | null;
+  closed_at: string | null;
 };
 
 export type ExecutionMode = { mode: string; csrf_token: string | null };
@@ -353,9 +511,24 @@ export async function approveProposal(
   );
 }
 
-export async function getProposals(status?: string): Promise<Proposal[]> {
-  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
-  return get<Proposal[]>(`/api/execution/proposals${qs}`);
+export type ProposalStatus = "PENDING" | "APPROVED" | "REJECTED" | "EXPIRED";
+
+export type ProposalsQuery = {
+  status?: ProposalStatus | ProposalStatus[];
+  start?: string;
+  end?: string;
+};
+
+export async function getProposals(query?: ProposalsQuery): Promise<Proposal[]> {
+  const q = new URLSearchParams();
+  if (query?.status) {
+    const statuses = Array.isArray(query.status) ? query.status : [query.status];
+    for (const s of statuses) q.append("status", s);
+  }
+  if (query?.start) q.set("start", query.start);
+  if (query?.end) q.set("end", query.end);
+  const qs = q.toString();
+  return get<Proposal[]>(`/api/execution/proposals${qs ? "?" + qs : ""}`);
 }
 
 export async function rejectProposal(id: string, reason = ""): Promise<Proposal> {
@@ -369,6 +542,191 @@ export async function executionMode(): Promise<ExecutionMode> {
 
 export async function riskSummary(): Promise<RiskSummary> {
   return get<RiskSummary>("/api/execution/risk");
+}
+
+// --- Execution: greeks history + risk heatmap (Phase 3B.4) ---
+
+export type GreeksHistoryPoint = {
+  timestamp: string;
+  net_delta: number;
+  net_gamma: number;
+  net_theta: number;
+  net_vega: number;
+  position_count: number;
+};
+
+export type RiskSectorExposure = {
+  sector: string;
+  notional: number;
+  pnl: number;
+  share_pct: number;
+};
+
+export type RiskGreeksBreakdown = {
+  long_val: number;
+  short_val: number;
+  net: number;
+};
+
+export type RiskGreeksConcentration = {
+  delta: RiskGreeksBreakdown;
+  gamma: RiskGreeksBreakdown;
+  theta: RiskGreeksBreakdown;
+  vega: RiskGreeksBreakdown;
+  lopsided_warning: string | null;
+};
+
+export type RiskScenarioPosition = {
+  symbol: string;
+  pnl: number;
+};
+
+export type RiskScenarioPnl = {
+  shift_pct: number;
+  total_pnl: number;
+  per_position?: RiskScenarioPosition[];
+};
+
+export type RiskStress = {
+  scenarios: RiskScenarioPnl[];
+  worst_case_pnl: number;
+  worst_case_shift: number;
+};
+
+export type RiskMarginUtilization = {
+  margin_used: number | null;
+  margin_available: number | null;
+  total: number | null;
+  utilization_pct: number | null;
+  breach: boolean;
+};
+
+export type RiskHeatmapData = {
+  sector_exposure: RiskSectorExposure[];
+  greeks: RiskGreeksConcentration;
+  stress: RiskStress;
+  margin: RiskMarginUtilization;
+  position_count: number;
+  enriched_count: number;
+};
+
+export async function getGreeksHistory(days = 7, regime?: string): Promise<GreeksHistoryPoint[]> {
+  const params = new URLSearchParams({ days: String(days) });
+  if (regime) params.set("regime", regime);
+  return get<GreeksHistoryPoint[]>(`/api/execution/greeks-history?${params}`);
+}
+
+export async function getRiskHeatmap(): Promise<RiskHeatmapData> {
+  return get<RiskHeatmapData>("/api/execution/risk/heatmap");
+}
+
+// P3-4.3: order history from the paper trading engine.
+export async function getOrders(status?: string): Promise<OrderRecord[]> {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  return get<OrderRecord[]>(`/api/execution/orders${qs}`);
+}
+
+// Phase 4: cancel an order.
+export async function cancelOrder(orderId: string): Promise<CancelOrderResponse> {
+  return post<CancelOrderResponse>(`/api/execution/orders/${encodeURIComponent(orderId)}/cancel`);
+}
+
+// Phase 4: export orders as CSV/JSON.
+export async function exportOrders(
+  format: ExportFormat,
+  days: number = 30,
+  fileName?: string,
+): Promise<File> {
+  const path = `/api/execution/orders/export?format=${format}&days=${days}`;
+  let resp: Response;
+  try {
+    resp = await fetchWithTimeout(path, { method: "GET", credentials: "same-origin" });
+  } catch (err) {
+    if (isAbortError(err)) throw new Error("Request timeout");
+    throw new Error(`Network error reaching ${path}`);
+  }
+  if (!resp.ok) {
+    throw new Error(await describeError(resp));
+  }
+  const blob = await resp.blob();
+  // If the server supplies a filename, prefer it; otherwise fall back to the caller.
+  const disposition = resp.headers.get("content-disposition") || "";
+  const match = /filename="?([^";]+)"?/.exec(disposition);
+  const name = match?.[1] || fileName || `orders_export.${format}`;
+  return new File([blob], name, { type: blob.type });
+}
+
+// Phase 4: close an open position with an opposite-side market order.
+export async function closePosition(symbol: string): Promise<OrderRecord> {
+  return post<OrderRecord>(`/api/execution/positions/${encodeURIComponent(symbol)}/close`);
+}
+
+// Phase 4: closed position history from the trade ledger.
+export async function getPositionHistory(days: number = 30): Promise<ClosedPositionRecord[]> {
+  return get<ClosedPositionRecord[]>(`/api/execution/positions/history?days=${days}`);
+}
+
+// --- Intelligence: hints & proposals (Phase 3) ---
+
+export type StrategyHint = {
+  direction: string;
+  strategy: string | null;
+  strike: number | null;
+  premium: number | null;
+  ev_after_cost: number | null;
+  rationale: string;
+  expiry: string | null;
+  option_type: string | null;
+  lot_size: number | null;
+  lots: number | null;
+  entry_premium: number | null;
+  stop_loss: number | null;
+  target: number | null;
+  confidence: number | null;
+};
+
+export type ProposeFromHintRequest = {
+  symbol: string;
+  direction: string;
+  strike: number | null;
+  premium: number | null;
+  expiry: string | null;
+  option_type: string | null;
+  lot_size: number | null;
+  lots: number | null;
+  stop_loss: number | null;
+  target: number | null;
+  rationale: string | null;
+  confidence: number | null;
+  conviction?: number | null;
+  quantity?: number | null;
+};
+
+export type RegimeHintStats = {
+  win_rate: number | null;
+  avg_pnl: number | null;
+  sample_size: number;
+};
+
+export type HintStatsResponse = {
+  win_rate: number | null;
+  avg_pnl: number | null;
+  sample_size: number;
+  total_hints: number;
+  days: number;
+  regime_breakdown: Record<string, RegimeHintStats>;
+};
+
+export async function getStrategyHint(): Promise<StrategyHint> {
+  return get<StrategyHint>("/api/intelligence/strategy-hint");
+}
+
+export async function proposeFromHint(payload: ProposeFromHintRequest): Promise<Proposal> {
+  return postBody<Proposal>("/api/intelligence/propose-from-hint", payload);
+}
+
+export async function getHintStats(days = 30): Promise<HintStatsResponse> {
+  return get<HintStatsResponse>(`/api/intelligence/hint-stats?days=${days}`);
 }
 
 // --- Market: intraday bars (T2) ---
@@ -398,6 +756,52 @@ export async function getMarketBars(
   return get<MarketBarsResponse>(`/api/market/bars?${q}`);
 }
 
+// --- Scanner (Phase 3A.1 / 3B.1) ---
+
+export type ScannerFinding = {
+  scanner_type: string;
+  symbol: string;
+  severity: string;
+  detail: Record<string, unknown>;
+  timestamp: string | null;
+};
+
+export type ScannerThresholdsResponse = {
+  scanner_thresholds: Record<string, Record<string, number>>;
+};
+
+export type ScannerThresholdsUpdate = {
+  scanner_thresholds: Record<string, Record<string, number>>;
+};
+
+export type ScannerHistoryFilters = {
+  scanner_type?: string;
+  since?: string;
+  severity?: string;
+  limit?: number;
+};
+
+export async function getScannerThresholds(): Promise<ScannerThresholdsResponse> {
+  return get<ScannerThresholdsResponse>("/api/settings/scanner-thresholds");
+}
+
+export async function updateScannerThresholds(
+  thresholds: Record<string, Record<string, number>>,
+): Promise<ScannerThresholdsResponse> {
+  return putBody<ScannerThresholdsResponse>("/api/settings/scanner-thresholds", {
+    scanner_thresholds: thresholds,
+  });
+}
+
+export async function getScannerHistory(filters: ScannerHistoryFilters = {}): Promise<ScannerFinding[]> {
+  const q = new URLSearchParams();
+  if (filters.scanner_type) q.set("scanner_type", filters.scanner_type);
+  if (filters.since) q.set("since", filters.since);
+  if (filters.limit) q.set("limit", String(filters.limit));
+  const qs = q.toString();
+  return get<ScannerFinding[]>(`/api/scanner/findings/history${qs ? "?" + qs : ""}`);
+}
+
 // --- Settings (Phase 7 W3, settings_router.py) ---
 
 export type SettingsScheduler = {
@@ -416,6 +820,7 @@ export type SettingsResponse = {
   loss_limit: number;
   max_positions: number;
   theme: Theme;
+  color_convention: ColorConvention;
   scheduler: SettingsScheduler;
 };
 
@@ -423,6 +828,7 @@ export type SettingsUpdate = {
   loss_limit?: number;
   max_positions?: number;
   theme?: Theme;
+  color_convention?: ColorConvention;
 };
 
 export type SchedulerUpdate = {
@@ -433,6 +839,8 @@ export type SchedulerUpdate = {
 };
 
 export type ThemeResponse = { theme: Theme };
+
+export type ColorConventionResponse = { color_convention: ColorConvention };
 
 export async function getSettings(): Promise<SettingsResponse> {
   return get<SettingsResponse>("/api/settings");
@@ -446,10 +854,93 @@ export async function setTheme(theme: Theme): Promise<ThemeResponse> {
   return putBody<ThemeResponse>("/api/settings/theme", { theme });
 }
 
+export async function setColorConvention(convention: ColorConvention): Promise<ColorConventionResponse> {
+  return putBody<ColorConventionResponse>("/api/settings/color-convention", { color_convention: convention });
+}
+
 export async function getScheduler(): Promise<SettingsScheduler> {
   return get<SettingsScheduler>("/api/settings/scheduler");
 }
 
 export async function updateScheduler(update: SchedulerUpdate): Promise<SettingsScheduler> {
   return putBody<SettingsScheduler>("/api/settings/scheduler", update);
+}
+
+// ── V2 API types and functions ────────────────────────────────────────────
+// These provide access to the new v2 endpoints with enriched metadata.
+// v1 functions remain unchanged for backward compatibility.
+
+export type APIVersionInfo = {
+  version: string;
+  release_date: string;
+  deprecated: string[];
+  migration_guide: string;
+};
+
+export type WatchlistItemV2 = {
+  symbol: string;
+  exchange: string;
+  ltp: number;
+  change_pct: number;
+  volume: number;
+  timestamp: string | null;
+  security_id: string | null;
+  expiry: string | null;
+  lot_size: number | null;
+  // V2 additions
+  instrument_type: string | null;
+  bid: number | null;
+  ask: number | null;
+  oi: number | null;
+  is_tradable: boolean;
+};
+
+export type OptionsChainItemV2 = {
+  strike: number;
+  option_type: "CE" | "PE";
+  ltp: number;
+  iv: number;
+  delta: number;
+  gamma: number;
+  theta: number;
+  vega: number;
+  oi: number;
+  volume: number;
+  bid: number;
+  ask: number;
+  // V2 additions
+  spot_distance_pct: number | null;
+  open_interest_change: number | null;
+};
+
+export type OptionsChainResponseV2 = {
+  underlying: string;
+  expiry: string;
+  timestamp: string | null;
+  spot: number | null;
+  contracts: OptionsChainItemV2[];
+  // V2 additions: aggregate analytics
+  max_pain: number | null;
+  pcr: number | null;
+  iv_rank_percent: number | null;
+};
+
+/** Get API version info and migration metadata. */
+export async function getAPIVersion(): Promise<APIVersionInfo> {
+  return get<APIVersionInfo>("/api/v2/version");
+}
+
+/** Get watchlist with v2 enriched metadata. */
+export async function getWatchlistV2(): Promise<WatchlistItemV2[]> {
+  return get<WatchlistItemV2[]>("/api/v2/watchlist");
+}
+
+/** Get options chain with v2 aggregate analytics. */
+export async function getOptionsChainV2(
+  symbol: string = "NIFTY",
+  expiry?: string,
+): Promise<OptionsChainResponseV2> {
+  const params = new URLSearchParams({ symbol });
+  if (expiry) params.set("expiry", expiry);
+  return get<OptionsChainResponseV2>(`/api/v2/options/chain?${params}`);
 }

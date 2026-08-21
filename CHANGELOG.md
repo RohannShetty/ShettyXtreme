@@ -1,5 +1,73 @@
 # ShettyXtreme Changelog
 
+## v0.16.0 — Complete Frontend + Backend API Refactor (2026-08-13)
+
+Suite: **1823 passed / 0 failed / 1 skipped** (was 1629 at Phase 2, 1012 at v0.12.0 baseline). Full-stack refactor: foundation, critical fixes, intelligence, and execution.
+
+### Phase 1: Foundation (Consolidate + Extend)
+- Added 8 missing shadcn-svelte primitives (alert, popover, switch, slider, sheet, progress, radio-group, collapsible)
+- Introduced `/api/v2` namespace with versioned API contracts
+- Migrated legacy Svelte stores to Svelte 5 runes
+- Extracted App.svelte shell into modular router + layout components
+- Version alignment across all files to 0.16.0
+
+### Phase 2: Critical Features
+- Fixed watchlist STALE state bug — seeded `lastSeenMs` from REST hydration timestamp, stamped `timestamp` on backend hydration, fixed tick-race condition
+- Fixed option chain stale-expiry bug — cleared stale expiry on symbol change, stashed pre-load ticks in `pendingTicks`, added stale-response guard + 5s `live` recompute
+- Fixed log drawer toggle — header button now drives `dockLogsTick` → `RightDockTabs` Logs tab activation; removed `display:none` gating
+- Fixed SERP dropdown transparency — replaced hand-rolled list with portaled shadcn Popover (`z-50`), fixed invalid `var(--surface)` → `--canvas-raised`/`--surface-elevated`, removed 200ms blur hack
+- Redesigned Research & Knowledge panels — shadcn Card/Tabs/ScrollArea/Badge, status/category filtering, skeleton loading, responsive container queries, design-token compliant
+
+### Phase 3: Intelligence Features
+
+#### Backend (3A)
+- Scanner infrastructure: 11 scanners operational, configurable thresholds, WS alerts
+- Hints → Proposals: one-click generation, accuracy tracking
+- Analytics history: IV rank, PCR, max pain, regime time-series + export
+- Greeks history: portfolio greeks recording
+
+#### Frontend (3B)
+- Scanner Panel: threshold config, WS alerts, history view
+- Hints Panel: proposal generation, accuracy stats
+- Analytics Panel: IV rank/PCR/max pain/regime charts, export
+- Greeks Panel: greeks history charts, risk metrics
+
+#### Integration (3C)
+- Cross-panel integration
+- Performance & UX polish
+
+### Phase 4: Execution Features
+
+#### Backend
+- Order cancellation/export endpoints (`POST /api/execution/orders/{order_id}/cancel`, `GET /api/execution/orders/export?format=csv|json&days=30`)
+- Position close/history endpoints (`POST /api/execution/positions/{symbol}/close`, `GET /api/execution/positions/history?days=30` via `TradeLedger` FIFO pairing)
+- WebSocket topics: `proposal` (`created|approved|rejected|expired`) and `order` (`placed|filled|rejected|cancelled`) via `ProposalProjection`/`OrderWSProjection`
+- Live P&L tracking — `PositionProjection` tick subscription + `LivePnlTracker` debounce (1s time gate + 1% noise gate), 5s broker sync loop
+- Scanner→Proposal bridge — severity gate, scanner-type allowlist, per-(scanner,symbol) cooldown dedup (900s), `scanner_proposal_bridge` config (disabled by default), OBSERVER-first safety
+- Durable proposal history — `_load_approvals()` restores ALL statuses (PENDING/APPROVED/REJECTED/EXPIRED), `pending_approvals` table as history, stale PENDING expiry on next listing
+
+#### Frontend
+- ProposalQueue: WS updates (subscribe `proposal` topic, lifecycle toasts, polling removed), history view (Active | History tabs, `status=APPROVED&REJECTED&EXPIRED` + date filters)
+- RiskHeatmap: stress drill-down (Collapsible rows, per-position P&L table with impact bars, Indian convention coloring)
+- OrderHistory: cancel (OPEN/PARTIALLY_FILLED → confirm Dialog → `POST .../cancel`), export (CSV/JSON + 7/30/90d → `Content-Disposition` download), WS updates (`order` topic + 10s polling fallback)
+- PositionsRiskStrip: close (per-position close button → confirm Dialog → `POST .../close`), history (Open | History tabs, `GET .../history`), live P&L (WS `position` topic, 150ms row flash, JetBrains Mono numerals)
+
+## [2026-08-12] — v0.15.0: Color Convention Toggle (P5 EXTERNAL)
+
+Suite: **TBD passed / 0 failed / 0 skipped**. Price color convention is now configurable: **international (green=up, red=down) is the new default**; Indian (red=up, green=down) remains the legacy opt-in. Operators who never chose a convention will see flipped colors on upgrade — switch back in Settings with one click.
+
+### Added
+- **Color convention toggle** (`data-convention` attribute on `<html>`): two conventions — `international` (green=up, red=down, new default) and `indian` (red=up, green=down, legacy). Persisted via `sx-convention` localStorage + backend `SettingsStore`.
+- **Backend endpoints**: `GET/PUT /api/settings/color-convention` (mirrors theme endpoints); WS broadcast to connected clients.
+- **Settings UI**: segmented control "Price colors: Indian / International" in SettingsView, mirroring the Theme card.
+- **Decoupled non-directional usages**: CE/PE badges, BUY/SELL badges, SL/TGT levels, FILLED status badge all use convention-independent tokens.
+
+### Changed
+- **BREAKING (visual)**: existing operators who never chose a convention see **international** colors (green=up, red=down) instead of Indian. Switch back to Indian in Settings → Price colors.
+- `DESIGN.md` + `AGENTS.md` amended: convention is configurable, international is default.
+- `RiskHeatmap.svelte`: hardcoded `rgba(246,82,92)`/`rgba(46,189,133)` replaced with CSS token-driven values.
+- `OrderHistory.svelte`: FILLED badge changed from `price-down` to `success` (fixes existing DESIGN.md violation).
+
 ## [2026-08-06] — v0.14.0: Dashboard Redesign + Options Chain Fix
 
 Suite: **1244 passed / 0 failed / 0 skipped** (was 1051 at v0.13.0). Dashboard overhaul: tabbed right dock eliminates overlapping frames, modern panel styling with subtle depth. Fixed options chain 500 error when expiry is empty.

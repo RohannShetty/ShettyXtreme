@@ -11,9 +11,9 @@ import logging
 import sqlite3
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
-from enum import Enum
 from uuid import uuid4
 
+from shettyxtreme.core.data_models.outcomes import OutcomeLabel
 from shettyxtreme.core.data_models.orders import Order
 from shettyxtreme.intelligence.signals.signal_engine import (
     Signal,
@@ -22,16 +22,6 @@ from shettyxtreme.intelligence.signals.signal_engine import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-class OutcomeLabel(Enum):
-    """Outcome of a signal decision."""
-
-    WIN = "win"
-    LOSS = "loss"
-    NEUTRAL = "neutral"
-    EXPIRED = "expired"
-    UNREALIZED = "unrealized"
 
 
 @dataclass

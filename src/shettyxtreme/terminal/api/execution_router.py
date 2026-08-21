@@ -3,26 +3,179 @@ from __future__ import annotations
 
 import logging
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from shettyxtreme.core.settings import get_settings_store
 from shettyxtreme.execution.kill_switch import KillSwitchGate
 from shettyxtreme.terminal.api.models import (
+    GreeksBreakdownItem,
+    GreeksConcentrationItem,
     KillSwitchResponse,
+    MarginUtilizationItem,
     ModeResponse,
+    OrderResponse,
+    PortfolioGreeksResponse,
+    PositionGreeks,
     PositionResponse,
     ProposalResponse,
+    RiskHeatmapResponse,
     RiskResponse,
+    ScenarioPnlItem,
+    SectorExposureItem,
+    StressItem,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/execution", tags=["execution"])
+
+# ── IV snapshot cache for per-position greeks ──────────────────────────────
+# Populated by the intelligence router's chain enrichment on each
+# GET /api/intelligence/options request.  Keyed by (strike, option_type).
+# Only the freshest snapshot per key is kept (overwritten on every chain poll).
+_iv_cache: dict[tuple[float, str], float] = {}
+_last_spot: float | None = None
+
+_SECONDS_PER_YEAR = 365.25 * 24 * 3600
+_MIN_TTE = 1 / 365
+
+
+def update_iv_cache(
+    contracts: list[dict[str, Any]],
+    spot: float | None = None,
+) -> None:
+    """Update the module-level IV cache from an enriched chain response.
+
+    Called by the intelligence router after _enrich_chain fills
+    OptionsChainItem rows so the execution router can compute per-position
+    greeks even though the chain poll and position poll are independent.
+    """
+    global _last_spot
+    if spot is not None:
+        _last_spot = spot
+    for c in contracts:
+        strike = c.get("strike") if isinstance(c, dict) else getattr(c, "strike", None)
+        option_type = c.get("option_type") if isinstance(c, dict) else getattr(c, "option_type", None)
+        iv = c.get("iv") if isinstance(c, dict) else getattr(c, "iv", None)
+        if strike is not None and option_type and iv is not None:
+            try:
+                iv_f = float(iv)
+                if iv_f > 0:
+                    _iv_cache[(float(strike), str(option_type).upper())] = iv_f
+            except (TypeError, ValueError):
+                pass
+
+def _compute_position_greeks(
+    strike: float,
+    option_type: str,
+    expiry: date | None,
+    net_quantity: int,
+) -> PositionGreeks | None:
+    """Compute per-position greeks from option identity + IV cache.
+
+    Returns None when IV or spot are unavailable (greeks unknown).
+    """
+    from shettyxtreme.options.greeks import GreeksCalculator
+
+    iv = _iv_cache.get((strike, option_type.upper()))
+    if iv is None or iv <= 0:
+        return None
+    if _last_spot is None or _last_spot <= 0:
+        return None
+    if expiry is None:
+        return None
+
+    # Compute TTE from expiry date
+    try:
+        expiry_dt = datetime(
+            expiry.year, expiry.month, expiry.day,
+            15, 30,  # 15:30 IST market close
+        )
+        now = datetime.now()
+        tte = (expiry_dt - now).total_seconds() / _SECONDS_PER_YEAR
+        tte = max(tte, _MIN_TTE)
+    except (TypeError, ValueError):
+        return None
+
+    calc = GreeksCalculator(use_quantlib=False)
+    opt = "CALL" if option_type.upper() == "CE" else "PUT"
+    try:
+        greeks = calc.calculate_all(
+            spot=_last_spot,
+            strike=strike,
+            tte=tte,
+            iv=iv,
+            option_type=opt,
+        )
+    except Exception:
+        return None
+
+    qty = float(net_quantity)
+    return PositionGreeks(
+        delta=qty * greeks.get("delta", 0.0),
+        gamma=qty * greeks.get("gamma", 0.0),
+        theta=qty * greeks.get("theta", 0.0),
+        vega=qty * greeks.get("vega", 0.0),
+    )
+
+
+def _enrich_position(raw: dict[str, Any]) -> PositionResponse:
+    """Build a PositionResponse, deriving option identity and greeks."""
+    symbol = raw.get("symbol", "")
+    exchange = raw.get("exchange", "NSE")
+    net_qty = raw.get("net_quantity", 0)
+
+    # Try to parse option identity from the Fyers symbol
+    strike: float | None = None
+    option_type: str | None = None
+    expiry: date | None = None
+    instrument_type: str | None = None
+    try:
+        from shettyxtreme.integration.fyers.symbols import from_fyers
+        parsed = from_fyers(symbol)
+        instrument_type = parsed.get("instrument_type")
+        if instrument_type == "OPTION":
+            strike = parsed.get("strike")
+            option_type = parsed.get("option_type")
+            expiry = parsed.get("expiry")
+    except (ValueError, ImportError):
+        pass
+
+    greeks: PositionGreeks | None = None
+    if strike is not None and option_type and expiry:
+        greeks = _compute_position_greeks(strike, option_type, expiry, net_qty)
+
+    # P3-4.3: carry trade context from the fill event / position projection.
+    # These fields are populated when the paper engine emits POSITION_CHANGED
+    # with signal_id / stop_loss / target / rationale / confidence / lot_size.
+    return PositionResponse(
+        symbol=symbol,
+        exchange=exchange,
+        quantity=raw.get("quantity", 0),
+        buy_avg=raw.get("buy_avg", 0.0),
+        net_quantity=net_qty,
+        m2m=raw.get("m2m", 0.0),
+        pnl=raw.get("pnl", 0.0),
+        product=raw.get("product", "NRML"),
+        strike=strike,
+        option_type=option_type,
+        expiry=expiry.isoformat() if expiry else None,
+        instrument_type=instrument_type,
+        greeks=greeks,
+        # Trade context from the originating proposal (P3-4.3).
+        stop_loss=raw.get("stop_loss"),
+        target=raw.get("target"),
+        rationale=raw.get("rationale"),
+        confidence=raw.get("confidence"),
+        signal_id=raw.get("signal_id"),
+        lot_size=raw.get("lot_size"),
+    )
+
 
 _MODE_FILE = Path.home() / ".shettyxtreme_mode"
 
@@ -148,12 +301,18 @@ def _proposal_response(approval: Any) -> ProposalResponse:
     hint: dict[str, Any] = approval.strategy_hint or {}
     direction = str(approval.signal.direction.name).upper()
     side = "BUY" if direction == "UP" else "SELL" if direction == "DOWN" else "NEUTRAL"
+    lot_size = hint.get("lot_size")
+    quantity = hint.get("quantity") or 0
+    quantity = int(quantity)
+    lots = hint.get("lots")
+    if lots is None and lot_size and lot_size > 0 and quantity > 0:
+        lots = quantity // lot_size
     return ProposalResponse(
         id=approval.id,
         symbol=str(hint.get("symbol", "")),
         exchange=str(hint.get("exchange", "NSE")),
         side=side,
-        quantity=int(hint.get("quantity", 0)),
+        quantity=quantity,
         price=hint.get("price"),
         order_type=_enum_str(hint.get("order_type")) or "MARKET",
         product=_enum_str(hint.get("product")) or "MIS",
@@ -167,26 +326,28 @@ def _proposal_response(approval: Any) -> ProposalResponse:
         status=approval.status,
         reason=approval.failure_reason or "",
         timestamp=approval.timestamp,
+        strike=hint.get("strike"),
+        expiry=hint.get("expiry"),
+        option_type=hint.get("option_type"),
+        lot_size=lot_size,
+        lots=lots,
+        entry_premium=hint.get("entry_premium"),
+        stop_loss=hint.get("stop_loss"),
+        target=hint.get("target"),
+        rationale=hint.get("rationale"),
+        # Enriched fields (P3-4.3): strategy context from chain hint builder.
+        confidence=hint.get("confidence"),
+        ev_after_cost=hint.get("ev_after_cost"),
+        strategy=hint.get("strategy"),
+        underlying=hint.get("underlying"),
     )
 
 
 @router.get("/positions", response_model=list[PositionResponse])
 async def get_positions(request: Request) -> list[PositionResponse]:
-    """Return all active positions with MTM."""
+    """Return all active positions with MTM and per-position greeks."""
     positions = request.app.state.position_projection.get()
-    return [
-        PositionResponse(
-            symbol=p.get("symbol", ""),
-            exchange=p.get("exchange", "NSE"),
-            quantity=p.get("quantity", 0),
-            buy_avg=p.get("buy_avg", 0.0),
-            net_quantity=p.get("net_quantity", 0),
-            m2m=p.get("m2m", 0.0),
-            pnl=p.get("pnl", 0.0),
-            product=p.get("product", "NRML"),
-        )
-        for p in positions
-    ]
+    return [_enrich_position(p) for p in positions]
 
 
 @router.get("/risk", response_model=RiskResponse)
@@ -209,6 +370,183 @@ async def get_risk(request: Request) -> RiskResponse:
         loss_limit_hit=daily_pnl < loss_limit,
         max_positions=risk.get("max_positions", get_settings_store().max_positions()),
         active_positions=active_positions,
+    )
+
+
+@router.get("/portfolio-greeks", response_model=PortfolioGreeksResponse)
+async def get_portfolio_greeks(request: Request) -> PortfolioGreeksResponse:
+    """Return aggregate portfolio greeks across all open option positions."""
+    positions_raw = request.app.state.position_projection.get()
+    enriched = [_enrich_position(p) for p in positions_raw]
+    net_delta = sum(p.greeks.delta for p in enriched if p.greeks)
+    net_gamma = sum(p.greeks.gamma for p in enriched if p.greeks)
+    net_theta = sum(p.greeks.theta for p in enriched if p.greeks)
+    net_vega = sum(p.greeks.vega for p in enriched if p.greeks)
+    return PortfolioGreeksResponse(
+        net_delta=net_delta,
+        net_gamma=net_gamma,
+        net_theta=net_theta,
+        net_vega=net_vega,
+        positions=enriched,
+    )
+
+
+@router.get("/greeks-history")
+async def get_greeks_history(
+    request: Request,
+    days: int = Query(7, ge=1, le=365),
+    regime: str | None = Query(None),
+) -> list[dict[str, Any]]:
+    """Return recorded portfolio greeks snapshots for charting (3A.4).
+
+    Entries: ``{timestamp, net_delta, net_gamma, net_theta, net_vega,
+    position_count}``, oldest first, covering the last ``days`` days.
+    Returns an empty list when the greeks store is not initialized.
+
+    Phase 3C.1: when ``regime`` is supplied, snapshots are filtered to
+    periods where that regime was active (joined against analytics store
+    regime history).
+    """
+    store = getattr(request.app.state, "greeks_store", None)
+    if store is None:
+        return []
+    try:
+        rows = store.get_history(days=days)
+    except Exception:
+        logger.exception("greeks-history read failed")
+        return []
+
+    if not regime:
+        return rows
+
+    analytics_store = getattr(request.app.state, "analytics_store", None)
+    if analytics_store is None or not hasattr(analytics_store, "get_regime_history"):
+        return []
+    try:
+        regime_history = analytics_store.get_regime_history(days=days)
+    except Exception:
+        logger.exception("regime history read failed for greeks filter")
+        return []
+
+    if not regime_history:
+        return []
+
+    # Map each greeks snapshot to the regime active at that timestamp.
+    def active_at(ts: str) -> str | None:
+        active: str | None = None
+        for r in regime_history:
+            if r["timestamp"] <= ts:
+                active = r["regime"]
+            else:
+                break
+        return active
+
+    filtered = [row for row in rows if active_at(row["timestamp"]) == regime]
+    return filtered
+
+
+@router.get("/risk/heatmap", response_model=RiskHeatmapResponse)
+async def get_risk_heatmap(request: Request) -> RiskHeatmapResponse:
+    """Return risk heat map — all 4 dimensions.
+
+    Missing data degrades to empty/None — never faked (honesty rule).
+    """
+    from shettyxtreme.intelligence.risk.portfolio_risk import (
+        PortfolioRiskAggregator,
+        GreeksBreakdown as _GB,
+        GreeksConcentration as _GC,
+        HeatMapResult,
+        MarginUtilization as _MU,
+        ScenarioPnl as _SP,
+        StressResult as _SR,
+    )
+
+    positions_raw = request.app.state.position_projection.get()
+
+    # Gather spot map from watchlist projection
+    spot_map: dict[str, float] = {}
+    watchlist = getattr(request.app.state, "watchlist_projection", None)
+    if watchlist is not None:
+        for sym, item in watchlist.get().items():
+            ltp = item.get("ltp", 0.0)
+            if ltp and ltp > 0:
+                spot_map[sym] = ltp
+
+    # Gather IV map from execution router's module-level cache
+    iv_map = dict(_iv_cache)
+
+    # Gather margin from risk projection
+    risk_proj = getattr(request.app.state, "risk_projection", None)
+    margin_data: dict[str, object] = {}
+    if risk_proj is not None:
+        risk_state = risk_proj.get()
+        if risk_state.get("margin_used"):
+            margin_data["utilized"] = risk_state["margin_used"]
+        if risk_state.get("margin_available") is not None:
+            margin_data["available"] = risk_state["margin_available"]
+
+    # Get instrument master from app state (injected)
+    instrument_master = getattr(request.app.state, "instrument_master", None)
+
+    aggregator = PortfolioRiskAggregator(instrument_lookup=instrument_master)
+    result = aggregator.compute(
+        positions=positions_raw,
+        spot_map=spot_map,
+        iv_map=iv_map,
+        margin=margin_data,
+    )
+
+    # Convert dataclass result to response models
+    return RiskHeatmapResponse(
+        sector_exposure=[
+            SectorExposureItem(
+                sector=s.sector,
+                notional=s.notional,
+                pnl=s.pnl,
+                share_pct=s.share_pct,
+            )
+            for s in result.sector_exposure
+        ],
+        greeks=GreeksConcentrationItem(
+            delta=GreeksBreakdownItem(
+                long_val=result.greeks.delta.long,
+                short_val=result.greeks.delta.short,
+                net=result.greeks.delta.net,
+            ),
+            gamma=GreeksBreakdownItem(
+                long_val=result.greeks.gamma.long,
+                short_val=result.greeks.gamma.short,
+                net=result.greeks.gamma.net,
+            ),
+            theta=GreeksBreakdownItem(
+                long_val=result.greeks.theta.long,
+                short_val=result.greeks.theta.short,
+                net=result.greeks.theta.net,
+            ),
+            vega=GreeksBreakdownItem(
+                long_val=result.greeks.vega.long,
+                short_val=result.greeks.vega.short,
+                net=result.greeks.vega.net,
+            ),
+            lopsided_warning=result.greeks.lopsided_warning,
+        ),
+        stress=StressItem(
+            scenarios=[
+                ScenarioPnlItem(shift_pct=s.shift_pct, total_pnl=s.total_pnl)
+                for s in result.stress.scenarios
+            ],
+            worst_case_pnl=result.stress.worst_case_pnl,
+            worst_case_shift=result.stress.worst_case_shift,
+        ),
+        margin=MarginUtilizationItem(
+            margin_used=result.margin.margin_used,
+            margin_available=result.margin.margin_available,
+            total=result.margin.total,
+            utilization_pct=result.margin.utilization_pct,
+            breach=result.margin.breach,
+        ),
+        position_count=result.position_count,
+        enriched_count=result.enriched_count,
     )
 
 
@@ -407,3 +745,54 @@ async def reject_proposal(
     if approval is None:
         raise HTTPException(status_code=404, detail=f"unknown proposal: {proposal_id}")
     return _proposal_response(approval)
+
+
+# ── Order History (P3-4.3) ─────────────────────────────────────────────────
+
+def _order_response(order: Any) -> OrderResponse:
+    """Serialize a paper-engine Order into the API response model."""
+    return OrderResponse(
+        order_id=order.order_id,
+        symbol=order.symbol,
+        exchange=order.exchange,
+        side=order.side,
+        order_type=order.order_type,
+        quantity=order.quantity,
+        price=order.price,
+        status=order.status,
+        filled_quantity=order.filled_quantity,
+        average_price=order.average_price,
+        tag=order.tag,
+        created_at=order.created_at,
+        # Option identity + trade context (P3-4.3).
+        strike=getattr(order, "strike", None),
+        expiry=getattr(order, "expiry", None),
+        option_type=getattr(order, "option_type", None),
+        lot_size=getattr(order, "lot_size", None),
+        stop_loss=getattr(order, "stop_loss", None),
+        target=getattr(order, "target", None),
+        rationale=getattr(order, "rationale", None),
+        confidence=getattr(order, "confidence", None),
+    )
+
+
+@router.get("/orders", response_model=list[OrderResponse])
+async def list_orders(
+    request: Request,
+    status: str | None = None,
+) -> list[OrderResponse]:
+    """Return the order book from the paper trading engine.
+
+    Optional ``status`` filter: FILLED, REJECTED, CANCELLED, OPEN,
+    PARTIALLY_FILLED.  Returns all orders when omitted.
+    """
+    paper = getattr(request.app.state, "paper_engine", None)
+    if paper is None:
+        return []
+    orders = paper.get_order_book()
+    if status:
+        wanted = status.upper()
+        orders = [o for o in orders if o.status == wanted]
+    # Newest first.
+    orders = sorted(orders, key=lambda o: o.created_at, reverse=True)
+    return [_order_response(o) for o in orders]

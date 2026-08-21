@@ -231,6 +231,17 @@ class ModeRoutingExecutor:
             price=order.price or 0.0,
             trigger_price=order.trigger_price,
             tag=order.tag,
+            # P3-4.3: pass trade context through to the paper engine so
+            # the order book and fill events carry full leg detail.
+            strike=order.strike,
+            expiry=order.expiry,
+            option_type=order.option_type,
+            lot_size=order.lot_size,
+            stop_loss=order.stop_loss,
+            target=order.target,
+            rationale=order.rationale,
+            confidence=order.confidence,
+            signal_id=order.signal_id,
         )
         status = OrderStatus[str(result.status).upper()] if result.status in OrderStatus._member_names_ else OrderStatus.REJECTED
         return OrderResult(

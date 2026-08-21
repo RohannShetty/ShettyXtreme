@@ -1,25 +1,39 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import ProposalQueue from "./ProposalQueue.svelte";
+  import OrderHistory from "./OrderHistory.svelte";
   import ResearchPanel from "./ResearchPanel.svelte";
   import KnowledgePanel from "./KnowledgePanel.svelte";
   import LogDrawer from "./LogDrawer.svelte";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
+  import { rightDockTab, type RightDockTabId } from "$lib/rightDockTab.svelte";
 
-  type TabId = "proposals" | "research" | "logs";
+  let { open = $bindable(false), dockLogsTick = 0 }: { open?: boolean; dockLogsTick?: number } = $props();
 
-  let { open = $bindable(false) }: { open?: boolean } = $props();
+  let activeTab = $state<RightDockTabId>(rightDockTab.value);
 
-  let activeTab = $state<TabId>("proposals");
+  // Sync with external tab changes (e.g. HintsPanel jumping to Proposals).
+  $effect(() => {
+    activeTab = rightDockTab.value;
+  });
 
-  const tabs: { id: TabId; label: string }[] = [
+  // Task 2.3: the header "logs drawer" button bumps dockLogsTick each time it
+  // OPENS the dock — land on the Logs tab so the button actually reveals the
+  // log panel. Ctrl+R and the palette's sx:open-dock set `open` without
+  // bumping the tick, so they keep whatever tab is active.
+  $effect(() => {
+    if (dockLogsTick > 0) setActive("logs");
+  });
+
+  const tabs: { id: RightDockTabId; label: string }[] = [
     { id: "proposals", label: "Proposals" },
+    { id: "orders", label: "Orders" },
     { id: "research", label: "Research" },
     { id: "logs", label: "Logs" },
   ];
 
-  function setActive(id: TabId): void {
+  function setActive(id: RightDockTabId): void {
     activeTab = id;
+    rightDockTab.value = id;
   }
 </script>
 
@@ -41,6 +55,10 @@
     {#if activeTab === "proposals"}
       <ScrollArea class="h-full" orientation="vertical">
         <ProposalQueue />
+      </ScrollArea>
+    {:else if activeTab === "orders"}
+      <ScrollArea class="h-full" orientation="vertical">
+        <OrderHistory />
       </ScrollArea>
     {:else if activeTab === "research"}
       <ScrollArea class="h-full" orientation="vertical">

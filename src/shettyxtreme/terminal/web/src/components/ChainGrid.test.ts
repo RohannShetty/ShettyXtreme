@@ -1,6 +1,10 @@
 import { cleanup, render, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import ChainGrid from "./ChainGrid.svelte";
+// The real selection rune (the vi.mock("../lib/selection") below is inert —
+// the component imports ../lib/selection.svelte.ts, so tests drive the real
+// module the same way Watchlist/Header/ChainGrid do in production).
+import { selectedSymbol } from "../lib/selection.svelte.ts";
 
 // Captured WS "tick" handlers (the mock registers via onMessage) so tests can
 // drive the live payload stream exactly as ws_manager would deliver it.
@@ -139,4 +143,89 @@ test("live tick also updates the OI column from the payload oi field", async () 
   await waitFor(() => {
     expect(container.textContent).toMatch(/7[,\s\u00a0]?77[,\s\u00a0]?777/);
   });
+});
+
+test("greeks columns (Δ/Γ/Θ/V) render for CE and PE sides", async () => {
+  const container = await renderLoaded();
+
+  // Delta values from the fixture: CE 25000 delta=0.55, PE 25000 delta=-0.45
+  // fmtGreek uses en-IN locale with 2 decimal places for delta
+  await waitFor(() => {
+    const text = container.textContent ?? "";
+    // CE delta 0.55
+    expect(text).toContain("0.55");
+    // PE delta -0.45
+    expect(text).toContain("-0.45");
+    // Theta values: CE theta=-2.0, PE theta=-1.8
+    expect(text).toContain("-2.00");
+    expect(text).toContain("-1.80");
+    // Vega values: CE vega=1.5, PE vega=1.4
+    expect(text).toContain("1.50");
+    expect(text).toContain("1.40");
+  });
+});
+
+test("greeks column headers render Δ/Γ/Θ/V labels", async () => {
+  const container = await renderLoaded();
+
+  await waitFor(() => {
+    const text = container.textContent ?? "";
+    // Greek letter labels appear in the header
+    expect(text).toContain("Δ");
+    expect(text).toContain("Γ");
+    expect(text).toContain("Θ");
+  });
+});
+
+test("symbol change drops the previous symbol's expiry and loads the calendar default", async () => {
+  // URL-aware mock: the chain endpoint echoes the requested expiry (server
+  // behaviour); the calendar endpoint serves per-symbol expiries + defaults.
+  const chainCalls: string[] = [];
+  mockGet.mockImplementation((path: string) => {
+    if (path.includes("expiry-calendar")) {
+      const forBank = path.includes("BANKNIFTY");
+      return Promise.resolve({
+        symbol: forBank ? "BANKNIFTY" : "NIFTY",
+        instrument_type: "OPTION",
+        expiries: [
+          { date: "2026-08-20", kind: "weekly" },
+          { date: "2026-08-27", kind: "weekly" },
+        ],
+        default: forBank ? "2026-08-27" : "2026-08-20",
+      } as unknown as OptionsResponse);
+    }
+    chainCalls.push(path);
+    // The server resolves each symbol's own default when no expiry is
+    // requested (same resolver the calendar endpoint uses), then echoes it.
+    const forBank = path.includes("BANKNIFTY");
+    const requested = new URLSearchParams(path.split("?")[1]).get("expiry");
+    const expiry = requested || (forBank ? "2026-08-27" : "2026-08-20");
+    return Promise.resolve({ underlying: "NIFTY", expiry, contracts: chainPayload.contracts });
+  });
+
+  const { container } = render(ChainGrid);
+  // Initial NIFTY load: the server resolves a default expiry and the grid
+  // renders contracts with that expiry selected.
+  await waitFor(() => {
+    expect(container.querySelector('[data-strike="25000"]')).toBeTruthy();
+  });
+  expect(
+    chainCalls.some((p) => p.includes("symbol=NIFTY") && p.includes("expiry=2026-08-20")),
+  ).toBe(true);
+
+  // User switches symbol (watchlist row click → selectedSymbol mutation).
+  selectedSymbol.symbol = "BANKNIFTY";
+  selectedSymbol.exchange = "NSE_FNO";
+
+  // The chain must eventually load for BANKNIFTY at the calendar default.
+  await waitFor(() => {
+    expect(chainCalls.some((p) => p.includes("BANKNIFTY") && p.includes("expiry=2026-08-27"))).toBe(true);
+  });
+
+  // Regression: the stale NIFTY expiry must NEVER ride along to BANKNIFTY —
+  // that invalid pair is what left the grid on "No chain data" with an
+  // expiry still selected.
+  const bankCalls = chainCalls.filter((p) => p.includes("BANKNIFTY"));
+  expect(bankCalls.length).toBeGreaterThan(0);
+  expect(bankCalls.every((p) => !p.includes("expiry=2026-08-20"))).toBe(true);
 });

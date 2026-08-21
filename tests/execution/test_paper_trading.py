@@ -90,3 +90,32 @@ class TestPaperTradingEngine:
         assert "realised_pnl" in pnl
         assert "total_pnl" in pnl
         assert pnl["realised_pnl"] == 0.0
+
+    def test_paper_engine_get_portfolio_initial_capital(self):
+        """get_portfolio().available_margin == initial_capital at start."""
+        engine = PaperTradingEngine(initial_capital=1_000_000.0)
+        portfolio = engine.get_portfolio()
+        assert portfolio.available_margin == 1_000_000.0
+        assert portfolio.total_margin_used == 0.0
+        assert portfolio.positions == []
+
+    @pytest.mark.asyncio
+    async def test_paper_engine_buy_fill_reduces_margin(self):
+        """After a BUY fill, available_margin decreases by notional."""
+        engine = PaperTradingEngine(initial_capital=1_000_000.0)
+        _seed_ltp(engine, "NIFTY", 18450.0)
+        await engine.place_order("NIFTY", "NFO", "BUY", "MARKET", 50)
+        portfolio = engine.get_portfolio()
+        # notional = 50 * 18450 = 922_500
+        assert portfolio.available_margin == 1_000_000.0 - (50 * 18450.0)
+        assert portfolio.total_margin_used == 50 * 18450.0
+
+    @pytest.mark.asyncio
+    async def test_paper_engine_sell_restores_margin(self):
+        """After a BUY then SELL, margin is restored."""
+        engine = PaperTradingEngine(initial_capital=1_000_000.0)
+        _seed_ltp(engine, "NIFTY", 18450.0)
+        await engine.place_order("NIFTY", "NFO", "BUY", "MARKET", 50)
+        assert engine.get_portfolio().available_margin == 1_000_000.0 - (50 * 18450.0)
+        await engine.place_order("NIFTY", "NFO", "SELL", "MARKET", 50)
+        assert engine.get_portfolio().available_margin == 1_000_000.0

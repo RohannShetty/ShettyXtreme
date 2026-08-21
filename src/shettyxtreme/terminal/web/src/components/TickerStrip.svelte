@@ -53,7 +53,7 @@
   // Regime enum (intelligence/regime/regime_classifier.py): trending_up /
   // trending_down / range_bound / volatile. TRENDING = green, RANGING =
   // yellow, VOLATILE = red (wave-2 spec). Directional caret for trending
-  // regimes follows the Indian price law: red ▲ = up, green ▼ = down.
+  // regimes follows the price convention (configurable: red ▲ = up, green ▼ = down).
   const REGIME_META: Record<string, { label: string; tone: Tone; dir?: "up" | "down" }> = {
     trending_up: { label: "TRENDING", tone: "success", dir: "up" },
     trending_down: { label: "TRENDING", tone: "success", dir: "down" },
@@ -418,7 +418,7 @@
   .tone-muted {
     color: var(--muted);
   }
-  /* Regime direction caret — Indian price law: red = up, green = down.
+  /* Regime direction caret — follows price convention tokens.
      Rendered as Lucide SVGs (size-3) carrying these color tokens. */
   .dir-up {
     color: var(--price-up);

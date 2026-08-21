@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from shettyxtreme.core.interfaces.market_data_stream import Tick
-from shettyxtreme.integration.fyers.client import FyersTokenExpired
+from shettyxtreme.integration.fyers.client import FyersDataEntitlementError, FyersTokenExpired
 from shettyxtreme.integration.fyers.data_adapter import FyersDataAdapter
 from shettyxtreme.integration.fyers.session import FyersSession
 
@@ -534,6 +534,56 @@ class TestOptionChain:
         assert "timestamp=" in url
         assert "greeks=1" in url
         assert result == payload
+
+    @pytest.mark.asyncio
+    async def test_entitlement_error_propagates(
+        self, adapter: FyersDataAdapter, client: AsyncMock
+    ) -> None:
+        """P0-1.1: FyersDataEntitlementError must propagate, not be swallowed."""
+        client.get.side_effect = FyersDataEntitlementError("403 data entitlement", code=-373)
+        with pytest.raises(FyersDataEntitlementError):
+            await adapter.get_option_chain("NIFTY", "2024-10-31")
+
+    @pytest.mark.asyncio
+    async def test_token_expired_propagates(
+        self, adapter: FyersDataAdapter, client: AsyncMock
+    ) -> None:
+        """P0-1.1: FyersTokenExpired must propagate, not be swallowed."""
+        client.get.side_effect = FyersTokenExpired("token expired", code=-30)
+        with pytest.raises(FyersTokenExpired):
+            await adapter.get_option_chain("NIFTY", "2024-10-31")
+
+    @pytest.mark.asyncio
+    async def test_generic_fyers_error_returns_empty(
+        self, adapter: FyersDataAdapter, client: AsyncMock
+    ) -> None:
+        """Generic FyersError (not entitlement/expired) still returns {}."""
+        from shettyxtreme.integration.fyers.client import FyersError
+        client.get.side_effect = FyersError("server error", code=-500)
+        result = await adapter.get_option_chain("NIFTY", "2024-10-31")
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_empty_expiry_omits_timestamp_param(
+        self, adapter: FyersDataAdapter, client: AsyncMock
+    ) -> None:
+        """P0-1.1 regression: empty expiry → URL must NOT contain timestamp=."""
+        client.get.return_value = {"s": "ok", "option_chain": []}
+        await adapter.get_option_chain("NIFTY", "")
+        url = client.get.await_args.args[0]
+        assert "timestamp=" not in url
+        assert url.startswith("/data/options-chain-v3?symbol=")
+        assert "greeks=1" in url
+
+    @pytest.mark.asyncio
+    async def test_none_expiry_omits_timestamp_param(
+        self, adapter: FyersDataAdapter, client: AsyncMock
+    ) -> None:
+        """P0-1.1 regression: None expiry → URL must NOT contain timestamp=."""
+        client.get.return_value = {"s": "ok", "option_chain": []}
+        await adapter.get_option_chain("NIFTY", None)
+        url = client.get.await_args.args[0]
+        assert "timestamp=" not in url
 
 
 class TestAvailabilityAndLifecycle:

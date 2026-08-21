@@ -61,6 +61,16 @@ class OrderRequest:
     validity: str = "DAY"
     tag: str | None = None
     client_id: str | None = None
+    strike: float | None = None
+    expiry: str | None = None
+    option_type: str | None = None
+    lot_size: int | None = None
+    # Trade context (P3-4.3) — carried from strategy hint for order history.
+    stop_loss: float | None = None
+    target: float | None = None
+    rationale: str | None = None
+    confidence: float | None = None
+    signal_id: str | None = None
 
 
 @dataclass
@@ -71,6 +81,17 @@ class Order:
     filled_quantity: int = 0; average_price: float = 0.0
     trigger_price: float | None = None; tag: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # Option identity + trade context (P3-4.3) — carried from OrderRequest
+    # so the order book and fill events can reconstruct full leg detail.
+    strike: float | None = None
+    expiry: str | None = None
+    option_type: str | None = None
+    lot_size: int | None = None
+    stop_loss: float | None = None
+    target: float | None = None
+    rationale: str | None = None
+    confidence: float | None = None
+    signal_id: str | None = None
 
 
 @dataclass
@@ -94,6 +115,7 @@ class Fill:
     trade_id: str; order_id: str; symbol: str; exchange: str
     side: str; quantity: int; price: float; timestamp: datetime
     order_tag: str | None = None
+    fees: float = 0.0
 
 
 @dataclass

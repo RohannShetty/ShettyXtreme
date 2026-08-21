@@ -8,11 +8,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from shettyxtreme.intelligence.hints.option_leg import OptionLeg
 from shettyxtreme.intelligence.options.options_intel import (
     compute_signal_drift_ev,
     select_strike_by_ev,
 )
-from shettyxtreme.learning.sizing import CalibratedSizing
+from shettyxtreme.core.sizing import CalibratedSizing
 from shettyxtreme.options.strategy_analyzer import StrategyAnalyzer
 
 _CONVICTION_GATE: float = 0.25
@@ -37,6 +38,10 @@ class StrategyHint:
     ev_after_cost: float = 0.0
     rationale: str = ""
     quantity: int | None = None
+    leg: OptionLeg | None = None
+    confidence: float | None = None
+    stop_loss: float | None = None
+    target: float | None = None
 
 
 class StrategyHints:
@@ -51,7 +56,8 @@ class StrategyHints:
         brokerage_per_lot: float = 20.0,
         days_to_expiry: int = _DEFAULT_DTE,
         sizing: CalibratedSizing | None = None,
-        base_quantity: int = 75,
+        base_quantity: int | None = None,
+        lot_size: int | None = None,
     ) -> None:
         self._signal = signal
         self._chain = chain or []
@@ -61,6 +67,7 @@ class StrategyHints:
         self._dte = days_to_expiry
         self._sizing = sizing
         self._base_quantity = base_quantity
+        self._lot_size = lot_size
 
     def generate(self) -> StrategyHint:
         direction = str(self._signal.get("direction", "NEUTRAL")).upper()
@@ -100,9 +107,17 @@ class StrategyHints:
         option_type = "CE" if bullish else "PE"
         strategy_name = StrategyAnalyzer.display_name("long_call" if bullish else "long_put")
 
+        # Resolve base quantity: use explicit value, else lot_size (1 lot), else None.
+        base_qty = self._base_quantity
+        if base_qty is None and self._lot_size is not None:
+            base_qty = self._lot_size  # 1 lot
+
         quantity: int | None = None
         if self._sizing is not None and self._sizing.active:
-            quantity = self._sizing.adjust(self._base_quantity, conviction)
+            if base_qty is not None:
+                quantity = self._sizing.adjust(base_qty, conviction)
+        elif base_qty is not None:
+            quantity = base_qty
 
         selected = self._select_strike(option_type, conviction, bullish)
         if selected is None:
@@ -110,24 +125,62 @@ class StrategyHints:
                 direction=hint_dir,
                 strategy=strategy_name,
                 quantity=quantity,
+                confidence=conviction,
                 rationale=(
                     f"{hint_dir.capitalize()} signal with conviction {conviction:.2f}; "
                     f"no strike in the chain offers positive EV after costs "
                     f"(slippage {self._slippage:.0f} + brokerage {self._brokerage:.0f} per lot)."
                 ),
             )
+
+        premium = selected["premium"]
+        strike = selected["strike"]
+        ev = selected["ev"]
+
+        # Compute simple premium-based SL/TP (50% SL, 100% TP).
+        stop_loss = round(premium * 0.5, 2) if premium > 0 else None
+        target = round(premium * 2.0, 2) if premium > 0 else None
+
+        # Build OptionLeg when lot_size is known.
+        leg: OptionLeg | None = None
+        if self._lot_size is not None and self._lot_size > 0:
+            lots = max(1, (quantity or self._lot_size) // self._lot_size)
+            qty = lots * self._lot_size
+            underlying = str(self._signal.get("underlying", "NIFTY"))
+            exchange = str(self._signal.get("exchange", "NFO"))
+            expiry = str(self._signal.get("expiry", ""))
+            leg = OptionLeg(
+                underlying=underlying,
+                exchange=exchange,
+                strike=strike,
+                expiry=expiry,
+                option_type=option_type,
+                lot_size=self._lot_size,
+                qty=qty,
+                lots=lots,
+                entry_premium=premium,
+                stop_loss=stop_loss,
+                target=target,
+                dte=self._dte,
+            )
+            quantity = qty  # override with lot-rounded qty
+
         return StrategyHint(
             direction=hint_dir,
             strategy=strategy_name,
-            strike=selected["strike"],
-            premium=selected["premium"],
-            ev_after_cost=selected["ev"],
+            strike=strike,
+            premium=premium,
+            ev_after_cost=ev,
             quantity=quantity,
+            leg=leg,
+            confidence=conviction,
+            stop_loss=stop_loss,
+            target=target,
             rationale=(
                 f"{hint_dir.capitalize()} conviction {conviction:.2f} "
-                f"(participation {participation:.0%}); best strike {selected['strike']:.0f} "
-                f"{option_type} @ premium {selected['premium']:.2f} with EV "
-                f"{selected['ev']:.2f} after slippage + brokerage."
+                f"(participation {participation:.0%}); best strike {strike:.0f} "
+                f"{option_type} @ premium {premium:.2f} with EV "
+                f"{ev:.2f} after slippage + brokerage."
             ),
         )
 
@@ -153,10 +206,20 @@ class StrategyHints:
         def _row_strike(row: dict[str, Any]) -> float:
             return _safe_float(row.get("strike") if row.get("strike") is not None else row.get("strike_price", 0.0), 0.0)
 
+        def _row_premium(row: dict[str, Any]) -> float:
+            """Extract premium from chain row, checking alias keys."""
+            for key in ("premium", "ltp", "last_price"):
+                val = row.get(key)
+                if val is not None:
+                    result = _safe_float(val, 0.0)
+                    if result > 0.0:
+                        return result
+            return 0.0
+
         strikes = [
             {
                 "strike": _row_strike(s),
-                "premium": _safe_float(s.get("premium"), 0.0),
+                "premium": _row_premium(s),
                 "iv": _safe_float(s.get("iv"), 15.0),
             }
             for s in self._chain

@@ -57,6 +57,9 @@ async def test_decide_records_regime_from_projection(
     """approve/reject record the current regime via the intelligence projection."""
 
     class FakeProj:
+        def has_data(self) -> bool:
+            return True
+
         def get_regime(self) -> dict:
             return {"regime": "trending_up"}
 

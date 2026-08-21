@@ -43,6 +43,10 @@ class Topic(Enum):
     SCANNER_GAP = "scanner.gap"
     SCANNER_CLUSTER = "scanner.cluster"
     SCANNER_LOG = "scanner.log"
+    SCANNER_FINDING = "scanner.finding"
+    # P4: proposal lifecycle + order cancellation (real-time WS topics)
+    PROPOSAL_CHANGED = "proposal.changed"
+    ORDER_CANCELLED = "order.cancelled"
 
 @dataclass
 class Event:

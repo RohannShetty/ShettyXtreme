@@ -198,6 +198,10 @@ async def init_terminal_adapters(
                     source="fyers_data_adapter",
                 ))
 
+            # Store the callback so the watchlist router can subscribe
+            # new symbols dynamically after init.
+            app.state._publish_market_tick = _publish_market_tick
+
             symbols = list(watchlist_data.keys())
             subscribed = await data_adapter.subscribe_ticks(symbols, _publish_market_tick)
             if not subscribed:

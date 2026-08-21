@@ -97,3 +97,92 @@ def test_expiry_to_tte_matches_greeks_calendar() -> None:
     )
     assert result["theta"] < 0
     assert result["gamma"] > 0
+
+
+# ── Expiry calendar endpoint tests ───────────────────────────────────────
+
+
+class TestExpiryCalendarEndpoint:
+    """GET /api/intelligence/expiry-calendar shape and behaviour."""
+
+    @pytest.fixture()
+    def app(self, tmp_path):
+        """Minimal FastAPI app with the intelligence router mounted."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from fastapi import FastAPI
+
+        from shettyxtreme.integration.fyers.instrument_master import FyersInstrumentMaster
+        from shettyxtreme.terminal.api.intelligence_router import router
+
+        app = FastAPI()
+        app.include_router(router)
+
+        # Build a small instrument master with future expiries
+        db = FyersInstrumentMaster(
+            db_path=str(tmp_path / "cal_test.db"), masters=("NSE_FO",)
+        )
+        from datetime import UTC, timedelta
+
+        today = datetime.now(UTC).date()
+        # 2 future Thursdays
+        d1 = today + timedelta(days=(3 - today.weekday()) % 7 or 7)
+        d2 = d1 + timedelta(days=7)
+        # Make d2 the last Thursday of its month
+        while (d2 + timedelta(days=7)).month == d2.month:
+            d2 += timedelta(days=7)
+
+        import json
+        from tests.integration.conftest import fyers_epoch, fyers_row
+
+        fixture = {}
+        for d in [d1, d2]:
+            ticker = f"NSE:NIFTY{d.year % 100:02d}O{d.month:01d}{d.day:02d}25000CE"
+            fixture[ticker] = fyers_row(
+                ticker,
+                expiry=fyers_epoch(d.year, d.month, d.day),
+                opt_type="CE", strike=25000.0, lot=75,
+            )
+
+        db._upsert_master(fixture)
+        app.state.instrument_master = db
+        yield app
+        db.close()
+
+    @pytest.fixture()
+    def client(self, app):
+        from fastapi.testclient import TestClient
+
+        return TestClient(app)
+
+    def test_expiry_calendar_endpoint_shape(self, client) -> None:
+        resp = client.get("/api/intelligence/expiry-calendar?symbol=NIFTY")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["symbol"] == "NIFTY"
+        assert data["instrument_type"] == "OPTION"
+        assert isinstance(data["expiries"], list)
+        assert len(data["expiries"]) >= 2
+        for item in data["expiries"]:
+            assert "date" in item
+            assert "kind" in item
+            assert item["kind"] in ("weekly", "monthly")
+        assert data["default"] is not None
+
+    def test_expiry_calendar_default_nearest_weekly_for_index(self, client) -> None:
+        resp = client.get("/api/intelligence/expiry-calendar?symbol=NIFTY")
+        data = resp.json()
+        # Default for an index should be a weekly expiry
+        default = data["default"]
+        assert default is not None
+        # Find the default in the list
+        default_item = next(e for e in data["expiries"] if e["date"] == default)
+        assert default_item["kind"] == "weekly"
+
+    def test_expiry_calendar_weekly_monthly_classification(self, client) -> None:
+        resp = client.get("/api/intelligence/expiry-calendar?symbol=NIFTY")
+        data = resp.json()
+        kinds = [e["kind"] for e in data["expiries"]]
+        assert "weekly" in kinds
+        # With our fixture (2 Thursdays, second is last-Thu), should have both
+        assert "monthly" in kinds

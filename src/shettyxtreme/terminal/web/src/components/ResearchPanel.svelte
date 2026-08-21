@@ -5,9 +5,17 @@
   import ResearchBriefDetail from "./ResearchBriefDetail.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Badge } from "$lib/components/ui/badge";
+  import { Card } from "$lib/components/ui/card";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
+  import { Skeleton } from "$lib/components/ui/skeleton";
+  import { Tabs, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
   import { Textarea } from "$lib/components/ui/textarea";
-  import { Select, SelectContent, SelectItem, SelectTrigger } from "$lib/components/ui/select";
+  import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+  } from "$lib/components/ui/select";
   import { RotateCw } from "@lucide/svelte";
   import type {
     ResearchBrief,
@@ -32,7 +40,8 @@
   let lensFilter = $state("All");
   let error = $state("");
   let deciding = $state(false);
-  let listEl: HTMLUListElement | undefined;
+  let loading = $state(false);
+  let listEl = $state<HTMLUListElement | undefined>(undefined);
   let activeIndex = $state(-1);
 
   const statuses = ["All", "Proposed", "Approved", "Rejected"];
@@ -75,6 +84,7 @@
 
   async function loadAll(): Promise<void> {
     error = "";
+    loading = true;
     try {
       const [l, t, b] = await Promise.all([
         get<{ lenses: ResearchLens[] }>("/api/research/lenses"),
@@ -91,6 +101,8 @@
       }
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
+    } finally {
+      loading = false;
     }
   }
 
@@ -121,12 +133,6 @@
   function select(id: string): void {
     selectedId = id;
     selected = briefs.find((b) => b.brief_id === id) ?? null;
-  }
-
-  function toggleTool(name: string): void {
-    selectedTools = selectedTools.includes(name)
-      ? selectedTools.filter((t) => t !== name)
-      : [...selectedTools, name];
   }
 
   async function onDecide(status: "approved" | "rejected"): Promise<void> {
@@ -215,8 +221,17 @@
 
 <section class="panel research">
   <header class="panel-head">
-    <h2>Research</h2>
-    <Button variant="ghost" size="icon" class="size-7 text-muted-foreground hover:text-ink" onclick={loadAll} aria-label="Refresh research">
+    <div class="titles">
+      <span class="eyebrow">Intelligence</span>
+      <h2>Research</h2>
+    </div>
+    <Button
+      variant="ghost"
+      size="icon"
+      class="size-7 text-muted-foreground hover:text-ink"
+      onclick={loadAll}
+      aria-label="Refresh research"
+    >
       <RotateCw class="size-3.5" />
     </Button>
   </header>
@@ -225,120 +240,158 @@
     <p class="error">{error}</p>
   {/if}
 
-  <div class="run-bar">
-    <h3>Run briefers</h3>
-    <div class="lens-row">
-      {#each lenses as l (l.name)}
-        <label class="check" class:disabled={running}>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={selectedLenses.includes(l.name)}
-            aria-label={`Enable ${l.name} lens`}
-            class:on={selectedLenses.includes(l.name)}
-            class="switch"
-            disabled={running}
-            onclick={() => toggleLens(l.name, !selectedLenses.includes(l.name))}
-          >
-            <span class="knob"></span>
-          </button>
-          <span>{l.name}</span>
-        </label>
-      {/each}
-    </div>
-    <div class="tool-row">
-      <span class="tool-label">Tools</span>
-      {#each tools as t (t.name)}
-        <label class="check" class:disabled={running}>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={selectedTools.includes(t.name)}
-            aria-label={`Enable ${t.name} tool`}
-            class:on={selectedTools.includes(t.name)}
-            class="switch"
-            disabled={running}
-            onclick={() => toggleToolState(t.name, !selectedTools.includes(t.name))}
-          >
-            <span class="knob"></span>
-          </button>
-          <span>{t.name}</span>
-        </label>
-      {/each}
-    </div>
-    <Textarea
-      class="context mono min-h-11"
-      placeholder="Optional context for this run…"
-      bind:value={contextText}
-      disabled={running}
-    ></Textarea>
-    <div class="run-row">
-      <Button size="sm" onclick={run} disabled={running || selectedLenses.length === 0}>
-        {running ? "Running…" : "Run"}
-      </Button>
-      <div class="chips">
-        {#each runChips as chip (chip.lens)}
-          <Badge variant={chip.ok ? "success" : "danger"}>{chip.lens}: {chip.ok ? "ok" : chip.error}</Badge>
-        {/each}
+  <Card class="research-run-card">
+    <div class="research-run-inner">
+      <div class="research-run-header">Run briefers</div>
+      <div class="toggle-group">
+        <div class="toggle-row">
+          <span class="row-label">Lenses</span>
+          {#each lenses as l (l.name)}
+            <label class="check" class:disabled={running}>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={selectedLenses.includes(l.name)}
+                aria-label={`Enable ${l.name} lens`}
+                class:on={selectedLenses.includes(l.name)}
+                class="switch"
+                disabled={running}
+                onclick={() => toggleLens(l.name, !selectedLenses.includes(l.name))}
+              >
+                <span class="knob"></span>
+              </button>
+              <span>{l.name}</span>
+            </label>
+          {/each}
+        </div>
+        <div class="toggle-row">
+          <span class="row-label">Tools</span>
+          {#each tools as t (t.name)}
+            <label class="check" class:disabled={running}>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={selectedTools.includes(t.name)}
+                aria-label={`Enable ${t.name} tool`}
+                class:on={selectedTools.includes(t.name)}
+                class="switch"
+                disabled={running}
+                onclick={() => toggleToolState(t.name, !selectedTools.includes(t.name))}
+              >
+                <span class="knob"></span>
+              </button>
+              <span>{t.name}</span>
+            </label>
+          {/each}
+        </div>
+      </div>
+      <Textarea
+        class="context mono min-h-10"
+        placeholder="Optional context for this run…"
+        bind:value={contextText}
+        disabled={running}
+      ></Textarea>
+      <div class="run-actions">
+        <Button size="sm" onclick={run} disabled={running || selectedLenses.length === 0}>
+          {running ? "Running…" : "Run"}
+        </Button>
+        <div class="chips">
+          {#each runChips as chip (chip.lens)}
+            <Badge variant={chip.ok ? "success" : "danger"}>{chip.lens}: {chip.ok ? "ok" : chip.error}</Badge>
+          {/each}
+        </div>
       </div>
     </div>
-  </div>
+  </Card>
 
   <div class="cols">
     <div class="col list-col">
-      <ScrollArea class="h-full">
-        <div class="filters">
-          <Select type="single" value={statusFilter} onValueChange={(v) => (statusFilter = v)}>
-            <SelectTrigger class="h-7 w-[110px] text-[11px]" aria-label="Status filter">
-              <span>{statusFilter}</span>
-            </SelectTrigger>
-            <SelectContent>
-              {#each statuses as s (s)}
-                <SelectItem value={s} label={s}>{s}</SelectItem>
-              {/each}
-            </SelectContent>
-          </Select>
-          <Select type="single" value={lensFilter} onValueChange={(v) => (lensFilter = v)}>
-            <SelectTrigger class="h-7 w-[130px] text-[11px]" aria-label="Lens filter">
-              <span>{lensFilter === "All" ? "All lenses" : lensFilter}</span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="All" label="All">All lenses</SelectItem>
-              {#each lenses as l (l.name)}
-                <SelectItem value={l.name} label={l.name}>{l.name}</SelectItem>
-              {/each}
-            </SelectContent>
-          </Select>
-        </div>
-        <ul class="brief-list" role="listbox" tabindex="0" aria-label="Research briefs" bind:this={listEl} onkeydown={onListKeydown}>
-          {#each filtered as b (b.brief_id)}
-            <li>
-              <button
-                type="button"
-                role="option"
-                aria-selected={b.brief_id === selectedId}
-                class:sel={b.brief_id === selectedId}
-                class="brief-card"
-                onclick={() => select(b.brief_id)}
-              >
-                <span class="thesis ticker">{b.thesis}</span>
-                <span class="meta">
-                  <span class="caption">{b.lens}</span>
-                  <span class="dir num {dirBadgeClass(b.direction)}">{dirLabel(b.direction)}</span>
-                  <span class="conf num">{(b.confidence * 100).toFixed(0)}%</span>
-                  {#if isStale(b.as_of)}
-                    <span class="stale">STALE</span>
-                  {/if}
-                  <span class="time num">{fmtTime(b.as_of)}</span>
-                  <Badge variant={statusVariant(b.status)}>{b.status}{b.expired ? " · expired" : ""}</Badge>
-                </span>
-              </button>
-            </li>
+      <Tabs value={statusFilter} onValueChange={(v) => (statusFilter = v)} class="filter-tabs">
+        <TabsList class="w-full">
+          {#each statuses as s (s)}
+            <TabsTrigger value={s}>{s}</TabsTrigger>
           {/each}
-          {#if filtered.length === 0}
-            <li class="empty">No briefs.</li>
-          {/if}
-        </ul>
+        </TabsList>
+      </Tabs>
+
+      <div class="list-tools">
+        <Select type="single" value={lensFilter} onValueChange={(v) => (lensFilter = v)}>
+          <SelectTrigger class="h-7 w-full text-[11px]" aria-label="Lens filter">
+            <span>{lensFilter === "All" ? "All lenses" : lensFilter}</span>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="All" label="All">All lenses</SelectItem>
+            {#each lenses as l (l.name)}
+              <SelectItem value={l.name} label={l.name}>{l.name}</SelectItem>
+            {/each}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <ScrollArea class="h-full">
+        {#if loading}
+          <ul class="brief-list" aria-label="Research briefs loading">
+            {#each { length: 4 } as _, i (i)}
+              <li>
+                <Card class="research-brief-card">
+                  <div class="brief-inner">
+                    <Skeleton class="h-4 w-3/4" />
+                    <div class="flex gap-2 pt-2">
+                      <Skeleton class="h-4 w-16" />
+                      <Skeleton class="h-4 w-10" />
+                      <Skeleton class="h-4 w-12" />
+                    </div>
+                  </div>
+                </Card>
+              </li>
+            {/each}
+          </ul>
+        {:else}
+          <ul
+            class="brief-list"
+            role="listbox"
+            tabindex="0"
+            aria-label="Research briefs"
+            bind:this={listEl}
+            onkeydown={onListKeydown}
+          >
+            {#each filtered as b (b.brief_id)}
+              <li>
+                <Card class={["research-brief-card", b.brief_id === selectedId ? "selected" : ""].join(" ")}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={b.brief_id === selectedId}
+                    class:sel={b.brief_id === selectedId}
+                    class="brief-btn"
+                    onclick={() => select(b.brief_id)}
+                  >
+                    <div class="brief-inner">
+                      <div class="brief-top">
+                        <span class="thesis">{b.thesis}</span>
+                        <Badge variant={statusVariant(b.status)}>
+                          {b.status}{b.expired ? " · expired" : ""}
+                        </Badge>
+                      </div>
+                      <div class="meta">
+                        <Badge variant="outline">{b.lens}</Badge>
+                        <span class="dir num {dirBadgeClass(b.direction)}">{dirLabel(b.direction)}</span>
+                        <span class="conf num">{(b.confidence * 100).toFixed(0)}%</span>
+                        {#if isStale(b.as_of)}
+                          <Badge class="border-warning text-warning">STALE</Badge>
+                        {/if}
+                        <span class="time num">{fmtTime(b.as_of)}</span>
+                      </div>
+                    </div>
+                  </button>
+                </Card>
+              </li>
+            {/each}
+            {#if filtered.length === 0}
+              <li class="empty">No briefs.</li>
+            {/if}
+          </ul>
+        {/if}
       </ScrollArea>
     </div>
 
@@ -375,41 +428,61 @@
     padding: 8px 10px;
     border-bottom: 1px solid var(--hairline);
   }
+  .titles {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .eyebrow {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
   .panel-head h2 {
     margin: 0;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    color: var(--muted);
-    text-transform: uppercase;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
   }
-  .run-bar {
-    padding: 8px 10px;
-    border-bottom: 1px solid var(--hairline);
+  :global(.research-run-card) {
+    margin: 8px 10px 0;
+    border: 1px solid var(--hairline);
+    background: var(--surface-card);
+  }
+  .research-run-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 10px 8px;
+  }
+  .research-run-header {
+    padding: 8px 10px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .toggle-group {
     display: flex;
     flex-direction: column;
     gap: 6px;
   }
-  .run-bar h3 {
-    margin: 0;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.07em;
-    color: var(--faint);
-    text-transform: uppercase;
-  }
-  .lens-row,
-  .tool-row {
+  .toggle-row {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
     align-items: center;
     font-size: 11px;
   }
-  .tool-label {
+  .row-label {
     color: var(--faint);
     font-size: 10px;
+    font-weight: 600;
     text-transform: uppercase;
+    letter-spacing: 0.06em;
   }
   /* Toggle / switch — DESIGN.md §4: off = hairline-strong track + muted knob,
      on = accent track + white knob. 26×14px, 120ms color/position transition. */
@@ -461,7 +534,11 @@
     outline: none;
     box-shadow: 0 0 0 2px var(--canvas), 0 0 0 4px var(--focus-ring);
   }
-  .run-row {
+  .context {
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .run-actions {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -490,15 +567,21 @@
     }
   }
   .col {
-    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
   }
   .list-col {
     border-right: 1px solid var(--hairline);
+    padding: 8px 10px;
+    gap: 6px;
   }
-  .filters {
+  .detail-col {
+    padding: 8px 10px;
+  }
+  .list-tools {
     display: flex;
     gap: 6px;
-    margin-bottom: 8px;
   }
   ul.brief-list {
     list-style: none;
@@ -512,48 +595,63 @@
     outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
   }
-  /* Brief rows — surface-card cards, thesis in ticker face, meta in caption. */
-  .brief-card {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    width: 100%;
-    padding: 6px 8px;
+  /* Brief card — shadcn Card with custom compact content. */
+  :global(.research-brief-card) {
+    border-color: var(--hairline);
     background: var(--surface-card);
-    border: 1px solid var(--hairline);
-    border-radius: 4px;
+    transition: background-color 120ms ease-out, border-color 120ms ease-out;
+  }
+  :global(.research-brief-card):hover {
+    border-color: var(--hairline-strong);
+    background: var(--row-hover);
+  }
+  :global(.research-brief-card.selected) {
+    background: var(--row-selected);
+    border-color: var(--accent);
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+  .brief-btn {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
     color: inherit;
     text-align: left;
     cursor: pointer;
-    transition: background-color 120ms ease-out, border-color 120ms ease-out;
   }
-  .brief-card:hover {
-    background: var(--row-hover);
+  .brief-btn:focus-visible {
+    outline: none;
   }
-  .brief-card.sel {
-    background: var(--row-selected);
-    box-shadow: inset 2px 0 0 var(--accent);
+  .brief-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 8px;
+  }
+  .brief-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
   }
   .thesis {
     color: var(--ink);
-    font-family: var(--font-mono);
     font-size: 12px;
-    font-weight: 500;
-    letter-spacing: 0.02em;
+    font-weight: 600;
     line-height: 16px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    min-width: 0;
   }
   .meta {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 6px;
-  }
-  .meta .caption {
-    color: var(--muted);
-    font-size: 11px;
   }
   .dir {
     font-size: 11px;
@@ -569,20 +667,6 @@
   }
   .dir-flat {
     color: var(--muted);
-  }
-  /* Staleness marker — DESIGN.md §4: warning micro "STALE" chip. */
-  .stale {
-    font-family: var(--font-mono);
-    font-size: 9px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--warning);
-    border: 1px solid var(--warning);
-    border-radius: 2px;
-    padding: 0 4px;
-    line-height: 14px;
-    white-space: nowrap;
   }
   .empty {
     color: var(--faint);

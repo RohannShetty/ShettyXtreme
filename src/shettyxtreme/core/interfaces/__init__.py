@@ -2,6 +2,13 @@
 # canonical data classes from core.data_models. Both import paths resolve to
 # the same classes, so `isinstance` dispatch works across the adapter side
 # (interfaces) and the bus side (data_models).
+from .backtest_engine import (
+    BacktestConfig,
+    BacktestEngine,
+    BacktestMetrics,
+    BacktestReport,
+    BacktestTrade,
+)
 from .order_executor import OrderExecutor
 from .market_data_stream import MarketDataStream, TickCallback, BarCallback
 from .account_info import AccountInfo
@@ -13,6 +20,8 @@ from shettyxtreme.core.data_models import (
     ProductType, Fill, Position, Trade, Holding, OrderBook,
 )
 __all__ = [
+    "BacktestConfig", "BacktestEngine", "BacktestMetrics", "BacktestReport",
+    "BacktestTrade",
     "OrderExecutor", "Order", "OrderRequest", "OrderResult", "OrderSide",
     "OrderType", "ProductType", "OrderStatus", "MarketDataStream", "Tick",
     "Bar", "TickCallback", "BarCallback", "AccountInfo", "Position",

@@ -27,7 +27,7 @@
     DialogTitle,
   } from "$lib/components/ui/dialog";
   import { Kbd } from "$lib/components/ui/kbd";
-  import { activeTab, type CenterTabId } from "../lib/activeTab";
+  import { activeTab, type CenterTabId } from "../lib/activeTab.svelte.ts";
   import { applyTheme, getTheme, type Theme } from "../lib/theme";
   import {
     BookOpen,
@@ -68,7 +68,7 @@
   }
 
   function goTab(tab: CenterTabId): void {
-    activeTab.set(tab);
+    activeTab.value = tab;
     goRoute("/");
   }
 

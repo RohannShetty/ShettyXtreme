@@ -14,8 +14,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 
 from shettyxtreme.terminal.api.intelligence_router import (
+    DataEntitlementError,
+    _fetch_chain_with_spot,
     prime_options_chain,
 )
 from shettyxtreme.terminal.api.research_source import ProjectionDataSource
@@ -143,3 +146,69 @@ async def test_prime_calls_adapter_with_nifty_defaults() -> None:
     kwargs = get_option_chain.call_args.kwargs
     assert kwargs["underlying"] == "NIFTY"
     assert kwargs["strike_count"] == 50
+
+
+class _FakeAdapterForFetch:
+    """Adapter double for _fetch_chain_with_spot tests."""
+
+    def __init__(self, result: dict | None = None) -> None:
+        self._result = result or {}
+
+    async def get_option_chain(self, underlying: str, expiry: str, strike_count: int = 50) -> dict:
+        return self._result
+
+
+class TestFetchChainWithSpot:
+    """P0-1.1: _fetch_chain_with_spot must surface errors, not swallow them."""
+
+    @pytest.mark.asyncio
+    async def test_entitlement_code_minus_373_raises_data_entitlement(self) -> None:
+        """Fyers code -373 → DataEntitlementError."""
+        adapter = _FakeAdapterForFetch({"s": "error", "code": -373, "message": "no entitlement"})
+        with pytest.raises(DataEntitlementError):
+            await _fetch_chain_with_spot(adapter, "NIFTY", None)
+
+    @pytest.mark.asyncio
+    async def test_entitlement_flag_raises_data_entitlement(self) -> None:
+        """Legacy entitlement flag → DataEntitlementError."""
+        adapter = _FakeAdapterForFetch({"entitlement": True, "s": "error"})
+        with pytest.raises(DataEntitlementError):
+            await _fetch_chain_with_spot(adapter, "NIFTY", None)
+
+    @pytest.mark.asyncio
+    async def test_generic_error_raises_503(self) -> None:
+        """Non-ok response with arbitrary code → HTTPException 503."""
+        adapter = _FakeAdapterForFetch({"s": "error", "code": -300, "message": "some error"})
+        with pytest.raises(HTTPException) as exc_info:
+            await _fetch_chain_with_spot(adapter, "NIFTY", None)
+        assert exc_info.value.status_code == 503
+        assert "code -300" in exc_info.value.detail
+        assert "some error" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_error_without_code_or_message_raises_503(self) -> None:
+        """Non-ok response with no code/message → HTTPException 503 with repr."""
+        adapter = _FakeAdapterForFetch({"s": "error"})
+        with pytest.raises(HTTPException) as exc_info:
+            await _fetch_chain_with_spot(adapter, "NIFTY", None)
+        assert exc_info.value.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_ok_response_returns_chain_and_spot(self) -> None:
+        """Legitimate ok response → returns (chain, spot)."""
+        adapter = _FakeAdapterForFetch({
+            "s": "ok",
+            "option_chain": [{"strike": 24500, "option_type": "CE"}],
+            "underlying_ltp": 24750.0,
+        })
+        chain, spot = await _fetch_chain_with_spot(adapter, "NIFTY", None)
+        assert len(chain) == 1
+        assert spot == 24750.0
+
+    @pytest.mark.asyncio
+    async def test_ok_empty_chain_returns_empty_list(self) -> None:
+        """Ok with empty option_chain → returns ([], None) (legitimate empty)."""
+        adapter = _FakeAdapterForFetch({"s": "ok", "option_chain": []})
+        chain, spot = await _fetch_chain_with_spot(adapter, "NIFTY", None)
+        assert chain == []
+        assert spot is None

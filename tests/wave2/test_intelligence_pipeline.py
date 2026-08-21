@@ -189,3 +189,48 @@ async def test_regime_change_updates_engine_regime() -> None:
             await bus_task
         except (asyncio.CancelledError, Exception):
             pass
+
+
+@pytest.mark.asyncio
+async def test_signal_generated_published_from_pipeline() -> None:
+    """SIGNAL_GENERATED must be published alongside SIGNAL_V2 for scanner clusters."""
+    bus = EventBus()
+    pipeline = IntelligencePipeline(bus)
+    pipeline.subscribe()
+
+    received_v2: list[Event] = []
+    received_gen: list[Event] = []
+
+    async def spy_v2(event: Event) -> None:
+        received_v2.append(event)
+
+    async def spy_gen(event: Event) -> None:
+        received_gen.append(event)
+
+    bus.subscribe(Topic.SIGNAL_V2, spy_v2)
+    bus.subscribe(Topic.SIGNAL_GENERATED, spy_gen)
+
+    bus_task = asyncio.create_task(bus.start())
+    try:
+        for tick in _trending_ticks():
+            await bus.publish(Event(Topic.MARKET_DATA_TICK, tick, source="test"))
+        # Wait for signals to be published
+        for _ in range(200):
+            if received_gen:
+                break
+            await asyncio.sleep(0.05)
+        assert received_v2, "SIGNAL_V2 should be published"
+        assert received_gen, "SIGNAL_GENERATED should be published alongside SIGNAL_V2"
+        # SIGNAL_GENERATED must carry a symbol key (ClusterDetector reads it)
+        gen_data = received_gen[0].data
+        assert "symbol" in gen_data
+        assert gen_data["symbol"] == "NIFTY"
+        assert "direction" in gen_data
+        assert "conviction" in gen_data
+    finally:
+        await bus.stop()
+        bus_task.cancel()
+        try:
+            await bus_task
+        except (asyncio.CancelledError, Exception):
+            pass

@@ -1,8 +1,13 @@
-"""Decided-brief ingestion into the knowledge store (spec 4A §3.3).
+"""Decided-brief and agent-signal ingestion into the knowledge store.
 
 `knowledge/` never imports `research/` (D12): callers hand us anything that
 satisfies the `ResearchBriefLike` protocol, so the sync wiring can live in
 the terminal layer without creating a dependency edge.
+
+P2-3.5: added `ingest_agent_signals` for `kind="agent_signal"` ingestion
+of proposed agent signals into the knowledge store (mirroring the
+`research_brief` sync but at `proposed` status, keeping the human
+activation gate). `KnowledgeDoc.kind` is free-form — no schema change needed.
 """
 from __future__ import annotations
 
@@ -26,6 +31,22 @@ class ResearchBriefLike(Protocol):
     decided_at: str | None
     outcome: str | None
     evidence: list[dict[str, Any]]
+
+
+class AgentSignalLike(Protocol):
+    """Structural contract for a proposed agent signal (P2-3.5)."""
+
+    brief_id: str
+    lens: str
+    as_of: str
+    status: str
+    thesis: str
+    rationale: str
+    instruments: list[str]
+    direction: int
+    confidence: float
+    evidence: list[dict[str, Any]]
+    risks: list[str]
 
 
 @dataclass
@@ -69,6 +90,56 @@ def ingest_decided_briefs(
                 "decided_at": brief.decided_at,
                 "outcome": brief.outcome,
                 "evidence": brief.evidence or [],
+            },
+            tags=tag_document(text),
+        )
+        try:
+            store.ingest(doc)
+        except DuplicateSourceError:
+            result.skipped_duplicate += 1
+            continue
+        result.ingested += 1
+    return result
+
+
+def ingest_agent_signals(
+    store: KnowledgeStore, signals: Sequence[AgentSignalLike]
+) -> IngestResult:
+    """Ingest proposed agent signals into the knowledge store.
+
+    Agent signals are ingested at `proposed` status (the human activation
+    gate is preserved). A duplicate source_ref is counted, never fatal.
+
+    This mirrors `ingest_decided_briefs` but for `kind="agent_signal"` —
+    proposed signals from deterministic analysts that the operator can
+    activate to become research sources.
+    """
+    result = IngestResult()
+    for signal in signals:
+        if signal.status != "proposed":
+            result.skipped_undecided += 1
+            continue
+        evidence_parts = [
+            f"{item.get('item', '')} {item.get('source', '')}"
+            for item in (signal.evidence or [])
+            if isinstance(item, dict)
+        ]
+        text = " ".join([signal.thesis, signal.rationale, *evidence_parts])
+        doc = KnowledgeDoc(
+            doc_id=f"signal-{signal.brief_id}",
+            kind="agent_signal",
+            source_ref=signal.brief_id,
+            payload={
+                "thesis": signal.thesis,
+                "rationale": signal.rationale,
+                "lens": signal.lens,
+                "as_of": signal.as_of,
+                "status": signal.status,
+                "instruments": signal.instruments,
+                "direction": signal.direction,
+                "confidence": signal.confidence,
+                "evidence": signal.evidence or [],
+                "risks": signal.risks or [],
             },
             tags=tag_document(text),
         )

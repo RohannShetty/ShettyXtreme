@@ -109,7 +109,7 @@ A pure black canvas `{colors.canvas}` carrying dense instrument panels. The chro
 - High information density with a fixed 4px grid — density is the product.
 - Elevation is carried exclusively by hairline borders and surface steps; no drop shadows, no glassmorphism, no gradients.
 - One accent color (warm amber) for the few moments that need attention (interactive, live, selected); every other hue is semantic.
-- Indian price convention is law in BOTH themes: **red = rise, green = fall** — the exact inverse of international convention. Never "fix" this, never invert it.
+- Price color convention is configurable via `data-convention` on `<html>`. **International (green = rise, red = fall) is the default**; Indian (red = rise, green = fall) is the legacy opt-in. The operator toggles in Settings; the choice persists (`sx-convention` in `localStorage`) and applies before first paint.
 - Every numeral renders in the mono face with tabular figures; labels and chrome render in the sans face.
 - Status colors never appear in price columns; price colors never appear in status badges.
 
@@ -122,7 +122,7 @@ The terminal ships **two themes**:
 - **Dark (default, operator norm)** — the pure black palette in §2.2. `data-theme="dark"` on `<html>`. This is what the operator runs in; light is never the default, and `--mode OBSERVER`-style behavior is theme-independent.
 - **Light (opt-in)** — the pure white palette in §2.3. The operator may switch via the header toggle; the choice persists (`sx-theme` in `localStorage`) and applies before first paint.
 - Both themes pass **WCAG AA for text** (contrast ≥ 4.5:1 for body text; the price tokens are the single documented exception — see below).
-- **Red = rise, green = fall in BOTH themes. Never invert.** The price convention law holds in dark and light alike; `{colors.price-up}` / `{colors.price-down}` keep their hex in dark and may only *darken* in light for AA (green may darken to `#1e9e6b`; the red `#f6525c` is kept as-is and is the one accepted sub-AA text usage at ~3.5:1 on paper, used in 600-weight data numerals only).
+- **Convention is configurable; international (green = rise, red = fall) is the default in both themes.** Indian (red = rise, green = fall) remains the legacy opt-in. The price tokens `{colors.price-up}` / `{colors.price-down}` swap values per convention; in light theme the "down" hue may darken to `#1e9e6b` for AA (the up hue `#f6525c` is the one accepted sub-AA text usage at ~3.5:1 on paper, used in 600-weight data numerals only).
 - Theme selection changes tokens only — never layout, density, typography, or component structure.
 
 ### 2.2 Token reference — dark (pure black + warm amber)
@@ -144,14 +144,14 @@ The terminal ships **two themes**:
 | `{colors.accent-active}` | `#ffce6b` | Accent hover / pressed glow (brightens on dark). |
 | `{colors.accent-disabled}` | `#5c4712` | Accent controls in disabled state. |
 | `{colors.on-accent}` | `#1a1405` | Text on accent fills (inverse-contrast). |
-| `{colors.price-up}` | `#f6525c` | **Price rose.** All rising-market values: LTP up, up-change, bid-ask up side, red candles. |
-| `{colors.price-up-strong}` | `#ff7a82` | Brighter red for LTP flash text, candle bodies. |
-| `{colors.price-up-soft}` | `rgba(246,82,92,0.12)` | Up-side column tint, soft up backgrounds (never text). |
-| `{colors.price-down}` | `#2ebd85` | **Price fell.** All falling-market values: LTP down, down-change, green candles. |
-| `{colors.price-down-strong}` | `#3fd9a0` | Brighter green for LTP flash text, candle bodies. |
-| `{colors.price-down-soft}` | `rgba(46,189,133,0.12)` | Down-side column tint, soft down backgrounds (never text). |
-| `{colors.flash-up}` | `rgba(246,82,92,0.16)` | Transient row-flash background when a value ticks up; fades to transparent over 150ms. |
-| `{colors.flash-down}` | `rgba(46,189,133,0.16)` | Transient row-flash background when a value ticks down. |
+| `{colors.price-up}` | Indian: `#f6525c`, Intl: `#2ebd85` | **Price rose.** All rising-market values: LTP up, up-change, bid-ask up side, candles. Hex swaps per convention. |
+| `{colors.price-up-strong}` | Indian: `#ff7a82`, Intl: `#3fd9a0` | Brighter up color for LTP flash text, candle bodies. |
+| `{colors.price-up-soft}` | Indian: `rgba(246,82,92,0.12)`, Intl: `rgba(46,189,133,0.12)` | Up-side column tint, soft up backgrounds (never text). |
+| `{colors.price-down}` | Indian: `#2ebd85`, Intl: `#f6525c` | **Price fell.** All falling-market values: LTP down, down-change, candles. Hex swaps per convention. |
+| `{colors.price-down-strong}` | Indian: `#3fd9a0`, Intl: `#ff7a82` | Brighter down color for LTP flash text, candle bodies. |
+| `{colors.price-down-soft}` | Indian: `rgba(46,189,133,0.12)`, Intl: `rgba(246,82,92,0.12)` | Down-side column tint, soft down backgrounds (never text). |
+| `{colors.flash-up}` | Indian: `rgba(246,82,92,0.16)`, Intl: `rgba(46,189,133,0.16)` | Transient row-flash background when a value ticks up; fades to transparent over 150ms. |
+| `{colors.flash-down}` | Indian: `rgba(46,189,133,0.16)`, Intl: `rgba(246,82,92,0.16)` | Transient row-flash background when a value ticks down. |
 | `{colors.success}` | `#22c55e` | Status-only success: connected, synced, order accepted, strategy validated. Emerald — NOT `{colors.price-down}`. |
 | `{colors.warning}` | `#ffb020` | Stale data, margin near limit, OI spike, regime change alert, unsaved config. |
 | `{colors.danger}` | `#e5484d` | Risk states: margin breach, feed disconnect, order rejection, kill-switch armed, session error. Crimson — NOT `{colors.price-up}`. |
@@ -160,8 +160,8 @@ The terminal ships **two themes**:
 | `{colors.row-hover}` | `#211d17` | Table row hover background. |
 | `{colors.row-selected}` | `#2b2210` | Selected row background; combined with a 2px `{colors.accent}` left edge inset. |
 | `{colors.scrim}` | `rgba(0,0,0,0.6)` | Modal/drawer overlay scrim. |
-| `{colors.candle-up}` | `#f6525c` | Bull candle (Indian convention). |
-| `{colors.candle-down}` | `#2ebd85` | Bear candle. |
+| `{colors.candle-up}` | Indian: `#f6525c`, Intl: `#2ebd85` | Bull candle. |
+| `{colors.candle-down}` | Indian: `#2ebd85`, Intl: `#f6525c` | Bear candle. |
 | `{colors.volume}` | `#3b362c` | Volume bars (neutral); tinted `{colors.candle-*}` per bar direction. |
 | `{colors.grid-line}` | `#211d17` | Chart grid lines. |
 | `{colors.crosshair}` | `#948b7c` | Chart crosshair. |
@@ -169,7 +169,7 @@ The terminal ships **two themes**:
 
 ### 2.3 Token reference — light (pure white)
 
-Same roles as §2.2 — only the hex differs. The price law holds unchanged: `{colors.price-up}` red, `{colors.price-down}` green (darkened to `#1e9e6b` for AA on white; hue stays green, never swapped).
+Same roles as §2.2 — only the hex differs. Convention is configurable; international (green = rise, red = fall) is the default. In light theme the "down" hue may darken to `#1e9e6b` for AA.
 
 | Token | Hex | Role |
 |---|---|---|
@@ -188,14 +188,14 @@ Same roles as §2.2 — only the hex differs. The price law holds unchanged: `{c
 | `{colors.accent-active}` | `#b45309` | Accent hover / pressed (darkens on light). |
 | `{colors.accent-disabled}` | `#fde68a` | Accent controls in disabled state. |
 | `{colors.on-accent}` | `#ffffff` | Text on accent fills. |
-| `{colors.price-up}` | `#f6525c` | **Price rose.** Same hex as dark — law. |
-| `{colors.price-up-strong}` | `#f6525c` | LTP flash / candle body tone; on paper the law-red is already the strongest readable tone, so "strong" equals the base. |
-| `{colors.price-up-soft}` | `rgba(246,82,92,0.12)` | Up-side column tint, soft up backgrounds. |
-| `{colors.price-down}` | `#1e9e6b` | **Price fell.** Darkened from `#2ebd85` for AA on paper; hue stays green. |
-| `{colors.price-down-strong}` | `#2ebd85` | LTP flash / candle body tone; equals the dark-theme green. |
-| `{colors.price-down-soft}` | `rgba(30,158,107,0.12)` | Down-side column tint, soft down backgrounds. |
-| `{colors.flash-up}` | `rgba(246,82,92,0.16)` | Transient row-flash on tick up; 150ms fade. |
-| `{colors.flash-down}` | `rgba(30,158,107,0.16)` | Transient row-flash on tick down. |
+| `{colors.price-up}` | Indian: `#f6525c`, Intl: `#1e9e6b` | **Price rose.** Hex swaps per convention. |
+| `{colors.price-up-strong}` | Indian: `#f6525c`, Intl: `#2ebd85` | LTP flash / candle body tone. |
+| `{colors.price-up-soft}` | Indian: `rgba(246,82,92,0.12)`, Intl: `rgba(30,158,107,0.12)` | Up-side column tint, soft up backgrounds. |
+| `{colors.price-down}` | Indian: `#1e9e6b`, Intl: `#f6525c` | **Price fell.** Hex swaps per convention. |
+| `{colors.price-down-strong}` | Indian: `#2ebd85`, Intl: `#f6525c` | LTP flash / candle body tone. |
+| `{colors.price-down-soft}` | Indian: `rgba(30,158,107,0.12)`, Intl: `rgba(246,82,92,0.12)` | Down-side column tint, soft down backgrounds. |
+| `{colors.flash-up}` | Indian: `rgba(246,82,92,0.16)`, Intl: `rgba(30,158,107,0.16)` | Transient row-flash on tick up; 150ms fade. |
+| `{colors.flash-down}` | Indian: `rgba(30,158,107,0.16)`, Intl: `rgba(246,82,92,0.16)` | Transient row-flash on tick down. |
 | `{colors.success}` | `#15803d` | Status-only success (darkened for AA on paper). |
 | `{colors.warning}` | `#92400e` | Stale data, margin near limit, OI spike, alerts. |
 | `{colors.danger}` | `#c62828` | Risk states (darkened for AA on paper). |

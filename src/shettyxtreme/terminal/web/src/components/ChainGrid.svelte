@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { get } from "../lib/api";
-  import { selectedSymbol } from "../lib/selection";
+  import { selectedSymbol } from "../lib/selection.svelte.ts";
   import { onMessage, type TickPayload } from "../lib/ws";
   import { Input } from "$lib/components/ui/input";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
@@ -9,6 +9,7 @@
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { cn } from "$lib/utils.js";
   import CandleChart from "./CandleChart.svelte";
+  import SymbolSearch from "./SymbolSearch.svelte";
   import {
     Table,
     TableBody,
@@ -39,6 +40,14 @@
     contracts: Contract[];
   };
 
+  type ExpiryCalendarItem = { date: string; kind: string };
+  type ExpiryCalendarResponse = {
+    symbol: string;
+    instrument_type: string;
+    expiries: ExpiryCalendarItem[];
+    default: string | null;
+  };
+
   type ChainRow = { strike: number; ce?: Contract; pe?: Contract };
   type Side = "ce" | "pe";
   type Dir = "up" | "down";
@@ -55,6 +64,7 @@
   let exchange = $state("NSE_FNO");
   let expiry = $state("");
   let expiries = $state<string[]>([]);
+  let expiryKinds = $state<Record<string, string>>({});
   let contracts = $state<Contract[]>([]);
   let loading = $state(false);
   let error = $state("");
@@ -73,6 +83,11 @@
   // Per-contract last-tick direction (persistent LTP cell color) and last LTP.
   const dirMap = new Map<string, Dir>();
   const prevLtp = new Map<string, number>();
+  // Ticks that raced the REST load (the contract isn't in the grid yet) are
+  // stashed by `${strike}|${side}` and applied when the chain response lands,
+  // so a tick arriving before the load completes is never lost (watchlist-fix
+  // pattern — a dropped tick = a stale LTP cell).
+  const pendingTicks = new Map<string, { ltp?: number; oi?: number; bid?: number; ask?: number }>();
   let lastTickAt: number | null = null;
 
   let reqId = 0;
@@ -94,34 +109,65 @@
 
   onMount(() => {
     const unsubTick = onMessage("tick", applyTick);
+    // Fetch expiry calendar for the initial symbol
+    void fetchExpiryCalendar(symbol);
     // Selection now carries {symbol, exchange}: the grid's symbol AND the
     // candle chart's exchange come from the selection. "NSE_FNO" stays as the
     // default only for the manual symbol input, where no selection exists yet.
-    const unsubSel = selectedSymbol.subscribe((sel) => {
-      if (!sel) return;
-      if (sel.symbol && sel.symbol !== symbol) {
-        symbol = sel.symbol;
-        snapshot = { symbol: sel.symbol, expiry: snapshot.expiry };
-      }
-      if (sel.exchange && sel.exchange !== exchange) {
-        exchange = sel.exchange;
-      }
-    });
+    // (Reactive sync moved to $effect below — no subscribe needed.)
     refreshTimer = window.setInterval(() => {
       void refreshSilently();
     }, REFRESH_MS);
     nowTimer = window.setInterval(() => {
       now = Date.now();
+      // Re-derive freshness as time advances — without this, `live` latches
+      // true forever after the first tick/REST load instead of decaying to
+      // SYNC after LIVE_MS without any fresh data.
+      live = lastTickAt !== null && now - lastTickAt <= LIVE_MS;
     }, 5000);
     return () => {
       unsubTick();
-      unsubSel();
       if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
       if (nowTimer !== undefined) window.clearInterval(nowTimer);
       for (const id of flashTimers.values()) window.clearTimeout(id);
       flashTimers.clear();
     };
   });
+
+  // Sync symbol + exchange from the shared selection rune (replaces
+  // the old selectedSymbol.subscribe inside onMount).
+  $effect(() => {
+    const sel = selectedSymbol;
+    if (sel.symbol && sel.symbol !== symbol) {
+      symbol = sel.symbol;
+      if (sel.symbol !== snapshot.symbol) {
+        // A new symbol must never inherit the previous symbol's expiry —
+        // that pair is invalid (Fyers returns an empty/error chain) and the
+        // grid would sit on "No chain data" with a stale expiry still
+        // selected. The calendar fetch re-selects the new symbol's default.
+        resetForSymbolChange();
+        snapshot = { symbol: sel.symbol, expiry: "" };
+      }
+      void fetchExpiryCalendar(sel.symbol);
+    }
+    if (sel.exchange && sel.exchange !== exchange) {
+      exchange = sel.exchange;
+    }
+  });
+
+  // A new symbol must never inherit the previous symbol's expiry/chain:
+  // the stale pair is invalid (empty chain from Fyers → "No chain data").
+  // Also clears per-symbol tick state so flashes/directions don't leak
+  // across symbols (strike|side keys can collide between underlyings).
+  function resetForSymbolChange(): void {
+    expiry = "";
+    expiries = [];
+    expiryKinds = {};
+    contracts = [];
+    dirMap.clear();
+    prevLtp.clear();
+    pendingTicks.clear();
+  }
 
   function buildRows(list: Contract[]): ChainRow[] {
     const byStrike = new Map<number, ChainRow>();
@@ -158,6 +204,19 @@
     return String(optionType).toUpperCase() === "PE" ? "pe" : "ce";
   }
 
+  // Apply a live LTP to a contract: direction is the tick-vs-previous-tick
+  // move (configurable price convention), flashing on every change.
+  function applyLiveLtp(c: Contract, key: string, ltp: number): void {
+    const prev = prevLtp.get(key) ?? c.ltp;
+    if (ltp !== prev) {
+      const dir: Dir = ltp > prev ? "up" : "down";
+      dirMap.set(key, dir);
+      scheduleFlash(key, dir);
+    }
+    prevLtp.set(key, ltp);
+    c.ltp = ltp;
+  }
+
   // Live chain tick (P6-W2): the backend broadcasts strike/option_type/oi on
   // every tick, so the contract identity comes from the wire payload — no
   // symbol regex parsing. Non-option symbols (indexes, equities) carry
@@ -170,29 +229,32 @@
     if (strike === null || optionType === null) return;
     const key = contractKey(strike, sideOf(optionType));
     const entry = matchIndex.get(key);
-    if (!entry) return;
+    if (!entry) {
+      // Tick raced the REST load — the contract isn't in the grid yet.
+      // Stash its values so applyResponse applies them when the chain
+      // arrives (a lost tick would leave the cell stale until the next
+      // tick or the 15s poll).
+      pendingTicks.set(key, {
+        ltp: typeof t.ltp === "number" ? t.ltp : undefined,
+        oi: typeof t.oi === "number" ? t.oi : undefined,
+        bid: typeof t.bid === "number" ? t.bid : undefined,
+        ask: typeof t.ask === "number" ? t.ask : undefined,
+      });
+      lastTickAt = Date.now();
+      live = lastTickAt !== null && now - lastTickAt <= LIVE_MS;
+      return;
+    }
     const c = contracts[entry.rowIdx];
     if (!c) return;
 
     const ltp = typeof t.ltp === "number" ? t.ltp : undefined;
-    if (ltp !== undefined) {
-      const prev = prevLtp.get(key) ?? c.ltp;
-      if (ltp !== prev) {
-        // Indian price law: red = up, green = down. Direction is the
-        // tick-vs-previous-tick move.
-        const dir: Dir = ltp > prev ? "up" : "down";
-        dirMap.set(key, dir);
-        scheduleFlash(key, dir);
-      }
-      prevLtp.set(key, ltp);
-      c.ltp = ltp;
-    }
+    if (ltp !== undefined) applyLiveLtp(c, key, ltp);
     if (typeof t.iv === "number") c.iv = t.iv;
     if (typeof t.oi === "number") c.oi = t.oi;
     if (typeof t.bid === "number") c.bid = t.bid;
     if (typeof t.ask === "number") c.ask = t.ask;
     lastTickAt = Date.now();
-    live = now - lastTickAt <= LIVE_MS;
+    live = lastTickAt !== null && now - lastTickAt <= LIVE_MS;
   }
 
   function scheduleFlash(key: string, dir: Dir): void {
@@ -226,6 +288,20 @@
 
   function applyResponse(resp: OptionsResponse): void {
     contracts = resp.contracts ?? [];
+    if (pendingTicks.size > 0) {
+      // Apply ticks that raced this load (they couldn't match an empty grid).
+      for (let i = 0; i < contracts.length; i++) {
+        const c = contracts[i];
+        const key = contractKey(c.strike, sideOf(c.option_type));
+        const pending = pendingTicks.get(key);
+        if (!pending) continue;
+        if (pending.ltp !== undefined) applyLiveLtp(c, key, pending.ltp);
+        if (pending.oi !== undefined) c.oi = pending.oi;
+        if (pending.bid !== undefined) c.bid = pending.bid;
+        if (pending.ask !== undefined) c.ask = pending.ask;
+      }
+      pendingTicks.clear();
+    }
     if (resp.expiry) {
       if (!expiries.includes(resp.expiry)) expiries = [...expiries, resp.expiry].sort();
       expiry = resp.expiry;
@@ -236,6 +312,11 @@
         snapshot = { symbol: snapshot.symbol, expiry: resp.expiry };
       }
     }
+    // REST-fresh data is fresh data: a quiet feed (data socket down, market
+    // closed) must not read as "no live data" while the API is serving
+    // (watchlist-fix pattern — never-ticked ≠ stale).
+    lastTickAt = Date.now();
+    live = lastTickAt !== null && now - lastTickAt <= LIVE_MS;
   }
 
   // Quiet 15s poll: refreshes LTP/IV/OI numbers without flashing or touching
@@ -250,13 +331,56 @@
       if (resp.expiry && !expiries.includes(resp.expiry)) {
         expiries = [...expiries, resp.expiry].sort();
       }
+      // The poll delivered fresh data — keep the LIVE chip honest on feeds
+      // that are quiet but still serving (watchlist-fix pattern).
+      lastTickAt = Date.now();
+      live = lastTickAt !== null && now - lastTickAt <= LIVE_MS;
     } catch {
       /* silent — the committed load path surfaces errors */
     }
   }
 
   function commit(): void {
-    snapshot = { symbol: symbol.trim().toUpperCase() || "NIFTY", expiry: expiry.trim() };
+    const sym = symbol.trim().toUpperCase() || "NIFTY";
+    if (sym !== snapshot.symbol) {
+      // New symbol: drop the previous symbol's expiry + chain — the stale
+      // pair is invalid and would render "No chain data" with an expiry
+      // still selected. The calendar fetch re-selects the policy default;
+      // when the calendar is unavailable the server resolves its own.
+      resetForSymbolChange();
+    }
+    snapshot = { symbol: sym, expiry: expiry.trim() };
+    void fetchExpiryCalendar(sym);
+  }
+
+  async function fetchExpiryCalendar(sym: string): Promise<void> {
+    try {
+      const cal = await get<ExpiryCalendarResponse>(
+        `/api/intelligence/expiry-calendar?symbol=${encodeURIComponent(sym)}`
+      );
+      // Stale response — a newer commit (different symbol) superseded this.
+      if (sym !== snapshot.symbol) return;
+      if (cal.expiries && cal.expiries.length > 0) {
+        const newExpiries: string[] = [];
+        const newKinds: Record<string, string> = {};
+        for (const item of cal.expiries) {
+          newExpiries.push(item.date);
+          newKinds[item.date] = item.kind;
+        }
+        expiries = newExpiries;
+        expiryKinds = newKinds;
+        // Auto-select the policy default when no expiry is chosen — the case
+        // right after a symbol change, when the old symbol's expiry was
+        // deliberately cleared. (Same-symbol commits keep the user's choice.)
+        if (cal.default && !expiry) {
+          expiry = cal.default;
+          snapshot = { symbol: sym, expiry: cal.default };
+        }
+      }
+    } catch {
+      // Silently degrade: the old passive accumulation still works
+      // when the calendar endpoint is unavailable.
+    }
   }
 
   function fmtNum(value: number | undefined, digits = 2): string {
@@ -267,6 +391,12 @@
   function fmtOi(value: number | undefined): string {
     if (value === undefined) return "—";
     return Math.round(value).toLocaleString("en-IN");
+  }
+
+  /** Format a greek value with compact display — zero renders as "—". */
+  function fmtGreek(value: number | undefined, digits = 2): string {
+    if (value === undefined || !isFinite(value) || value === 0) return "—";
+    return value.toLocaleString("en-IN", { minimumFractionDigits: digits, maximumFractionDigits: digits });
   }
 
   function ltpCellClass(row: ChainRow, side: Side): string {
@@ -311,12 +441,18 @@
   <header class="panel-head">
     <h2>Option Chain</h2>
     <div class="controls">
-      <Input
-        class="mono h-7 w-[110px]"
+      <SymbolSearch
+        class="w-[110px]"
         bind:value={symbol}
         placeholder="SYMBOL"
-        onchange={commit}
-        onkeydown={(e) => e.key === "Enter" && commit()}
+        onSelect={(hit) => {
+          symbol = hit.internal_symbol;
+          exchange = hit.exchange || "NSE_FNO";
+          selectedSymbol.symbol = hit.internal_symbol;
+          selectedSymbol.exchange = hit.exchange || "NSE_FNO";
+          commit();
+        }}
+        onInput={() => {/* typed — don't commit yet */}}
       />
       {#if expiries.length > 0}
         <Select
@@ -332,7 +468,12 @@
           </SelectTrigger>
           <SelectContent>
             {#each expiries as e (e)}
-              <SelectItem value={e} label={e} class="font-mono text-[12px]">{e}</SelectItem>
+              <SelectItem value={e} label={e} class="font-mono text-[12px]">
+                {#if expiryKinds[e]}
+                  <span class="expiry-kind">{expiryKinds[e] === "monthly" ? "M" : "W"}</span>
+                {/if}
+                {e}
+              </SelectItem>
             {/each}
           </SelectContent>
         </Select>
@@ -345,7 +486,7 @@
           onkeydown={(e) => e.key === "Enter" && commit()}
         />
       {/if}
-      <span class="live-chip" class:on={live} title={live ? "Live: watchlisted contracts tick in; chain refreshes every 15s" : "Synchronizing — no recent ticks"}>
+      <span class="live-chip" class:on={live} title={live ? "Live: chain refreshes via feed ticks and the 15s REST poll" : "Synchronizing — no fresh chain data in the last 60s"}>
         <span class="live-dot" aria-hidden="true"></span>
         <span class="live-label">{live ? "LIVE" : "SYNC"}</span>
       </span>
@@ -363,18 +504,25 @@
       <Table class="chain-table text-[12px]">
         <TableHeader>
           <TableRow class="hover:bg-transparent">
-            <TableHead class="text-center font-semibold text-ink">Strike</TableHead>
-            <TableHead class="text-right" colspan={3}>Call (CE)</TableHead>
-            <TableHead class="text-right" colspan={3}>Put (PE)</TableHead>
+            <TableHead class="text-center font-semibold text-ink" rowspan={2}>Strike</TableHead>
+            <TableHead class="text-center" colspan={7}>Call (CE)</TableHead>
+            <TableHead class="text-center" colspan={7}>Put (PE)</TableHead>
           </TableRow>
           <TableRow class="hover:bg-transparent">
-            <TableHead class="text-center text-faint"></TableHead>
-            <TableHead class="text-right">LTP</TableHead>
-            <TableHead class="text-right">IV</TableHead>
-            <TableHead class="text-right">OI</TableHead>
-            <TableHead class="text-right">LTP</TableHead>
-            <TableHead class="text-right">IV</TableHead>
-            <TableHead class="text-right">OI</TableHead>
+            <TableHead class="text-right text-faint">LTP</TableHead>
+            <TableHead class="text-right text-faint">IV</TableHead>
+            <TableHead class="text-right text-faint">OI</TableHead>
+            <TableHead class="text-right greek-head" title="Delta">Δ</TableHead>
+            <TableHead class="text-right greek-head" title="Gamma">Γ</TableHead>
+            <TableHead class="text-right greek-head" title="Theta (daily)">Θ</TableHead>
+            <TableHead class="text-right greek-head" title="Vega (per 1% IV)">V</TableHead>
+            <TableHead class="text-right text-faint">LTP</TableHead>
+            <TableHead class="text-right text-faint">IV</TableHead>
+            <TableHead class="text-right text-faint">OI</TableHead>
+            <TableHead class="text-right greek-head" title="Delta">Δ</TableHead>
+            <TableHead class="text-right greek-head" title="Gamma">Γ</TableHead>
+            <TableHead class="text-right greek-head" title="Theta (daily)">Θ</TableHead>
+            <TableHead class="text-right greek-head" title="Vega (per 1% IV)">V</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -382,12 +530,12 @@
             {#each Array.from({ length: 8 }) as _, i (i)}
               <TableRow class="chain-row h-6 hover:bg-transparent">
                 <TableCell class="px-1.5"><Skeleton class="h-3.5 w-12 mx-auto" /></TableCell>
-                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-14 ml-auto" /></TableCell>
-                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-10 ml-auto" /></TableCell>
-                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-12 ml-auto" /></TableCell>
-                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-14 ml-auto" /></TableCell>
-                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-10 ml-auto" /></TableCell>
-                <TableCell class="px-1.5"><Skeleton class="h-3.5 w-12 ml-auto" /></TableCell>
+                {#each Array.from({ length: 7 }) as _, j (j)}
+                  <TableCell class="px-1.5"><Skeleton class="h-3.5 w-10 ml-auto" /></TableCell>
+                {/each}
+                {#each Array.from({ length: 7 }) as _, j (j)}
+                  <TableCell class="px-1.5"><Skeleton class="h-3.5 w-10 ml-auto" /></TableCell>
+                {/each}
               </TableRow>
             {/each}
           {:else}
@@ -410,12 +558,22 @@
                 >
                   {fmtNum(row.strike, 0)}
                 </TableCell>
+                <!-- Call (CE) side -->
                 <TableCell class={cn("mono-num px-1.5", ltpCellClass(row, "ce"))}>{fmtNum(row.ce?.ltp)}</TableCell>
                 <TableCell class="mono-num px-1.5">{fmtNum(row.ce?.iv, 1)}</TableCell>
                 <TableCell class="mono-num px-1.5">{fmtOi(row.ce?.oi)}</TableCell>
+                <TableCell class="mono-num greek-cell">{fmtGreek(row.ce?.delta, 2)}</TableCell>
+                <TableCell class="mono-num greek-cell">{fmtGreek(row.ce?.gamma, 4)}</TableCell>
+                <TableCell class="mono-num greek-cell">{fmtGreek(row.ce?.theta, 2)}</TableCell>
+                <TableCell class="mono-num greek-cell">{fmtGreek(row.ce?.vega, 2)}</TableCell>
+                <!-- Put (PE) side -->
                 <TableCell class={cn("mono-num px-1.5", ltpCellClass(row, "pe"))}>{fmtNum(row.pe?.ltp)}</TableCell>
                 <TableCell class="mono-num px-1.5">{fmtNum(row.pe?.iv, 1)}</TableCell>
                 <TableCell class="mono-num px-1.5">{fmtOi(row.pe?.oi)}</TableCell>
+                <TableCell class="mono-num greek-cell">{fmtGreek(row.pe?.delta, 2)}</TableCell>
+                <TableCell class="mono-num greek-cell">{fmtGreek(row.pe?.gamma, 4)}</TableCell>
+                <TableCell class="mono-num greek-cell">{fmtGreek(row.pe?.theta, 2)}</TableCell>
+                <TableCell class="mono-num greek-cell">{fmtGreek(row.pe?.vega, 2)}</TableCell>
               </TableRow>
             {/each}
           {/if}
@@ -522,13 +680,13 @@
   :global(.chain-table) {
     width: 100%;
   }
-  /* Narrow panels (<720px): pin the chain's full 720px layout so the
+  /* Narrow panels (<1050px): pin the chain's full 1050px layout so the
      ScrollArea scrolls it horizontally inside the panel instead of the
      panel (or viewport) overflowing. The ScrollArea already renders a
      horizontal scrollbar via orientation="both". */
-  @container (max-width: 719px) {
+  @container (max-width: 1049px) {
     :global(.chain-table) {
-      width: 720px;
+      width: 1050px;
     }
   }
   /* 24px chain rows (DESIGN §4). These classes are applied to <td> / <tr>
@@ -558,11 +716,42 @@
   :global(.strike-cell:focus-visible) {
     box-shadow: inset 0 0 0 2px var(--focus-ring);
   }
+  /* Greek column headers — Δ/Γ/Θ/V — lighter weight, same mono font. */
+  :global(.greek-head) {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+  }
+  /* Greek cells — narrower padding, muted color for secondary data. */
+  :global(.greek-cell) {
+    padding-left: 4px;
+    padding-right: 4px;
+    color: var(--faint);
+    font-size: 11px;
+  }
   .empty {
     color: var(--faint);
     font-size: 12px;
     padding: 16px 10px;
     margin: 0;
+  }
+  .expiry-kind {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    line-height: 14px;
+    text-align: center;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    border-radius: 2px;
+    margin-right: 4px;
+    color: var(--muted);
+    background: var(--canvas-raised);
+    border: 1px solid var(--hairline);
   }
   .error {
     color: var(--danger);

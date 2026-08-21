@@ -5,3 +5,28 @@ dry_run: true
 log_dir: logs
 log_level: INFO
 mode: observer
+paper_trading_margin: 1000000
+# Use QuantLib for advanced options pricing (Black-76 fallback if unavailable).
+# Requires: pip install quantlib (QuantLib>=1.43)
+use_quantlib: false
+
+# P3-4.1: Paper trading realism
+paper_trading:
+  slippage_model: "layered"    # "layered" | "none" — layered uses spread + fixed bps fallback
+  fees_model: "india"          # "india" | "none" — India-correct brokerage/STT/GST/SEBI/stamp
+  fill_probability: true       # true | false — probabilistic limit fills
+  margin_check: true           # true | false — engine-side margin sizing
+  slippage_bps_market: 5       # fixed bps for MARKET orders when spread unavailable
+  slippage_bps_limit: 2        # fixed bps for LIMIT orders when spread unavailable
+
+# P4: Scanner→Proposal bridge (OPT-IN — OFF by default)
+# When enabled, actionable scanner findings auto-generate an OBSERVER
+# proposal through the normal submit_signal flow. The operator still
+# approves before anything is placed (D10). Only findings with a
+# directional signal are bridged (e.g. max_pain_drift above/below,
+# detail.side, detail.direction).
+scanner_proposal_bridge:
+  enabled: false               # false = findings stay alerts only
+  min_severity: HIGH           # LOW < MEDIUM < HIGH
+  scanner_types: []            # empty = every scanner type eligible
+  cooldown_seconds: 900        # one proposal per (scanner, symbol) per window

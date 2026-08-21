@@ -37,10 +37,19 @@ DEFAULT_DB_PATH = "data/settings.db"
 DEFAULT_LOSS_LIMIT = -5000.0
 DEFAULT_MAX_POSITIONS = 5
 DEFAULT_THEME = "dark"
+DEFAULT_COLOR_CONVENTION = "international"
 DEFAULT_SCHEDULER_ENABLED = False
 DEFAULT_SCHEDULER_INTERVAL_MINUTES = 60.0
+DEFAULT_MAX_LOSS_PCT = 0.02
+DEFAULT_MAX_MARGIN_UTILIZATION_PCT = 0.50
+DEFAULT_MIN_RISK_REWARD = 1.5
+DEFAULT_MAX_POSITIONS_PER_UNDERLYING = 3
+DEFAULT_MAX_SECTOR_PCT = 0.20
+DEFAULT_MAX_DIRECTION_PCT = 0.80
+DEFAULT_STOP_COOLDOWN_MINUTES = 30.0
 
 VALID_THEMES = ("dark", "light")
+VALID_COLOR_CONVENTIONS = ("indian", "international")
 MAX_POSITIONS_CAP = 100
 MAX_INTERVAL_MINUTES = 24 * 60  # one-day cap on the research cadence
 MAX_LOSS_LIMIT_ABS = 10_000_000.0
@@ -83,6 +92,13 @@ def _validate_theme(value: Any) -> str:
     v = str(value).strip().lower()
     if v not in VALID_THEMES:
         raise SettingsError(f"theme must be one of {list(VALID_THEMES)}")
+    return v
+
+
+def _validate_color_convention(value: Any) -> str:
+    v = str(value).strip().lower()
+    if v not in VALID_COLOR_CONVENTIONS:
+        raise SettingsError(f"color_convention must be one of {list(VALID_COLOR_CONVENTIONS)}")
     return v
 
 
@@ -136,6 +152,88 @@ def _validate_tools(value: Any) -> list[str] | None:
     raise SettingsError("tools must be a list of strings (or null)")
 
 
+def _validate_pct(value: Any, key: str, lo: float, hi: float) -> float:
+    try:
+        v = float(value)
+    except (TypeError, ValueError) as exc:
+        raise SettingsError(f"{key} must be a number") from exc
+    if not math.isfinite(v):
+        raise SettingsError(f"{key} must be a finite number")
+    if v < lo or v > hi:
+        raise SettingsError(f"{key} must be between {lo} and {hi}")
+    return v
+
+
+def _validate_max_loss_pct(value: Any) -> float:
+    return _validate_pct(value, "max_loss_pct", 0.01, 0.10)
+
+
+def _validate_max_margin_utilization_pct(value: Any) -> float:
+    return _validate_pct(value, "max_margin_utilization_pct", 0.1, 1.0)
+
+
+def _validate_min_risk_reward(value: Any) -> float:
+    return _validate_pct(value, "min_risk_reward", 0.5, 5.0)
+
+
+def _validate_max_positions_per_underlying(value: Any) -> int:
+    if isinstance(value, float) and not value.is_integer():
+        raise SettingsError("max_positions_per_underlying must be an integer")
+    try:
+        v = int(value)
+    except (TypeError, ValueError) as exc:
+        raise SettingsError("max_positions_per_underlying must be an integer") from exc
+    if v < 1 or v > 10:
+        raise SettingsError("max_positions_per_underlying must be between 1 and 10")
+    return v
+
+
+def _validate_max_sector_pct(value: Any) -> float:
+    return _validate_pct(value, "max_sector_pct", 0.05, 1.0)
+
+
+def _validate_max_direction_pct(value: Any) -> float:
+    return _validate_pct(value, "max_direction_pct", 0.5, 1.0)
+
+
+def _validate_stop_cooldown_minutes(value: Any) -> float:
+    return _validate_pct(value, "stop_cooldown_minutes", 0, 240)
+
+
+def _validate_scanner_thresholds(value: Any) -> dict[str, dict[str, float]]:
+    """Validate ``scanner_thresholds``: scanner_type → param → number.
+
+    Shape-only validation (core must not import ``intelligence`` — the
+    per-scanner param names are validated against ``SCANNER_THRESHOLD_SPECS``
+    in the settings router, which sits above the layer wall).
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise SettingsError("scanner_thresholds must be a mapping of scanner_type → params")
+    normalized: dict[str, dict[str, float]] = {}
+    for scanner_type, params in value.items():
+        if not isinstance(params, dict):
+            raise SettingsError(
+                f"scanner_thresholds[{scanner_type}] must be a mapping of param → value"
+            )
+        param_map: dict[str, float] = {}
+        for param_name, param_value in params.items():
+            try:
+                v = float(param_value)
+            except (TypeError, ValueError) as exc:
+                raise SettingsError(
+                    f"scanner_thresholds[{scanner_type}][{param_name}] must be a number"
+                ) from exc
+            if not math.isfinite(v):
+                raise SettingsError(
+                    f"scanner_thresholds[{scanner_type}][{param_name}] must be a finite number"
+                )
+            param_map[str(param_name)] = v
+        normalized[str(scanner_type)] = param_map
+    return normalized
+
+
 @dataclass(frozen=True)
 class _Spec:
     """Schema entry: safe default + validator for one setting key."""
@@ -148,12 +246,21 @@ _SPECS: dict[str, _Spec] = {
     "loss_limit": _Spec(DEFAULT_LOSS_LIMIT, _validate_loss_limit),
     "max_positions": _Spec(DEFAULT_MAX_POSITIONS, _validate_max_positions),
     "theme": _Spec(DEFAULT_THEME, _validate_theme),
+    "color_convention": _Spec(DEFAULT_COLOR_CONVENTION, _validate_color_convention),
     "scheduler_enabled": _Spec(DEFAULT_SCHEDULER_ENABLED, _validate_bool),
     "scheduler_interval_minutes": _Spec(
         DEFAULT_SCHEDULER_INTERVAL_MINUTES, _validate_interval_minutes
     ),
     "scheduler_lenses": _Spec(None, _validate_lenses),
     "scheduler_tools": _Spec(None, _validate_tools),
+    "max_loss_pct": _Spec(DEFAULT_MAX_LOSS_PCT, _validate_max_loss_pct),
+    "max_margin_utilization_pct": _Spec(DEFAULT_MAX_MARGIN_UTILIZATION_PCT, _validate_max_margin_utilization_pct),
+    "min_risk_reward": _Spec(DEFAULT_MIN_RISK_REWARD, _validate_min_risk_reward),
+    "max_positions_per_underlying": _Spec(DEFAULT_MAX_POSITIONS_PER_UNDERLYING, _validate_max_positions_per_underlying),
+    "max_sector_pct": _Spec(DEFAULT_MAX_SECTOR_PCT, _validate_max_sector_pct),
+    "max_direction_pct": _Spec(DEFAULT_MAX_DIRECTION_PCT, _validate_max_direction_pct),
+    "stop_cooldown_minutes": _Spec(DEFAULT_STOP_COOLDOWN_MINUTES, _validate_stop_cooldown_minutes),
+    "scanner_thresholds": _Spec({}, _validate_scanner_thresholds),
 }
 
 
@@ -204,6 +311,9 @@ class SettingsStore:
     def theme(self) -> str:
         return self.get("theme")
 
+    def color_convention(self) -> str:
+        return self.get("color_convention")
+
     def scheduler_config(self) -> dict[str, Any]:
         """Persisted scheduler config (enabled/interval/lenses/tools)."""
         return {
@@ -212,6 +322,35 @@ class SettingsStore:
             "lenses": self.get("scheduler_lenses"),
             "tools": self.get("scheduler_tools"),
         }
+
+    def max_loss_pct(self) -> float:
+        return self.get("max_loss_pct")
+
+    def max_margin_utilization_pct(self) -> float:
+        return self.get("max_margin_utilization_pct")
+
+    def min_risk_reward(self) -> float:
+        return self.get("min_risk_reward")
+
+    def max_positions_per_underlying(self) -> int:
+        return self.get("max_positions_per_underlying")
+
+    def max_sector_pct(self) -> float:
+        return self.get("max_sector_pct")
+
+    def max_direction_pct(self) -> float:
+        return self.get("max_direction_pct")
+
+    def stop_cooldown_minutes(self) -> float:
+        return self.get("stop_cooldown_minutes")
+
+    def scanner_thresholds(self) -> dict[str, dict[str, float]]:
+        """Per-scanner threshold overrides (scanner_type → param → value).
+
+        Empty dict by default — scanners run with their built-in defaults
+        until the operator configures thresholds via the settings API.
+        """
+        return self.get("scanner_thresholds")
 
     # ── writes ─────────────────────────────────────────────────────────────
     def update(self, updates: Mapping[str, Any]) -> dict[str, Any]:

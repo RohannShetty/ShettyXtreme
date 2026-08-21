@@ -78,7 +78,12 @@ async def get_health(request: Request) -> HealthResponse:
         )
         for c in result.get("components", [])
     ]
-    return HealthResponse(components=components, overall=result.get("overall", "healthy"))
+    return HealthResponse(
+        components=components,
+        overall=result.get("overall", "healthy"),
+        state=result.get("state", "unknown"),
+        detail=result.get("detail", ""),
+    )
 
 
 @router.get("/session", response_model=SessionResponse)

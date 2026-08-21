@@ -6,17 +6,28 @@ Option-chain rows come from the Fyers ``/data/options-chain-v3`` endpoint
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from shettyxtreme.core.data_models import OrderType, ProductType
 from shettyxtreme.integration.fyers._util import IST
 from shettyxtreme.intelligence.hints.strategy_hints import StrategyHints
+from shettyxtreme.intelligence.signals.signal_engine import Signal, SignalDirection
 from shettyxtreme.options.greeks import GreeksCalculator
+from shettyxtreme.options.max_pain import compute_max_pain
+from shettyxtreme.options.strategy_analyzer import StrategyAnalyzer
 from shettyxtreme.terminal.api.models import (
+    ExpiryCalendarItem,
+    ExpiryCalendarResponse,
+    HintStatsResponse,
     OptionsChainItem,
     OptionsChainResponse,
+    OptionsSummaryResponse,
+    ProposeFromHintRequest,
+    ProposalResponse,
     RegimeResponse,
     SignalResponse,
     StrategyHintResponse,
@@ -186,12 +197,48 @@ async def _fetch_chain_with_spot(
     if result.get("entitlement") is True:
         raise DataEntitlementError(_ENTITLEMENT_MSG)
     if result.get("s") != "ok":
-        return [], None
+        code = result.get("code", 0)
+        msg = result.get("message", str(result))
+        if code == -373:
+            raise DataEntitlementError(_ENTITLEMENT_MSG)
+        raise HTTPException(status_code=503, detail=f"Fyers options chain error (code {code}): {msg}")
     chain = result.get("option_chain", [])
     if not isinstance(chain, list):
         return [], None
     spot = _safe_float_opt(_row_value(result, *_SPOT_ALIASES))
     return chain, spot
+
+
+def _feed_options_calculators(
+    app: Any, chain: list[dict[str, Any]], symbol: str, expiry: str,
+) -> None:
+    """Feed IV rank calculator and OI tracker from chain rows."""
+    iv_calc = getattr(app.state, "iv_rank_calculator", None)
+    oi_track = getattr(app.state, "oi_tracker", None)
+    if not iv_calc and not oi_track:
+        return
+    for row in chain:
+        if not isinstance(row, dict):
+            continue
+        # Feed IV rank calculator
+        if iv_calc:
+            iv_val = row.get("iv") or row.get("impl_volatility") or 0.0
+            try:
+                iv_float = float(iv_val)
+            except (TypeError, ValueError):
+                iv_float = 0.0
+            if iv_float > 0:
+                strike = _safe_float(_row_value(row, "strike", "strike_price"))
+                opt_type = _normalized_type(row)
+                iv_calc.record_iv(
+                    symbol, iv_float, strike=strike, expiry=expiry, option_type=opt_type,
+                )
+    # Feed OI tracker with the full chain at once
+    if oi_track:
+        try:
+            oi_track.update_from_chain(symbol=symbol, expiry=expiry, contracts=chain)
+        except Exception:
+            logger.debug("OI tracker feed failed for %s/%s", symbol, expiry, exc_info=True)
 
 
 async def prime_options_chain(app: Any) -> None:
@@ -230,6 +277,14 @@ async def prime_options_chain(app: Any) -> None:
         **getattr(app.state, "options_chain", {}),
         "NIFTY": {"spot": spot, "contracts": chain},
     }
+    # Feed IV rank calculator and OI tracker from primed chain
+    _feed_options_calculators(app, chain, "NIFTY", "")
+    # Seed IV cache for per-position greeks (raw chain rows)
+    try:
+        from shettyxtreme.terminal.api.execution_router import update_iv_cache
+        update_iv_cache(chain, spot)
+    except Exception:
+        pass
     logger.info("options chain primed: NIFTY (%d contracts)", len(chain))
 
 
@@ -348,23 +403,93 @@ async def get_options(
     symbol: str = Query("NIFTY"),
     expiry: str | None = None,
 ) -> OptionsChainResponse:
-    """Return option chain for a given symbol and expiry."""
+    """Return option chain for a given symbol and expiry.
+
+    When ``expiry`` is empty, resolves the calendar default server-side
+    (index → nearest weekly, stock → nearest monthly) instead of relying
+    on Fyers' opaque nearest-expiry behavior.
+    """
+    from shettyxtreme.integration.fyers.symbols import resolve_default_expiry
+
+    resolved_expiry = expiry
+    if not resolved_expiry or not resolved_expiry.strip():
+        master = getattr(request.app.state, "instrument_master", None)
+        if master is not None:
+            expiries = master.list_expiries(
+                symbol.strip().upper(), exchange="NSE", instrument_type="OPTION",
+            )
+            if expiries:
+                resolved_expiry = resolve_default_expiry(symbol.strip().upper(), expiries)
     try:
         chain, spot = await _fetch_chain_with_spot(
-            request.app.state.data_adapter, symbol, expiry
+            request.app.state.data_adapter, symbol, resolved_expiry
         )
     except DataEntitlementError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except DataAdapterUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    contracts = _enrich_chain(chain, spot, tte=_expiry_to_tte(expiry))
+    contracts = _enrich_chain(chain, spot, tte=_expiry_to_tte(resolved_expiry))
     # Cache the RAW rows (pre-enrichment) so the research layer's
     # options_posture tool can derive IV/PCR/OI posture from live data.
     request.app.state.options_chain = {
         **getattr(request.app.state, "options_chain", {}),
         symbol: {"spot": spot, "contracts": chain},
     }
-    return OptionsChainResponse(underlying=symbol, expiry=expiry or "", contracts=contracts)
+    # Feed IV rank calculator and OI tracker with live chain data
+    _feed_options_calculators(request.app, chain, symbol, resolved_expiry or "")
+    # Update the execution router's IV cache so per-position greeks can be
+    # computed on the positions endpoint (the chain poll and position poll
+    # are independent; this bridges them).
+    try:
+        from shettyxtreme.terminal.api.execution_router import update_iv_cache
+        # Convert OptionsChainItem pydantic models to dicts for the cache
+        enriched_dicts = [c.model_dump() for c in contracts]
+        update_iv_cache(enriched_dicts, spot)
+    except Exception:
+        logger.debug("IV cache update failed", exc_info=True)
+    return OptionsChainResponse(underlying=symbol, expiry=resolved_expiry or "", contracts=contracts)
+
+
+@router.get("/expiry-calendar", response_model=ExpiryCalendarResponse)
+async def get_expiry_calendar(
+    request: Request,
+    symbol: str = Query("NIFTY"),
+) -> ExpiryCalendarResponse:
+    """Return distinct future expiries classified as weekly/monthly.
+
+    Uses the instrument master as the source of truth. Returns the
+    policy-driven default expiry for the symbol.
+    """
+    from shettyxtreme.integration.fyers._util import INDEX_SYMBOLS
+    from shettyxtreme.integration.fyers.symbols import (
+        classify_expiry,
+        resolve_default_expiry,
+    )
+
+    master = getattr(request.app.state, "instrument_master", None)
+    if master is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Instrument master not available",
+        )
+
+    sym = symbol.strip().upper()
+    # Indices use OPTION expiries; equities also query OPTION (F&O segment).
+    instrument_type = "OPTION"
+    expiries = master.list_expiries(sym, exchange="NSE", instrument_type=instrument_type)
+
+    items = [
+        ExpiryCalendarItem(date=e, kind=classify_expiry(sym, e))
+        for e in expiries
+    ]
+    default = resolve_default_expiry(sym, expiries)
+
+    return ExpiryCalendarResponse(
+        symbol=sym,
+        instrument_type=instrument_type,
+        expiries=items,
+        default=default,
+    )
 
 
 @router.get("/strategy-hint", response_model=StrategyHintResponse)
@@ -393,8 +518,208 @@ async def get_strategy_hint(request: Request) -> StrategyHintResponse:
     hint = StrategyHints(signal=signal, chain=chain, current_price=current_price).generate()
     return StrategyHintResponse(
         direction=hint.direction,
+        strategy=hint.strategy,
         strike=hint.strike,
         premium=hint.premium,
         ev_after_cost=hint.ev_after_cost,
         rationale=hint.rationale,
+        expiry=hint.leg.expiry if hint.leg else None,
+        option_type=hint.leg.option_type if hint.leg else None,
+        lot_size=hint.leg.lot_size if hint.leg else None,
+        lots=hint.leg.lots if hint.leg else None,
+        entry_premium=hint.leg.entry_premium if hint.leg else None,
+        stop_loss=hint.stop_loss,
+        target=hint.target,
+        confidence=hint.confidence,
     )
+
+
+@router.get("/options-summary", response_model=OptionsSummaryResponse)
+async def get_options_summary(
+    request: Request,
+    symbol: str = Query("NIFTY"),
+) -> OptionsSummaryResponse:
+    """Return options analytics summary: max pain, PCR, IV rank."""
+    # Get chain data — use cache if available, otherwise fetch
+    cached = getattr(request.app.state, "options_chain", {}).get(symbol)
+    if cached and cached.get("contracts"):
+        chain = cached["contracts"]
+    else:
+        try:
+            chain, _spot = await _fetch_chain_with_spot(
+                request.app.state.data_adapter, symbol, None,
+            )
+        except (DataEntitlementError, DataAdapterUnavailable):
+            chain = []
+        except Exception:
+            logger.debug("options-summary fetch failed for %s", symbol, exc_info=True)
+            chain = []
+
+    max_pain_val = compute_max_pain(chain) if chain else None
+
+    # PCR from OI tracker
+    oi_track = getattr(request.app.state, "oi_tracker", None)
+    pcr_val = oi_track.get_pcr(symbol) if oi_track else None
+    if pcr_val == 0.0:
+        pcr_val = None
+
+    # IV rank from calculator
+    iv_calc = getattr(request.app.state, "iv_rank_calculator", None)
+    iv_rank_val: float | None = None
+    iv_class_val: str | None = None
+    if iv_calc:
+        result = iv_calc.compute_iv_rank_percent(symbol)
+        if result is not None:
+            iv_rank_val = result.iv_rank_percent
+            iv_class_val = result.classification
+
+    return OptionsSummaryResponse(
+        underlying=symbol,
+        max_pain=max_pain_val,
+        pcr=pcr_val,
+        iv_rank_percent=iv_rank_val,
+        iv_classification=iv_class_val,
+    )
+
+
+def _hint_direction(value: str) -> SignalDirection | None:
+    """Map a hint direction onto a SignalDirection; None for neutral/unknown.
+
+    Accepts both the hint vocabulary (bullish / bearish) and the signal
+    vocabulary (UP / DOWN). Neutral or unrecognized directions return None —
+    callers reject them, since a neutral hint must never become a proposal.
+    """
+    v = str(value or "").strip().upper()
+    if v in ("UP", "BULLISH"):
+        return SignalDirection.UP
+    if v in ("DOWN", "BEARISH"):
+        return SignalDirection.DOWN
+    return None
+
+
+@router.post("/propose-from-hint", response_model=ProposalResponse)
+async def propose_from_hint(
+    request: Request, payload: ProposeFromHintRequest,
+) -> ProposalResponse:
+    """One-click proposal generation from a strategy hint (3A.2).
+
+    Builds a SignalV2-shaped signal from the hint payload and queues a
+    PENDING proposal on the ExecutionEngine — OBSERVER-first (D10): the
+    human always approves before anything is placed. The response uses the
+    same ``ProposalResponse`` as the execution router, with ``source`` set
+    to ``manual_hint`` so hint-generated proposals are distinguishable from
+    pipeline-driven ones. The hint is also recorded in the hint store so
+    its outcome can be scored when the position closes.
+    """
+    engine = getattr(request.app.state, "execution_engine", None)
+    if engine is None:
+        raise HTTPException(
+            status_code=503, detail="execution engine not available",
+        )
+
+    direction = _hint_direction(payload.direction)
+    if direction is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "direction must be bullish/bearish (or UP/DOWN) — "
+                "neutral hints cannot become proposals"
+            ),
+        )
+
+    bullish = direction == SignalDirection.UP
+    option_type = str(payload.option_type or ("CE" if bullish else "PE")).upper()
+
+    lot_size = int(payload.lot_size or 0)
+    lots = int(payload.lots or 1)
+    quantity = payload.quantity
+    if quantity is None:
+        quantity = lot_size * lots if lot_size > 0 else None
+    if quantity == 0:
+        quantity = None
+
+    conviction = payload.conviction
+    if conviction is None:
+        conviction = payload.confidence or 0.0
+
+    signal = Signal(
+        direction=direction,
+        conviction=float(conviction),
+        voters=[],
+        timestamp=datetime.now(UTC),
+        D=0.0,
+        P=1.0,
+        G="contested",
+    )
+
+    premium = payload.premium
+    hint: dict[str, Any] = {
+        "symbol": payload.symbol,
+        "exchange": "NFO",
+        "quantity": quantity,
+        "lot_size": lot_size or None,
+        "lots": lots,
+        "price": premium,
+        "order_type": OrderType.LIMIT if premium is not None else OrderType.MARKET,
+        "product": ProductType.MIS,
+        "tag": "manual_hint",
+        "hint_kind": "manual_hint",
+        "source": "manual_hint",
+        "strike": payload.strike,
+        "expiry": payload.expiry,
+        "option_type": option_type,
+        "entry_premium": premium,
+        "stop_loss": payload.stop_loss,
+        "target": payload.target,
+        "rationale": payload.rationale,
+        "confidence": payload.confidence,
+        "strategy": StrategyAnalyzer.display_name(
+            "long_call" if bullish else "long_put"
+        ),
+        "underlying": payload.symbol,
+    }
+
+    approval_id = engine.submit_signal(signal, hint, signal_id=uuid4().hex)
+    approval = engine.get_approval(approval_id)
+
+    # Best-effort hint tracking (3A.2): record the hint so a closing
+    # position can later resolve its outcome. Never fails the request.
+    # Phase 3C.1: capture the current regime for regime-aware accuracy stats.
+    store = getattr(request.app.state, "hint_store", None)
+    if store is not None:
+        try:
+            proj = getattr(request.app.state, "intelligence_projection", None)
+            regime = None
+            if proj is not None:
+                try:
+                    regime = proj.get_regime().get("regime")
+                except Exception:
+                    pass
+            hint["hint_id"] = store.record_hint(payload.model_dump(), regime=regime)
+        except Exception:
+            logger.debug(
+                "hint record failed for %s/%s",
+                payload.symbol, payload.direction, exc_info=True,
+            )
+
+    from shettyxtreme.terminal.api.execution_router import _proposal_response
+
+    response = _proposal_response(approval)
+    response.source = "manual_hint"
+    return response
+
+
+@router.get("/hint-stats", response_model=HintStatsResponse)
+async def get_hint_stats(
+    request: Request, days: int = Query(30, ge=1, le=365),
+) -> HintStatsResponse:
+    """Return hint accuracy stats over the trailing ``days`` window (3A.2).
+
+    Win rate and average PnL are computed over hints that resolved (a
+    matching position closed); ``total_hints`` counts every hint recorded
+    in the window regardless of resolution.
+    """
+    store = getattr(request.app.state, "hint_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="hint store not available")
+    return HintStatsResponse(**store.get_stats(days=days))

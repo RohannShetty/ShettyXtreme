@@ -37,7 +37,7 @@ function bars(n: number) {
   }));
 }
 
-test("renders candles with Indian convention colors (red=up, green=down, doji=up)", async () => {
+test("renders candles with convention-driven colors (up/down tokens, doji=up)", async () => {
   mockBars.mockResolvedValueOnce(threeBars);
   const { container, findByText } = render(CandleChart);
 
