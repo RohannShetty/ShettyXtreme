@@ -14,7 +14,23 @@ export default defineConfig({
       $lib: path.resolve(__dirname, "src/lib"),
     },
   },
-  build: { outDir: "../static", emptyOutDir: true },
+  build: {
+    outDir: "../static",
+    emptyOutDir: true,
+    chunkSizeWarningLimit: 300,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules")) {
+            if (id.includes("d3-")) return "vendor-d3";
+            if (id.includes("@lucide/svelte") || id.includes("lucide-svelte")) return "vendor-lucide";
+            if (id.includes("svelte-sonner")) return "vendor-sonner";
+            if (id.includes("bits-ui")) return "vendor-bits";
+          }
+        },
+      },
+    },
+  },
   server: {
     port: 3000,
     proxy: {

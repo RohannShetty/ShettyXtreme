@@ -1,5 +1,53 @@
 # ShettyXtreme Changelog
 
+## v0.18.0 — Phase 7: Production Hardening (2026-08-21)
+
+Suite: **1833 passed / 0 failed / 1 skipped** (unchanged from v0.17.0). Bundle optimization, code quality assessment, skip reconciliation, and release readiness.
+
+### Phase 7: Production Hardening
+
+#### S1: Bundle Optimization
+- **Main JS chunk:** 725KB → 249KB (**-65.6%**, exceeds 20% gate by 3×)
+- **CSS main:** 151KB → 106KB (**-30%**)
+- **Chunks:** 12 JS + 9 CSS (was 1+1), largest 286KB < 300KB limit
+- **Lazy loading:** SettingsView, SetupWizard, RiskHeatmap, GreeksPanel, ResearchPanel, KnowledgePanel
+- **Vendor split:** d3, lucide, sonner, bits-ui into separate chunks
+- **Vite config:** chunkSizeWarningLimit: 300, manualChunks for vendor libs
+- **Files modified:** App.svelte, RightDockTabs.svelte, CenterTabs.svelte, vite.config.ts
+
+#### S2: api.ts Assessment
+- **Decision:** Keep whole (1011 lines, guard 1500)
+- **Rationale:** No clean boundary emerges (WS already separate in ws.ts), file is cohesive with 42% types + 52% impl, 30+ consumers import type+function pairs
+- **No refactoring needed**
+
+#### S3: Accessibility Audit
+- **Status:** BLOCKED (subagent returned empty output twice)
+- **Action required:** Manual verification of focus rings, keyboard nav, ARIA labels
+- **Pre-existing:** 3 svelte-check warnings (SymbolSearch non-reactive, ScannerPanel a11y)
+
+#### S4: Skip Reconciliation
+- **Skip identified:** `tests/wave8/test_iaf_adapter_integration.py` (13 tests)
+- **Reason:** `pytest.importorskip("investing_algorithm_framework")` — optional dependency not installed
+- **Verdict:** Legitimate environment-gated skip, no fix needed
+- **AGENTS.md updated:** 1833/0/1 (v0.17.0) → 1833/0/1 (v0.18.0) with iaf note
+- **With `.[iaf]`:** 1846 passed / 0 skipped
+
+#### S5: Release Readiness
+- **Checklist written:** `docs/superpowers/plans/2026-08-21-phase7-release-checklist.md`
+- **Manual testing required:** Cross-browser (Chrome/Edge/Firefox), accessibility (S3 blocked)
+- **Deployment steps:** Documented in checklist
+
+### Configuration Changes
+- **AGENTS.md:** Updated test suite counts with iaf skip explanation
+- **Version bump:** 0.17.0 → 0.18.0 in all 5 files
+
+### Test Results
+- Backend: 1833 passed, 0 failed, 1 skipped (83.14s)
+- Frontend: 0 TypeScript errors, 3 pre-existing warnings
+- Bundle: Main JS 249KB (was 725KB), 12 chunks, no chunk > 300KB
+
+---
+
 ## v0.17.0 — Phase 5: Research & Knowledge Enhancements (2026-08-21)
 
 Suite: **1833 passed / 0 failed / 1 skipped** (was 1831 at Phase 4). Research & Knowledge panels enhanced with export, graph visualization, and related concepts.

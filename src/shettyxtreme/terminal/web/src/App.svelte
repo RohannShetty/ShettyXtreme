@@ -5,16 +5,20 @@
   import Header from "./components/Header.svelte";
   import TickerStrip from "./components/TickerStrip.svelte";
   import PositionsRiskStrip from "./components/PositionsRiskStrip.svelte";
-  import RiskHeatmap from "./components/RiskHeatmap.svelte";
   import RightDockTabs from "./components/RightDockTabs.svelte";
-  import SettingsView from "./components/SettingsView.svelte";
-  import SetupWizard from "./components/SetupWizard.svelte";
   import Workspace from "./components/layout/Workspace.svelte";
   import CenterTabs from "./components/layout/CenterTabs.svelte";
   import Watchlist from "./components/Watchlist.svelte";
   import { Toaster } from "$lib/components/ui/sonner";
   import { toast } from "svelte-sonner";
   import { connect, onMessage, stop } from "./lib/ws";
+
+  // Route-level lazy loading (Phase 7 S1): SettingsView/SetupWizard are only
+  // rendered on /settings and /setup, so they become separate chunks.
+  const SettingsViewPromise = import("./components/SettingsView.svelte");
+  const SetupWizardPromise = import("./components/SetupWizard.svelte");
+  // Heavy D3 component below the fold — also split to shrink the main chunk.
+  const RiskHeatmapPromise = import("./components/RiskHeatmap.svelte");
 
   let drawerOpen = $state(false);
   // Task 2.3: bumped each time the header "logs drawer" button OPENS the dock,
@@ -117,13 +121,31 @@
       <PositionsRiskStrip />
     </div>
     <div class="heatmap-row">
-      <RiskHeatmap />
+      {#await RiskHeatmapPromise}
+        <div class="lazy-loading">Loading heatmap…</div>
+      {:then mod}
+        <mod.default />
+      {:catch}
+        <div class="lazy-loading">Failed to load heatmap.</div>
+      {/await}
     </div>
   </div>
 {:else if route.value === "/settings"}
-  <SettingsView />
+  {#await SettingsViewPromise}
+    <div class="lazy-loading">Loading settings…</div>
+  {:then mod}
+    <mod.default />
+  {:catch}
+    <div class="lazy-loading">Failed to load settings.</div>
+  {/await}
 {:else if route.value === "/setup"}
-  <SetupWizard query={query.value} />
+  {#await SetupWizardPromise}
+    <div class="lazy-loading">Loading setup…</div>
+  {:then mod}
+    <mod.default query={query.value} />
+  {:catch}
+    <div class="lazy-loading">Failed to load setup.</div>
+  {/await}
 {:else}
   <div class="simple-view">
     <h1>404</h1>
@@ -223,5 +245,13 @@
   }
   .simple-view a:hover {
     text-decoration: underline;
+  }
+  .lazy-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    color: var(--muted);
+    font-size: 13px;
   }
 </style>

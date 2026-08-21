@@ -1,11 +1,14 @@
 <script lang="ts">
   import ProposalQueue from "./ProposalQueue.svelte";
   import OrderHistory from "./OrderHistory.svelte";
-  import ResearchPanel from "./ResearchPanel.svelte";
-  import KnowledgePanel from "./KnowledgePanel.svelte";
   import LogDrawer from "./LogDrawer.svelte";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
   import { rightDockTab, type RightDockTabId } from "$lib/rightDockTab.svelte";
+
+  // Phase 7 S1: Research/Knowledge are heavy (graph + export) and only shown
+  // on the research tab — lazy load as separate chunks.
+  const ResearchPanelPromise = import("./ResearchPanel.svelte");
+  const KnowledgePanelPromise = import("./KnowledgePanel.svelte");
 
   let { open = $bindable(false), dockLogsTick = 0 }: { open?: boolean; dockLogsTick?: number } = $props();
 
@@ -63,8 +66,20 @@
     {:else if activeTab === "research"}
       <ScrollArea class="h-full" orientation="vertical">
         <div class="research-stack">
-          <ResearchPanel />
-          <KnowledgePanel />
+          {#await ResearchPanelPromise}
+            <div class="lazy-loading">Loading research…</div>
+          {:then mod}
+            <mod.default />
+          {:catch}
+            <div class="lazy-loading">Failed to load research.</div>
+          {/await}
+          {#await KnowledgePanelPromise}
+            <div class="lazy-loading">Loading knowledge…</div>
+          {:then mod}
+            <mod.default />
+          {:catch}
+            <div class="lazy-loading">Failed to load knowledge.</div>
+          {/await}
         </div>
       </ScrollArea>
     {:else if activeTab === "logs"}
@@ -132,5 +147,13 @@
     gap: 8px;
     padding: 8px;
     min-height: 100%;
+  }
+  .lazy-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    color: var(--muted);
+    font-size: 12px;
   }
 </style>

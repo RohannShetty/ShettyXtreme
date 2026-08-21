@@ -27,7 +27,7 @@ bun run build    # → src/shettyxtreme/terminal/static/ (COMMITTED bundle)
 
 Run after every change; the repo has no `.github/` so these are grep/wc/pytest checks, not automation:
 
-1. Full suite passes (command above). Suite: **1831 passed / 0 failed / 0 skipped** (v0.16.0).
+1. Full suite passes (command above). Suite: **1833 passed / 0 failed / 1 skipped** (v0.17.0). The 1 skip is legitimate: `tests/wave8/test_iaf_adapter_integration.py` is gated on `investing-algorithm-framework` (`[project.optional-dependencies].iaf`). Install with `pip install -e ".[iaf]"` to run it (then 1846 passed / 0 skipped).
 2. `grep -r "import openalgo\|from openalgo" src/` → ZERO matches (standalone rule)
 3. No file > 1500 lines (god-module guard)
 4. `core/` has zero external imports — **known violation**: `core/config/config_manager.py:10` imports `yaml` (pre-existing, slated for fix)

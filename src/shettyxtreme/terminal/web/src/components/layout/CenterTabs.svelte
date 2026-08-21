@@ -7,11 +7,14 @@
   import { activeTab, type CenterTabId } from "$lib/activeTab.svelte";
   import AnalyticsPanel from "../AnalyticsPanel.svelte";
   import ChainGrid from "../ChainGrid.svelte";
-  import GreeksPanel from "../GreeksPanel.svelte";
   import HintsPanel from "../HintsPanel.svelte";
   import ScannerPanel from "../ScannerPanel.svelte";
   import { Tabs, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
+
+  // Phase 7 S1: GreeksPanel is heavy (charts, risk heatmap, tables) and only
+  // visible on the greeks tab — lazy load as separate chunk.
+  const GreeksPanelPromise = import("../GreeksPanel.svelte");
 </script>
 
 <Tabs
@@ -48,7 +51,13 @@
   </div>
   <div class="tab-panel" class:hidden={activeTab.value !== "greeks"}>
     <ScrollArea class="h-full w-full" orientation="horizontal">
-      <GreeksPanel />
+      {#await GreeksPanelPromise}
+        <div class="lazy-loading">Loading greeks…</div>
+      {:then mod}
+        <mod.default />
+      {:catch}
+        <div class="lazy-loading">Failed to load greeks.</div>
+      {/await}
     </ScrollArea>
   </div>
 </Tabs>
@@ -76,5 +85,13 @@
   .tab-panel > :global(*) {
     flex: 1;
     min-height: 0;
+  }
+  .lazy-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    color: var(--muted);
+    font-size: 13px;
   }
 </style>
